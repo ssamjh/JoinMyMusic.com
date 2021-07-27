@@ -131,7 +131,7 @@
 </script>
 <script type="text/javascript">
    function trackid() {
-       $.get('//music.sjh.at/nowplaying.txt?rand=' + Math.random(), function(data) {
+       $.get('//joinmymusic.com/nowplaying.txt?rand=' + Math.random(), function(data) {
            $(".track-title").text(data);
            console.log('Refreshing metadata');
        });
