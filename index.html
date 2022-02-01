@@ -35,7 +35,10 @@
    </div>
    <br>
    <a><b>Now Playing: </b></a>
-   <div class="track-title"></div>
+   <h4 style="font-size:16;text-decoration:none"><div class="playing-title"></div></h4>
+   <h4 style="font-size:12"><div class="playing-artist"></div></h4>
+   <br>
+   <div class="responsive-image"><a id="playing-songURL" href="#" target="_blank"><img id="playing-image" src="//joinmymusic.com/nowplaying/Snip_Artwork.jpg" alt="Now playing image"></a></div>
    <br>
    <br>
 </center>
@@ -49,7 +52,7 @@
   </a>
 
   <ul class="site-footer-links">
-    <li>© 2021 <span>ssamjh</span></li>
+    <li>Â© 2021 <span>ssamjh</span></li>
   </ul>
 </footer>
 
@@ -132,12 +135,40 @@
 </script>
 <script type="text/javascript">
    function trackid() {
-       $.get('//joinmymusic.com/nowplaying.txt?rand=' + Math.random(), function(data) {
-           $(".track-title").text(data);
+       $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
+           $(".playing-artist").text(data);
            console.log('Refreshing metadata');
        });
    }
    trackid()
-   setInterval(trackid, 10000);
+   setInterval(trackid, 1000);
+</script>
+<script type="text/javascript">
+   function trackid() {
+       $.get('//joinmymusic.com/nowplaying/Snip_Track.txt?rand=' + Math.random(), function(data) {
+           $(".playing-title").text(data);
+           console.log('Refreshing metadata');
+       });
+   }
+   trackid()
+   setInterval(trackid, 1000);
+</script>
+
+<script>
+setInterval(function() {
+    var myImageElement = document.getElementById('playing-image');
+    myImageElement.src = '//joinmymusic.com/nowplaying/Snip_Artwork.jpg?rand=' + Math.random();
+}, 1000);
+</script>
+
+<script>
+setInterval(function() {
+    fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt')
+        .then(response => response.text())
+        .then((data) => {
+        var spotifySongID = (data)
+        document.getElementById("playing-songURL").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID);
+  })
+}, 1000);
 </script>
 </body>
