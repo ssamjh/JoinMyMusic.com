@@ -38,7 +38,7 @@
    <h4 style="font-size:16"><div class="playing-title"></div></h4>
    <h4 style="font-size:12"><div class="playing-artist"></div></h4>
    <br>
-   <div class="responsive-image"><a id="playing-songURL" href="#" target="_blank"><img id="playing-image" src="//joinmymusic.com/nowplaying/Snip_Artwork.jpg" alt="Now playing image"></a></div>
+   <div class="responsive-image"><a id="playing-songURL" target="_blank"><img id="playing-image" src="//joinmymusic.com/nowplaying/Snip_Artwork.jpg" alt="Now playing image"></a></div>
    <br>
    <br>
 </center>
@@ -141,7 +141,7 @@
        });
    }
    trackid()
-   setInterval(trackid, 1000);
+   setInterval(trackid, 10000);
 </script>
 <script type="text/javascript">
    function trackid() {
@@ -151,14 +151,14 @@
        });
    }
    trackid()
-   setInterval(trackid, 1000);
+   setInterval(trackid, 10000);
 </script>
 
 <script>
 setInterval(function() {
     var myImageElement = document.getElementById('playing-image');
     myImageElement.src = '//joinmymusic.com/nowplaying/Snip_Artwork.jpg?rand=' + Math.random();
-}, 1000);
+}, 10000);
 </script>
 
 <script>
@@ -168,7 +168,8 @@ setInterval(function() {
         .then((data) => {
         var spotifySongID = (data)
         document.getElementById("playing-songURL").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID);
+		document.getElementById("playing-songURL").setAttribute("target", "_blank");
   })
-}, 1000);
+}, 10000);
 </script>
 </body>
