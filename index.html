@@ -38,8 +38,7 @@
    <h4 style="font-size:16"><div class="playing-title"></div></h4>
    <h4 style="font-size:12"><div class="playing-artist"></div></h4>
    <br>
-   <div class="responsive-image"><a id="playing-songURL" target="_blank"><img id="playing-image" src="//joinmymusic.com/nowplaying/Snip_Artwork.jpg" alt="Now playing image" width="200" height="200"></a></div>
-   <br>
+   <div class="responsive-image"><a id="playing-songURL" target="_blank"><img id="playing-image" alt="Now playing image" width="200" height="200"></a></div>
    <br>
 </center>
 <footer class="page-footer">
@@ -55,7 +54,6 @@
     <li>© 2021 <span>ssamjh</span></li>
   </ul>
 </footer>
-
 <script type="text/javascript">
    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
        window.onload = function() {
@@ -134,42 +132,41 @@
    }
 </script>
 <script type="text/javascript">
-   function trackid() {
+   function trackArtist() {
        $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
            $(".playing-artist").text(data);
            console.log('Refreshing metadata');
        });
    }
-   trackid()
-   setInterval(trackid, 10000);
+   trackArtist()
+   setInterval(trackArtist, 10000);
 </script>
 <script type="text/javascript">
-   function trackid() {
+   function trackName() {
        $.get('//joinmymusic.com/nowplaying/Snip_Track.txt?rand=' + Math.random(), function(data) {
            $(".playing-title").text(data);
-           console.log('Refreshing metadata');
        });
    }
-   trackid()
-   setInterval(trackid, 10000);
+   trackName()
+   setInterval(trackName, 10000);
 </script>
-
 <script>
-setInterval(function() {
+function trackImage() {
     var myImageElement = document.getElementById('playing-image');
     myImageElement.src = '//joinmymusic.com/nowplaying/Snip_Artwork.jpg?rand=' + Math.random();
-}, 10000);
+	}
+	trackImage()
+setInterval(trackImage, 10000);
 </script>
-
 <script>
-setInterval(function() {
+function trackURL() {
     fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt')
         .then(response => response.text())
         .then((data) => {
         var spotifySongID = (data)
         document.getElementById("playing-songURL").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID);
-		document.getElementById("playing-songURL").setAttribute("target", "_blank");
-  })
-}, 10000);
+  })}
+	trackURL()
+setInterval(trackURL, 10000);
 </script>
 </body>
