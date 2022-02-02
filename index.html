@@ -13,21 +13,20 @@
         <br>
         <audio id="stream-audio" preload="auto"></audio>
         <br>
-        <a>Choose your quality (hover for details):</a>
+        <a><b>Stream Quality:</b></a>
+        <select name="quality-select" id="quality-select" onchange="updateQuality();">
+		  <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
+		  <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
+		  <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
+		  <option value="low" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC">Low</option>
+		</select>
         <br>
-        <button class="small button" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC" onclick="set_stream_quality('//icecast.sjh.at/spotifynet-uhq');set_stream_quality_name('Audiophile');">Audiophile</button>
-        <button class="small button" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus" onclick="set_stream_quality('//icecast.sjh.at/spotifynet-hq');set_stream_quality_name('High');">High</button>
-        <button class="small button" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus" onclick="set_stream_quality('//icecast.sjh.at/spotifynet');set_stream_quality_name('Normal');">Normal</button>
-        <button class="small button" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC" onclick="set_stream_quality('//icecast.sjh.at/spotifynet-lq');set_stream_quality_name('Low');">Low</button>
         <br>
+        <button class="small button" id="play" onclick="begin_playback();">Play</button>
         <br>
         <button class="small button" id="stop" onclick="stop_button();">Stop</button>
         <br>
         <br>
-        <div id="quality-display">
-            <a><b>Quality: </b></a>
-            <label class="quality" for="quality"></label>
-        </div>
         <div id="volume-control">
             <br>
             <a><b>Volume: </b></a>
@@ -72,8 +71,8 @@
                 var elem = document.getElementById("volume-control");
                 elem.remove();
                 console.log('Hiding volume controls');
-                document.getElementById('quality-display').style.visibility = 'hidden';
-                console.log('Hiding quality display');
+                set_stream_quality('//icecast.sjh.at/spotifynet-hq');
+                console.log('Setting default audio URL');
             }
         } else {
             window.onload = function() {
@@ -81,8 +80,8 @@
                 console.log('Setting default volume to: 10');
                 document.getElementById('stop').style.visibility = 'hidden';
                 console.log('Hiding stop button');
-                document.getElementById('quality-display').style.visibility = 'hidden';
-                console.log('Hiding quality display');
+                set_stream_quality('//icecast.sjh.at/spotifynet-hq');
+                console.log('Setting default audio URL');
             }
         }
     </script>
@@ -98,19 +97,18 @@
             console.log('Paused player');
             document.getElementById("stream-audio").setAttribute('src', source);
             console.log('Set source to: ' + source);
+        }
+    </script>
+    <script type="text/javascript">
+        function begin_playback() {
             document.getElementById("stream-audio").load();
             console.log('Loading source');
             document.getElementById("stream-audio").play();
             console.log('Playing audio');
             document.getElementById('stop').style.visibility = 'visible';
             console.log('Showing stop button');
-        }
-    </script>
-    <script type="text/javascript">
-        function set_stream_quality_name(source) {
-            document.querySelector(".quality").textContent = source;
-            document.getElementById('quality-display').style.visibility = 'visible';
-            console.log('Showing quality display');
+            document.getElementById('play').style.visibility = 'hidden';
+            console.log('Hiding play button');
         }
     </script>
     <script type="text/javascript">
@@ -119,10 +117,8 @@
             console.log('Stopping audio');
             document.getElementById('stop').style.visibility = 'hidden';
             console.log('Hiding stop button');
-            document.querySelector(".quality").textContent = '';
-            console.log('Setting quality display to default text');
-            document.getElementById('quality-display').style.visibility = 'hidden';
-            console.log('Hiding quality display');
+            document.getElementById('play').style.visibility = 'visible';
+            console.log('Showing play button');
         }
     </script>
     <script type="text/javascript">
@@ -178,5 +174,29 @@
         }
         trackURL()
         setInterval(trackURL, 10000);
+    </script>
+    <script>
+        function updateQuality() {
+
+            var zone = document.getElementById("quality-select");
+
+            if (zone.value == "audiophile") {
+
+                set_stream_quality('//icecast.sjh.at/spotifynet-uhq');
+                begin_playback();
+            } else if (zone.value == "high") {
+
+                set_stream_quality('//icecast.sjh.at/spotifynet-hq');
+                begin_playback();
+            } else if (zone.value == "normal") {
+
+                set_stream_quality('//icecast.sjh.at/spotifynet');
+                begin_playback();
+            } else if (zone.value == "low") {
+
+                set_stream_quality('//icecast.sjh.at/spotifynet-lq');
+                begin_playback();
+            }
+        }
     </script>
 </body>
