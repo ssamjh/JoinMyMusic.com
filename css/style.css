@@ -7,3 +7,7 @@ body {
 .input-volume {
     width: 500px;
 }
+
+.playing-image {
+  border-radius: 8%;
+}
