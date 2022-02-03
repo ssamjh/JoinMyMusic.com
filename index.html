@@ -14,7 +14,7 @@
         <audio id="audio-stream" preload="auto"></audio>
         <br>
         <a><b>Stream Quality:</b></a>
-        <select name="select-quality" id="select-quality" onchange="updateQuality();">
+        <select name="select-quality" id="select-quality" onchange="qualityUpdate();">
 		  <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
 		  <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
 		  <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
@@ -176,7 +176,7 @@
         setInterval(trackURL, 10000);
     </script>
     <script type="text/javascript">
-        function updateQuality() {
+        function qualityUpdate() {
 
             var zone = document.getElementById("select-quality");
 
