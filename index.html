@@ -101,23 +101,56 @@
         function qualityUpdate() {
 
             var zone = document.getElementById("select-quality");
+            var audioStream = document.getElementById('audio-stream');
 
             if (zone.value == "audiophile") {
 
-                qualitySet('//icecast.sjh.at/spotifynet-uhq');
-                buttonPlay();
+                if (audioStream.duration > 0 && !audioStream.paused) {
+
+                    qualitySet('//icecast.sjh.at/spotifynet-uhq');
+                    buttonPlay();
+
+                } else {
+
+                    qualitySet('//icecast.sjh.at/spotifynet-uhq');
+
+                }
             } else if (zone.value == "high") {
 
-                qualitySet('//icecast.sjh.at/spotifynet-hq');
-                buttonPlay();
+                if (audioStream.duration > 0 && !audioStream.paused) {
+
+                    qualitySet('//icecast.sjh.at/spotifynet-hq');
+                    buttonPlay();
+
+                } else {
+
+                    qualitySet('//icecast.sjh.at/spotifynet-hq');
+
+                }
             } else if (zone.value == "normal") {
 
-                qualitySet('//icecast.sjh.at/spotifynet');
-                buttonPlay();
+                if (audioStream.duration > 0 && !audioStream.paused) {
+
+                    qualitySet('//icecast.sjh.at/spotifynet');
+                    buttonPlay();
+
+                } else {
+
+                    qualitySet('//icecast.sjh.at/spotifynet');
+
+                }
             } else if (zone.value == "low") {
 
-                qualitySet('//icecast.sjh.at/spotifynet-lq');
-                buttonPlay();
+                if (audioStream.duration > 0 && !audioStream.paused) {
+
+                    qualitySet('//icecast.sjh.at/spotifynet-lq');
+                    buttonPlay();
+
+                } else {
+
+                    qualitySet('//icecast.sjh.at/spotifynet-lq');
+
+                }
             }
         }
     </script>
