@@ -91,21 +91,16 @@
             }
             return "";
         }
-
         window.onload = function() {
             // Hide the stop button
             // document.getElementById('button-stop').style.visibility = 'hidden';
-
             var qualityCookie = cookieGet('quality');
-
             if (qualityCookie != "") {
                 qualityUpdate(qualityCookie);
                 document.getElementById("select-quality").value = (qualityCookie);
-
             } else {
                 qualitySet('//icecast.sjh.at/spotifynet-hq');
             }
-
             if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
                 // Detected mobile, setting volume to 100% and removing volume bar
                 console.log('Detected mobile, removing volume bar');
@@ -113,9 +108,7 @@
                 document.getElementById('div-volume').remove();
             } else {
                 // Detected desktop, setting volume to 10%
-
                 let volumeCookie = cookieGet('volume');
-
                 if (volumeCookie != "") {
                     document.getElementById('audio-stream').volume = (volumeCookie / 100);
                     document.querySelector(".volume-percentage").textContent = (volumeCookie);
@@ -127,7 +120,6 @@
                 }
             }
         }
-
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.body.style.backgroundColor = "#222";
             document.body.style.color = "gray";
@@ -204,18 +196,14 @@
     <script type="text/javascript">
         function trackMeta() {
             console.log('Refreshing metadata');
-
             $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-artist").text(data);
             });
-
             $.get('//joinmymusic.com/nowplaying/Snip_Track.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-title").text(data);
             });
-
             var myImageElement = document.getElementById('playing-image');
             myImageElement.src = '//joinmymusic.com/nowplaying/Snip_Artwork.jpg?rand=' + Math.random();
-
             fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt').then(response => response.text()).then((data) => {
                 var spotifySongID = (data)
                 if (spotifySongID != "") {
