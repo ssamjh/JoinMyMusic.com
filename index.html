@@ -65,7 +65,7 @@
             <span class="mega-octicon octicon-mark-github"></span>
         </a>
         <ul class="site-footer-links">
-            <li>© 2022 <span>ssamjh</span>
+            <li>Â© 2022 <span>ssamjh</span>
             </li>
         </ul>
     </footer>
@@ -91,7 +91,7 @@
             }
             return "";
         }
-        window.onload = function() {
+        window.addEventListener('DOMContentLoaded', (event) => {
             // Hide the stop button
             var qualityCookie = cookieGet('quality');
             if (qualityCookie != "") {
@@ -118,7 +118,7 @@
                     document.getElementById('input-volume').value = 10;
                 }
             }
-        }
+        });
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.body.style.backgroundColor = "#222";
             document.body.style.color = "gray";
