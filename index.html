@@ -65,7 +65,7 @@
             <span class="mega-octicon octicon-mark-github"></span>
         </a>
         <ul class="site-footer-links">
-            <li>© 2022 <span>ssamjh</span>
+            <li>ï¿½ 2022 <span>ssamjh</span>
             </li>
         </ul>
     </footer>
@@ -202,31 +202,20 @@
         })
     </script>
     <script type="text/javascript">
-        function trackArtist() {
+        function trackMeta() {
+            console.log('Refreshing metadata');
+
             $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-artist").text(data);
-                // console.log('Refreshing metadata');
             });
-        }
-        trackArtist()
-        setInterval(trackArtist, 10000);
 
-        function trackName() {
             $.get('//joinmymusic.com/nowplaying/Snip_Track.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-title").text(data);
             });
-        }
-        trackName()
-        setInterval(trackName, 10000);
 
-        function trackImage() {
             var myImageElement = document.getElementById('playing-image');
             myImageElement.src = '//joinmymusic.com/nowplaying/Snip_Artwork.jpg?rand=' + Math.random();
-        }
-        trackImage()
-        setInterval(trackImage, 10000);
 
-        function trackURL() {
             fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt').then(response => response.text()).then((data) => {
                 var spotifySongID = (data)
                 if (spotifySongID != "") {
@@ -238,7 +227,7 @@
                 }
             })
         }
-        trackURL()
-        setInterval(trackURL, 10000);
+        trackMeta()
+        setInterval(trackMeta, 10000);
     </script>
 </body>
