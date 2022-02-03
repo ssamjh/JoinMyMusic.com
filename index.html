@@ -222,7 +222,7 @@
             pressed.push(e.key);
             pressed.splice(-secretCode.length - 1, pressed.length - secretCode.length);
             if (pressed.join('').includes(secretCode)) {
-                document.getElementById('input-volume').step = '2.0';
+                document.getElementById('input-volume').step = '1.0';
                 console.log("OCD mode activated")
             }
         });
