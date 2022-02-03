@@ -13,13 +13,15 @@
         <br>
         <audio id="audio-stream" preload="auto"></audio>
         <br>
-        <a><b>Stream Quality:</b></a>
+        <a>
+            <b>Stream Quality:</b>
+        </a>
         <select name="select-quality" id="select-quality" onchange="qualityUpdate();">
-		  <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
-		  <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
-		  <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
-		  <option value="low" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC">Low</option>
-		</select>
+        <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
+        <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
+        <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
+        <option value="low" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC">Low</option>
+      </select>
         <br>
         <br>
         <button class="small button" id="button-play" onclick="buttonPlay();">Play</button>
@@ -29,13 +31,17 @@
         <br>
         <div id="div-volume">
             <br>
-            <a><b>Volume: </b></a>
+            <a>
+                <b>Volume: </b>
+            </a>
             <label class="volume-percentage" for="volume-percentage">10</label>
             <br>
             <input id="input-volume" type="range" min="0" max="100" step="0.1" value="10" class="input-volume" oninput="volumeSet(this.value)" onchange="volumeSet(this.value)"></input>
         </div>
         <br>
-        <a><b>Now Playing: </b></a>
+        <a>
+            <b>Now Playing: </b>
+        </a>
         <h4 style="font-size:16">
             <div class="div-playing-title"></div>
         </h4>
@@ -44,47 +50,42 @@
         </h4>
         <br>
         <div class="div-playing-image">
-            <a id="playing-link" target="_blank"><img id="playing-image" alt="Now playing image" width="200" height="200"></a>
+            <a id="playing-link" target="_blank">
+                <img id="playing-image" alt="Now playing image" width="200" height="200">
+            </a>
         </div>
         <br>
     </center>
     <footer class="page-footer">
         <ul class="site-footer-links right">
-            <li><a href="https://ssamjh.nz/">Primary Website</a></li>
+            <li>
+                <a href="https://ssamjh.nz/">Primary Website</a>
+            </li>
         </ul>
-
         <a href="https://github.com/ssamjh/Music-Sync-Web">
             <span class="mega-octicon octicon-mark-github"></span>
         </a>
-
         <ul class="site-footer-links">
-            <li>© 2022 <span>ssamjh</span></li>
+            <li>© 2022 <span>ssamjh</span>
+            </li>
         </ul>
     </footer>
     <script type="text/javascript">
-        if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
-            window.onload = function() {
+        window.onload = function() {
+            // Hide the stop button
+            document.getElementById('button-stop').style.visibility = 'hidden';
+            // Set default audio quality
+            qualitySet('//icecast.sjh.at/spotifynet-hq');
+            if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
+                // Detected mobile, setting volume to 100% and removing volume bar
+                console.log('Detected mobile, removing volume bar');
                 document.getElementById('audio-stream').volume = 1.0;
-                console.log('Setting mobile volume to: 100');
-                document.getElementById('button-stop').style.visibility = 'hidden';
-                console.log('Hiding stop button');
-                var elem = document.getElementById("div-volume");
-                elem.remove();
-                console.log('Hiding volume controls');
-                qualitySet('//icecast.sjh.at/spotifynet-hq');
-                console.log('Setting default audio URL');
-            }
-        } else {
-            window.onload = function() {
+                document.getElementById('div-volume').remove();
+            } else {
+                // Detected desktop, setting volume to 10%
                 document.getElementById('audio-stream').volume = 0.1;
-                console.log('Setting default volume to: 10');
-                document.getElementById('button-stop').style.visibility = 'hidden';
-                console.log('Hiding stop button');
-                qualitySet('//icecast.sjh.at/spotifynet-hq');
-                console.log('Setting default audio URL');
             }
         }
-
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.body.style.backgroundColor = "#222";
             document.body.style.color = "gray";
@@ -92,64 +93,42 @@
     </script>
     <script type="text/javascript">
         function qualitySet(source) {
-            document.getElementById("audio-stream").pause();
-            console.log('Paused player');
-            document.getElementById("audio-stream").setAttribute('src', source);
+            // document.getElementById('audio-stream').pause();
+            // console.log('Paused player');
+            document.getElementById('audio-stream').setAttribute('src', source);
             console.log('Set source to: ' + source);
         }
 
         function qualityUpdate() {
-
-            var zone = document.getElementById("select-quality");
+            var zone = document.getElementById('select-quality');
             var audioStream = document.getElementById('audio-stream');
-
             if (zone.value == "audiophile") {
-
                 if (audioStream.duration > 0 && !audioStream.paused) {
-
                     qualitySet('//icecast.sjh.at/spotifynet-uhq');
                     buttonPlay();
-
                 } else {
-
                     qualitySet('//icecast.sjh.at/spotifynet-uhq');
-
                 }
             } else if (zone.value == "high") {
-
                 if (audioStream.duration > 0 && !audioStream.paused) {
-
                     qualitySet('//icecast.sjh.at/spotifynet-hq');
                     buttonPlay();
-
                 } else {
-
                     qualitySet('//icecast.sjh.at/spotifynet-hq');
-
                 }
             } else if (zone.value == "normal") {
-
                 if (audioStream.duration > 0 && !audioStream.paused) {
-
                     qualitySet('//icecast.sjh.at/spotifynet');
                     buttonPlay();
-
                 } else {
-
                     qualitySet('//icecast.sjh.at/spotifynet');
-
                 }
             } else if (zone.value == "low") {
-
                 if (audioStream.duration > 0 && !audioStream.paused) {
-
                     qualitySet('//icecast.sjh.at/spotifynet-lq');
                     buttonPlay();
-
                 } else {
-
                     qualitySet('//icecast.sjh.at/spotifynet-lq');
-
                 }
             }
         }
@@ -180,7 +159,6 @@
             var player = document.getElementById('audio-stream');
             player.volume = val / 100;
         }
-
         document.querySelector("#input-volume").addEventListener("input", function(e) {
             document.querySelector(".volume-percentage").textContent = e.currentTarget.value;
             console.log('Volume changed: ' + e.currentTarget.value + '');
@@ -212,18 +190,16 @@
         setInterval(trackImage, 10000);
 
         function trackURL() {
-            fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt')
-                .then(response => response.text())
-                .then((data) => {
-                    var spotifySongID = (data)
-                    if (spotifySongID != "") {
-                        document.getElementById("playing-link").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID)
-                        document.getElementById("playing-link").setAttribute("target", "_blank");
-                    } else {
-                        document.getElementById("playing-link").setAttribute("href", "javascript:void(0)")
-                        document.getElementById("playing-link").setAttribute("target", "_self");
-                    }
-                })
+            fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt').then(response => response.text()).then((data) => {
+                var spotifySongID = (data)
+                if (spotifySongID != "") {
+                    document.getElementById("playing-link").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID)
+                    document.getElementById("playing-link").setAttribute("target", "_blank");
+                } else {
+                    document.getElementById("playing-link").setAttribute("href", "javascript:void(0)")
+                    document.getElementById("playing-link").setAttribute("target", "_self");
+                }
+            })
         }
         trackURL()
         setInterval(trackURL, 10000);
