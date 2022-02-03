@@ -111,11 +111,11 @@
                 let volumeCookie = cookieGet('volume');
                 if (volumeCookie != "") {
                     document.getElementById('audio-stream').volume = (volumeCookie / 100);
-                    document.querySelector(".volume-percentage").textContent = (volumeCookie);
+                    document.querySelector(".volume-percentage").textContent = (volumeCookie) + '%';
                     document.getElementById('input-volume').value = (volumeCookie);
                 } else {
                     document.getElementById('audio-stream').volume = 0.1;
-                    document.querySelector(".volume-percentage").textContent = 10;
+                    document.querySelector(".volume-percentage").textContent = 10 + '%';
                     document.getElementById('input-volume').value = 10;
                 }
             }
@@ -185,8 +185,8 @@
             player.volume = val / 100;
         }
         document.querySelector("#input-volume").addEventListener("input", function(e) {
-            document.querySelector(".volume-percentage").textContent = e.currentTarget.value;
-            console.log('Volume changed: ' + e.currentTarget.value + '');
+            document.querySelector(".volume-percentage").textContent = e.currentTarget.value + '%';
+            console.log('Volume changed: ' + e.currentTarget.value + '%');
         })
     </script>
     <script type="text/javascript">
@@ -222,7 +222,7 @@
             pressed.push(e.key);
             pressed.splice(-secretCode.length - 1, pressed.length - secretCode.length);
             if (pressed.join('').includes(secretCode)) {
-                document.getElementById('input-volume').step = '1.0';
+                document.getElementById('input-volume').step = '2.0';
                 console.log("OCD mode activated")
             }
         });
