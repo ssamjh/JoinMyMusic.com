@@ -16,7 +16,7 @@
         <a>
             <b>Stream Quality:</b>
         </a>
-        <select name="select-quality" id="select-quality" onchange="qualityUpdate();">
+        <select name="select-quality" id="select-quality" onchange="qualityUpdate(this.value);cookieSet('quality', this.value, 365);">
         <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
         <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
         <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
@@ -34,9 +34,9 @@
             <a>
                 <b>Volume: </b>
             </a>
-            <label class="volume-percentage" for="volume-percentage">10</label>
+            <label class="volume-percentage" for="volume-percentage"></label>
             <br>
-            <input id="input-volume" type="range" min="0" max="100" step="0.1" value="10" class="input-volume" oninput="volumeSet(this.value)" onchange="volumeSet(this.value)"></input>
+            <input id="input-volume" type="range" min="0" max="100" step="0.1" class="input-volume" oninput="volumeSet(this.value);cookieSet('volume', this.value, 365);" onchange="volumeSet(this.value);cookieSet('volume', this.value, 365);"></input>
         </div>
         <br>
         <a>
@@ -71,11 +71,42 @@
         </ul>
     </footer>
     <script type="text/javascript">
+        function cookieSet(cname, cvalue, exdays) {
+            const d = new Date();
+            d.setTime(d.getTime() + (exdays * 24 * 60 * 60 * 1000));
+            let expires = "expires=" + d.toUTCString();
+            document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
+        }
+
+        function cookieGet(cname) {
+            let name = cname + "=";
+            let ca = document.cookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) == ' ') {
+                    c = c.substring(1);
+                }
+                if (c.indexOf(name) == 0) {
+                    return c.substring(name.length, c.length);
+                }
+            }
+            return "";
+        }
+
         window.onload = function() {
             // Hide the stop button
             document.getElementById('button-stop').style.visibility = 'hidden';
-            // Set default audio quality
-            qualitySet('//icecast.sjh.at/spotifynet-hq');
+
+            var qualityCookie = cookieGet('quality');
+
+            if (qualityCookie != "") {
+                qualityUpdate(qualityCookie);
+                document.getElementById("select-quality").value = (qualityCookie);
+
+            } else {
+                qualitySet('//icecast.sjh.at/spotifynet-hq');
+            }
+
             if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
                 // Detected mobile, setting volume to 100% and removing volume bar
                 console.log('Detected mobile, removing volume bar');
@@ -83,9 +114,21 @@
                 document.getElementById('div-volume').remove();
             } else {
                 // Detected desktop, setting volume to 10%
-                document.getElementById('audio-stream').volume = 0.1;
+
+                let volumeCookie = cookieGet('volume');
+
+                if (volumeCookie != "") {
+                    document.getElementById('audio-stream').volume = (volumeCookie / 100);
+                    document.querySelector(".volume-percentage").textContent = (volumeCookie);
+                    document.getElementById('input-volume').value = (volumeCookie);
+                } else {
+                    document.getElementById('audio-stream').volume = 0.1;
+                    document.querySelector(".volume-percentage").textContent = 10;
+                    document.getElementById('input-volume').value = 10;
+                }
             }
         }
+
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.body.style.backgroundColor = "#222";
             document.body.style.color = "gray";
@@ -98,31 +141,31 @@
             console.log('Set source to: ' + source);
         }
 
-        function qualityUpdate() {
-            var zone = document.getElementById('select-quality');
+        function qualityUpdate(qual) {
+            // var zone = document.getElementById('select-quality');
             var audioStream = document.getElementById('audio-stream');
-            if (zone.value == "audiophile") {
+            if (qual == "audiophile") {
                 if (audioStream.duration > 0 && !audioStream.paused) {
                     qualitySet('//icecast.sjh.at/spotifynet-uhq');
                     buttonPlay();
                 } else {
                     qualitySet('//icecast.sjh.at/spotifynet-uhq');
                 }
-            } else if (zone.value == "high") {
+            } else if (qual == "high") {
                 if (audioStream.duration > 0 && !audioStream.paused) {
                     qualitySet('//icecast.sjh.at/spotifynet-hq');
                     buttonPlay();
                 } else {
                     qualitySet('//icecast.sjh.at/spotifynet-hq');
                 }
-            } else if (zone.value == "normal") {
+            } else if (qual == "normal") {
                 if (audioStream.duration > 0 && !audioStream.paused) {
                     qualitySet('//icecast.sjh.at/spotifynet');
                     buttonPlay();
                 } else {
                     qualitySet('//icecast.sjh.at/spotifynet');
                 }
-            } else if (zone.value == "low") {
+            } else if (qual == "low") {
                 if (audioStream.duration > 0 && !audioStream.paused) {
                     qualitySet('//icecast.sjh.at/spotifynet-lq');
                     buttonPlay();
