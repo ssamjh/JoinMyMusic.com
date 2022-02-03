@@ -89,12 +89,11 @@
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.body.style.backgroundColor = "#222";
             document.body.style.color = "gray";
+            console.log('Detected device in dark mode, turning off the lights!');
         }
     </script>
     <script type="text/javascript">
         function qualitySet(source) {
-            // document.getElementById('audio-stream').pause();
-            // console.log('Paused player');
             document.getElementById('audio-stream').setAttribute('src', source);
             console.log('Set source to: ' + source);
         }
@@ -136,22 +135,22 @@
     <script type="text/javascript">
         function buttonPlay() {
             document.getElementById("audio-stream").load();
-            console.log('Loading source');
+            // console.log('Loading source');
             document.getElementById("audio-stream").play();
-            console.log('Playing audio');
+            // console.log('Playing audio');
             document.getElementById('button-stop').style.visibility = 'visible';
-            console.log('Showing stop button');
+            // console.log('Showing stop button');
             document.getElementById('button-play').style.visibility = 'hidden';
-            console.log('Hiding play button');
+            // console.log('Hiding play button');
         }
 
         function buttonStop() {
             document.getElementById('audio-stream').pause();
-            console.log('Stopping audio');
+            // console.log('Stopping audio');
             document.getElementById('button-stop').style.visibility = 'hidden';
-            console.log('Hiding stop button');
+            // console.log('Hiding stop button');
             document.getElementById('button-play').style.visibility = 'visible';
-            console.log('Showing play button');
+            // console.log('Showing play button');
         }
     </script>
     <script type="text/javascript">
@@ -161,14 +160,14 @@
         }
         document.querySelector("#input-volume").addEventListener("input", function(e) {
             document.querySelector(".volume-percentage").textContent = e.currentTarget.value;
-            console.log('Volume changed: ' + e.currentTarget.value + '');
+            // console.log('Volume changed: ' + e.currentTarget.value + '');
         })
     </script>
     <script type="text/javascript">
         function trackArtist() {
             $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-artist").text(data);
-                console.log('Refreshing metadata');
+                // console.log('Refreshing metadata');
             });
         }
         trackArtist()
