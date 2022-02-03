@@ -218,8 +218,11 @@
                     var spotifySongID = (data)
                     if (spotifySongID != "") {
                         document.getElementById("playing-link").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID)
-                    } else
+                        document.getElementById("playing-link").setAttribute("target", "_blank");
+                    } else {
                         document.getElementById("playing-link").setAttribute("href", "javascript:void(0)")
+                        document.getElementById("playing-link").setAttribute("target", "_self");
+                    }
                 })
         }
         trackURL()
