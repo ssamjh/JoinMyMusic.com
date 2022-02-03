@@ -24,9 +24,8 @@
       </select>
         <br>
         <br>
-        <button class="small button" id="button-play" onclick="buttonPlay();">Play</button>
+        <button class="small button" id="button-toggle" onclick="buttonPlay();">Play</button>
         <br>
-        <button class="small button" id="button-stop" onclick="buttonStop();">Stop</button>
         <br>
         <br>
         <div id="div-volume">
@@ -95,7 +94,7 @@
 
         window.onload = function() {
             // Hide the stop button
-            document.getElementById('button-stop').style.visibility = 'hidden';
+            // document.getElementById('button-stop').style.visibility = 'hidden';
 
             var qualityCookie = cookieGet('quality');
 
@@ -181,19 +180,15 @@
             // console.log('Loading source');
             document.getElementById("audio-stream").play();
             // console.log('Playing audio');
-            document.getElementById('button-stop').style.visibility = 'visible';
-            // console.log('Showing stop button');
-            document.getElementById('button-play').style.visibility = 'hidden';
-            // console.log('Hiding play button');
+            document.getElementById('button-toggle').textContent = "Stop";
+            document.getElementById('button-toggle').setAttribute("onClick", "javascript: buttonStop();");
         }
 
         function buttonStop() {
             document.getElementById('audio-stream').pause();
             // console.log('Stopping audio');
-            document.getElementById('button-stop').style.visibility = 'hidden';
-            // console.log('Hiding stop button');
-            document.getElementById('button-play').style.visibility = 'visible';
-            // console.log('Showing play button');
+            document.getElementById('button-toggle').textContent = "Play";
+            document.getElementById('button-toggle').setAttribute("onClick", "javascript: buttonPlay();");
         }
     </script>
     <script type="text/javascript">
