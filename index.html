@@ -1,6 +1,8 @@
+<!DOCTYPE html>
+
 <head>
     <title>ssamjh's Music Sync</title>
-    <script type="text/javascript" src="//code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="//code.jquery.com/jquery-3.6.0.min.js"></script>
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="//pages.github.com/css/pages.css" type="text/css">
     <link rel="stylesheet" href="css/buttons.css">
@@ -35,16 +37,16 @@
             </a>
             <label class="volume-percentage" for="volume-percentage"></label>
             <br>
-            <input id="input-volume" type="range" min="0" max="100" step="0.1" value="0" class="input-volume" oninput="volumeSet(this.value);cookieSet('volume', this.value, 365);" onchange="volumeSet(this.value);cookieSet('volume', this.value, 365);"></input>
+            <input id="input-volume" type="range" min="0" max="100" step="0.1" value="0" class="input-volume" oninput="volumeSet(this.value);cookieSet('volume', this.value, 365);" onchange="volumeSet(this.value);cookieSet('volume', this.value, 365);">
         </div>
         <br>
         <a>
             <b>Now Playing: </b>
         </a>
-        <h4 style="font-size:16">
+        <h4 style="font-size:16px">
             <div class="div-playing-title"></div>
         </h4>
-        <h4 style="font-size:12">
+        <h4 style="font-size:12px">
             <div class="div-playing-artist"></div>
         </h4>
         <br>
@@ -69,7 +71,7 @@
             </li>
         </ul>
     </footer>
-    <script type="text/javascript">
+    <script>
         function cookieSet(cname, cvalue, exdays) {
             const d = new Date();
             d.setTime(d.getTime() + (exdays * 24 * 60 * 60 * 1000));
@@ -125,7 +127,7 @@
             console.log('Detected device in dark mode, turning off the lights!');
         }
     </script>
-    <script type="text/javascript">
+    <script>
         function qualitySet(source) {
             document.getElementById('audio-stream').setAttribute('src', source);
             console.log('Set source to: ' + source);
@@ -164,7 +166,7 @@
             }
         }
     </script>
-    <script type="text/javascript">
+    <script>
         function buttonPlay() {
             document.getElementById("audio-stream").load();
             document.getElementById("audio-stream").play();
@@ -178,7 +180,7 @@
             document.getElementById('button-toggle').setAttribute("onClick", "javascript: buttonPlay();");
         }
     </script>
-    <script type="text/javascript">
+    <script>
         function volumeSet(val) {
             var player = document.getElementById('audio-stream');
             player.volume = val / 100;
@@ -188,7 +190,7 @@
             console.log('Volume changed: ' + e.currentTarget.value + '%');
         })
     </script>
-    <script type="text/javascript">
+    <script>
         function trackMeta() {
             console.log('Refreshing metadata');
             $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
@@ -213,7 +215,7 @@
         trackMeta()
         setInterval(trackMeta, 5000);
     </script>
-    <script type="text/javascript">
+    <script>
         const pressed = [];
         const secretCode = 'ocdmode';
 
