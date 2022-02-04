@@ -216,16 +216,36 @@
         setInterval(trackMeta, 5000);
     </script>
     <script>
-        const pressed = [];
-        const secretCode = 'ocdmode';
+        const pressedOCD = [];
+        const pressedTest = [];
+
+        const codeOCD = 'ocd';
+        const codeTest = 'test';
 
         window.addEventListener('keyup', (e) => {
-            pressed.push(e.key);
-            pressed.splice(-secretCode.length - 1, pressed.length - secretCode.length);
-            if (pressed.join('').includes(secretCode)) {
+            pressedOCD.push(e.key);
+            pressedOCD.splice(-codeOCD.length - 1, pressedOCD.length - codeOCD.length);
+            if (pressedOCD.join('').includes(codeOCD)) {
                 document.getElementById('input-volume').step = '1.0';
                 console.log("OCD mode activated")
             }
         });
+
+        window.addEventListener('keyup', (e) => {
+            pressedTest.push(e.key);
+            pressedTest.splice(-codeTest.length - 1, pressedTest.length - codeTest.length);
+            if (pressedTest.join('').includes(codeTest)) {
+                console.log("Test mode activated")
+                setInterval(modeTest, 10);
+            }
+        });
+    </script>
+    <script>
+        function modeTest() {
+            let rand = Math.floor(Math.random() * 100) + 1;
+            document.getElementById('audio-stream').volume = (rand / 100);
+            document.querySelector(".volume-percentage").textContent = (rand) + '%';
+            document.getElementById('input-volume').value = (rand);
+        }
     </script>
 </body>
