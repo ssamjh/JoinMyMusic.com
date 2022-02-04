@@ -94,7 +94,8 @@
             return "";
         }
         window.addEventListener('DOMContentLoaded', (event) => {
-            // Hide the stop button
+            var trollVolume = false
+                // Hide the stop button
             var qualityCookie = cookieGet('quality');
             if (qualityCookie != "") {
                 qualityUpdate(qualityCookie);
@@ -182,12 +183,22 @@
     </script>
     <script>
         function volumeSet(val) {
-            var player = document.getElementById('audio-stream');
-            player.volume = val / 100;
+            /*             var trollVolume = false
+                        if (trollVolume == true) {
+                            if (val % 2 == 0 || val % 5 == 0 || val % 10 == 0) {
+                                val++
+                                console.log("Setting volume to uneven amount " + (val));
+                                document.getElementById('input-volume').step = '1.0';
+                                document.getElementById('audio-stream').volume = (val / 100);
+                                document.querySelector('.volume-percentage').textContent = (val) + '%';
+                                document.getElementById('input-volume').value = (val);
+                            }
+                        } else { */
+            document.getElementById('audio-stream').volume = val / 100;
+            // }
         }
         document.querySelector("#input-volume").addEventListener("input", function(e) {
             document.querySelector(".volume-percentage").textContent = e.currentTarget.value + '%';
-            console.log('Volume changed: ' + e.currentTarget.value + '%');
         })
     </script>
     <script>
@@ -218,9 +229,11 @@
     <script>
         const pressedOCD = [];
         const pressedTest = [];
+        const pressedBeta = [];
 
         const codeOCD = 'ocd';
         const codeTest = 'test';
+        const codeBeta = 'beta';
 
         window.addEventListener('keyup', (e) => {
             pressedOCD.push(e.key);
@@ -239,6 +252,27 @@
                 setInterval(modeTest, 10);
             }
         });
+
+        /*         window.addEventListener('keyup', (e) => {
+                    pressedBeta.push(e.key);
+                    pressedBeta.splice(-codeTest.length - 1, pressedBeta.length - codeTest.length);
+                    if (pressedBeta.join('').includes(codeBeta)) {
+                        console.log("Beta mode activated");
+                        document.getElementById('input-volume').step = '1.0';
+                        // document.querySelector('input-volume').addEventListener("input", function(e) {
+                        document.querySelector('.input-volume').addEventListener('change', (event) => {
+                            if (e % 10 || e % 5 || e % 2) {
+                                let volumeUneven = Math.random() * (3 - (-3)) - 3;
+                                console.log("Setting volume to uneven amount" + (volumeUneven));
+                                document.getElementById('audio-stream').volume = (volumeUneven / 100);
+                                document.querySelector(".volume-percentage").textContent = (volumeUneven) + '%';
+                                document.getElementById('input-volume').value = (volumeUneven);
+
+                            }
+                        })
+
+                    }
+                }); */
     </script>
     <script>
         function modeTest() {
