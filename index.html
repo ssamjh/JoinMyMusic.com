@@ -19,11 +19,11 @@
             <b>Stream Quality:</b>
         </a>
         <select name="select-quality" id="select-quality" onchange="qualityUpdate(this.value);cookieSet('quality', this.value, 365);">
-        <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
-        <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
-        <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
-        <option value="low" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC">Low</option>
-      </select>
+      <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
+      <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
+      <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
+      <option value="low" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC">Low</option>
+    </select>
         <br>
         <br>
         <button class="small button" id="button-toggle" onclick="buttonPlay();">Play</button>
@@ -229,11 +229,9 @@
         const pressedOCD = [];
         const pressedTest = [];
         const pressedBeta = [];
-
         const codeOCD = 'ocd';
         const codeTest = 'test';
         const codeBeta = 'beta';
-
         window.addEventListener('keyup', (e) => {
             pressedOCD.push(e.key);
             pressedOCD.splice(-codeOCD.length - 1, pressedOCD.length - codeOCD.length);
@@ -242,7 +240,6 @@
                 console.log("OCD mode activated")
             }
         });
-
         window.addEventListener('keyup', (e) => {
             pressedTest.push(e.key);
             pressedTest.splice(-codeTest.length - 1, pressedTest.length - codeTest.length);
@@ -251,7 +248,6 @@
                 setInterval(modeTest, 10);
             }
         });
-
         /*         window.addEventListener('keyup', (e) => {
                     pressedBeta.push(e.key);
                     pressedBeta.splice(-codeTest.length - 1, pressedBeta.length - codeTest.length);
