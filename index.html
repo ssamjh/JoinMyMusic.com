@@ -3,6 +3,7 @@
 <head>
     <title>ssamjh's Music Sync</title>
     <script src="//code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="js/ViaJS-1.1.0.js"></script>
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="//pages.github.com/css/pages.css" type="text/css">
     <link rel="stylesheet" href="css/buttons.css">
@@ -54,6 +55,9 @@
             </a>
         </div>
         <br>
+        <a><b>Lyrics:</b></a>
+        <div id="lyrics-content"></div>
+
     </center>
     <footer class="page-footer">
         <ul class="site-footer-links right">
@@ -219,9 +223,17 @@
                     document.getElementById("playing-link").setAttribute("target", "_self");
                 }
             })
+            $.ajax({
+                type: "GET",
+                url: "lyrics.html",
+                data: {},
+                success: function(data) {
+                    $('#lyrics-content').html(data);
+                }
+            });
         }
         trackMeta()
-        setInterval(trackMeta, 5000);
+        setInterval(trackMeta, 500);
     </script>
     <script>
         const pressedOCD = [];
