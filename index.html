@@ -205,15 +205,15 @@
     <script>
         function trackMeta() {
             console.log('Refreshing metadata');
-            $.get('//joinmymusic.com/nowplaying/Snip_Artist.txt?rand=' + Math.random(), function(data) {
+            $.get('//joinmymusic.com/metadata/artist.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-artist").text(data);
             });
-            $.get('//joinmymusic.com/nowplaying/Snip_Track.txt?rand=' + Math.random(), function(data) {
+            $.get('//joinmymusic.com/metadata/song.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-title").text(data);
             });
             var myImageElement = document.getElementById('playing-image');
-            myImageElement.src = '//joinmymusic.com/nowplaying/Snip_Artwork.jpg?rand=' + Math.random();
-            fetch('//joinmymusic.com/nowplaying/Snip_Trackid.txt').then(response => response.text()).then((data) => {
+            myImageElement.src = '//joinmymusic.com/metadata/artwork.jpg?rand=' + Math.random();
+            fetch('//joinmymusic.com/metadata/songid.txt?').then(response => response.text()).then((data) => {
                 var spotifySongID = (data)
                 if (spotifySongID != "") {
                     document.getElementById("playing-link").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID)
