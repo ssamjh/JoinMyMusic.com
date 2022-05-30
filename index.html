@@ -54,9 +54,6 @@
                 <img id="playing-image" class="playing-image" alt="Now playing image" width="200" height="200">
             </a>
         </div>
-        <br>
-        <a><b>Lyrics:</b></a>
-        <div id="lyrics-content"></div>
 
     </center>
     <footer class="page-footer">
@@ -223,17 +220,9 @@
                     document.getElementById("playing-link").setAttribute("target", "_self");
                 }
             })
-            $.ajax({
-                type: "GET",
-                url: "lyrics.html",
-                data: {},
-                success: function(data) {
-                    $('#lyrics-content').html(data);
-                }
-            });
         }
         trackMeta()
-        setInterval(trackMeta, 500);
+        setInterval(trackMeta, 10000);
     </script>
     <script>
         const pressedOCD = [];
