@@ -94,15 +94,13 @@
         window.addEventListener('DOMContentLoaded', (event) => {
             // Hide the stop button
             var qualityCookie = cookieGet('quality');
+            if (qualityCookie === "audiophile") {
+                cookieSet('quality', 'high', 365);
+                window.location.reload(true);
+            }
             if (qualityCookie != "") {
-                if (qualityCookie = "audiophile") {
-                    qualitySet('//icecast.sjh.at/spotifynet-hq');
-                    cookieSet('quality', 'high', 365);
-                }
-                else {
                 qualityUpdate(qualityCookie);
                 document.getElementById("select-quality").value = (qualityCookie);
-                }
             } else {
                 qualitySet('//icecast.sjh.at/spotifynet');
                 document.getElementById("select-quality").value = "normal";
