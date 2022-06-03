@@ -18,7 +18,6 @@
         <br>
         <a><b>Stream Quality:</b></a>
         <select name="select-quality" id="select-quality" onchange="qualityUpdate(this.value);cookieSet('quality', this.value, 365);">
-      <option value="audiophile" title="You are so cool that you need your own water supply.&#13;&#10;&#13;&#10;16bit FLAC">Audiophile</option>
       <option value="high" selected="selected" title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps Opus">High</option>
       <option value="normal" title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps Opus">Normal</option>
       <option value="low" title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;32Kbps HE-AAC">Low</option>
@@ -96,8 +95,14 @@
             // Hide the stop button
             var qualityCookie = cookieGet('quality');
             if (qualityCookie != "") {
+                if (qualityCookie = "audiophile") {
+                    qualitySet('//icecast.sjh.at/spotifynet-hq');
+                    qualityUpdate(high);
+                }
+                else {
                 qualityUpdate(qualityCookie);
                 document.getElementById("select-quality").value = (qualityCookie);
+                }
             } else {
                 qualitySet('//icecast.sjh.at/spotifynet-hq');
             }
@@ -134,14 +139,7 @@
 
         function qualityUpdate(qual) {
             var audioStream = document.getElementById('audio-stream');
-            if (qual == "audiophile") {
-                if (audioStream.duration > 0 && !audioStream.paused) {
-                    qualitySet('//icecast.sjh.at/spotifynet-uhq');
-                    buttonPlay();
-                } else {
-                    qualitySet('//icecast.sjh.at/spotifynet-uhq');
-                }
-            } else if (qual == "high") {
+            if (qual == "high") {
                 if (audioStream.duration > 0 && !audioStream.paused) {
                     qualitySet('//icecast.sjh.at/spotifynet-hq');
                     buttonPlay();
