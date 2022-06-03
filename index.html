@@ -104,7 +104,8 @@
                 document.getElementById("select-quality").value = (qualityCookie);
                 }
             } else {
-                qualitySet('//icecast.sjh.at/spotifynet-hq');
+                qualitySet('//icecast.sjh.at/spotifynet');
+                document.getElementById("select-quality").value = "normal";
             }
             if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
                 // Detected mobile, setting volume to 100% and removing volume bar
