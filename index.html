@@ -2,10 +2,9 @@
 
 <head>
     <title>ssamjh's Music Sync</title>
-    <script src="//code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="js/ViaJS-1.1.0.js"></script>
+    <script src="js/jquery-3.6.0.min.js"></script>
     <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="//pages.github.com/css/pages.css" type="text/css">
+    <link rel="stylesheet" href="css/gh-pages.css" type="text/css">
     <link rel="stylesheet" href="css/buttons.css">
 </head>
 
@@ -70,6 +69,7 @@
         </ul>
     </footer>
     <script>
+        // Function I got from the internet to save cookies
         function cookieSet(cname, cvalue, exdays) {
             const d = new Date();
             d.setTime(d.getTime() + (exdays * 24 * 60 * 60 * 1000));
@@ -77,6 +77,7 @@
             document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
         }
 
+        // Function I got from the internet to retrieve cookies
         function cookieGet(cname) {
             let name = cname + "=";
             let ca = document.cookie.split(';');
@@ -94,14 +95,18 @@
         window.addEventListener('DOMContentLoaded', (event) => {
             // Hide the stop button
             var qualityCookie = cookieGet('quality');
+            // If cookie refers to audiophile, set it to high and refresh page, as that option was removed
             if (qualityCookie === "audiophile") {
                 cookieSet('quality', 'high', 365);
                 window.location.reload(true);
             }
+            // Check if quality cookie exists
             if (qualityCookie != "") {
+                // If it does, get and update page to the quality from last time
                 qualityUpdate(qualityCookie);
                 document.getElementById("select-quality").value = (qualityCookie);
             } else {
+                // Otherwise if cookie doesn't exist, set to default
                 qualitySet('//icecast.sjh.at/spotifynet');
                 document.getElementById("select-quality").value = "normal";
             }
@@ -113,17 +118,21 @@
             } else {
                 // Detected desktop, setting volume to 10%
                 let volumeCookie = cookieGet('volume');
+                // Check if volume cookie exists
                 if (volumeCookie != "") {
+                    // If it does, restore volume to value from cookie
                     document.getElementById('audio-stream').volume = (volumeCookie / 100);
                     document.querySelector(".volume-percentage").textContent = (volumeCookie) + '%';
                     document.getElementById('input-volume').value = (volumeCookie);
                 } else {
+                    // Otherwise set to default
                     document.getElementById('audio-stream').volume = 0.1;
                     document.querySelector(".volume-percentage").textContent = 10 + '%';
                     document.getElementById('input-volume').value = 10;
                 }
             }
         });
+        // Detect if client is in dark mode
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.body.style.backgroundColor = "#222";
             document.body.style.color = "gray";
@@ -131,11 +140,12 @@
         }
     </script>
     <script>
+        // Function to set quality
         function qualitySet(source) {
             document.getElementById('audio-stream').setAttribute('src', source);
             console.log('Set source to: ' + source);
         }
-
+        // Function to update quality while listening
         function qualityUpdate(qual) {
             var audioStream = document.getElementById('audio-stream');
             if (qual == "high") {
@@ -163,6 +173,7 @@
         }
     </script>
     <script>
+        // Play button
         function buttonPlay() {
             document.getElementById("audio-stream").load();
             document.getElementById("audio-stream").play();
@@ -170,6 +181,7 @@
             document.getElementById('button-toggle').setAttribute("onClick", "javascript: buttonStop();");
         }
 
+        // Stop button
         function buttonStop() {
             document.getElementById('audio-stream').pause();
             document.getElementById('button-toggle').textContent = "Play";
@@ -177,46 +189,55 @@
         }
     </script>
     <script>
+        // Divide volume by 100 to get HTML volume
         function volumeSet(val) {
             document.getElementById('audio-stream').volume = val / 100;
-            // }
         }
+
+        // Listen for changes to the volume slider
         document.querySelector("#input-volume").addEventListener("input", function(e) {
             document.querySelector(".volume-percentage").textContent = e.currentTarget.value + '%';
         })
     </script>
     <script>
+        // Fetch metadata from api and store as varibles
         function trackMeta() {
             console.log('Refreshing metadata');
+            // Artist
             $.get('//joinmymusic.com/metadata/artist.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-artist").text(data);
             });
+            // Song
             $.get('//joinmymusic.com/metadata/song.txt?rand=' + Math.random(), function(data) {
                 $(".div-playing-title").text(data);
             });
-            var myImageElement = document.getElementById('playing-image');
-            myImageElement.src = '//joinmymusic.com/metadata/artwork.jpg?rand=' + Math.random();
+            // Album art
+            document.getElementById('playing-image') = '//joinmymusic.com/metadata/artwork.jpg?rand=' + Math.random();
+            // Grab song ID from spotify
             fetch('//joinmymusic.com/metadata/songid.txt?').then(response => response.text()).then((data) => {
                 var spotifySongID = (data)
+                // If ID exists, build URL for playing link
                 if (spotifySongID != "") {
                     document.getElementById("playing-link").setAttribute("href", "https://open.spotify.com/track/" + spotifySongID)
                     document.getElementById("playing-link").setAttribute("target", "_blank");
+                // Otherwise create null URL that doesn't do anything when clicked
                 } else {
                     document.getElementById("playing-link").setAttribute("href", "javascript:void(0)")
                     document.getElementById("playing-link").setAttribute("target", "_self");
                 }
             })
         }
+        // Call on page load
         trackMeta()
+        // And call every 10 seconds
         setInterval(trackMeta, 10000);
     </script>
     <script>
+        // Fun little "hidden" codes
         const pressedOCD = [];
         const pressedTest = [];
-        const pressedBeta = [];
         const codeOCD = 'ocd';
         const codeTest = 'test';
-        const codeBeta = 'beta';
         window.addEventListener('keyup', (e) => {
             pressedOCD.push(e.key);
             pressedOCD.splice(-codeOCD.length - 1, pressedOCD.length - codeOCD.length);
