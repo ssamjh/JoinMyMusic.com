@@ -24,12 +24,6 @@
     border-radius: 8%;
   }
 
-  @media (max-width: 480px) {
-    .input-volume {
-      width: 300px;
-    }
-  }
-
   .footer {
     display: flex;
     justify-content: space-between;
@@ -41,6 +35,10 @@
   .footer-item {
     flex: 1;
     text-align: center;
+  }
+
+  #div-volume {
+    display: none;
   }
 </style>
 <body>
@@ -178,25 +176,26 @@
         document.getElementById("select-quality").value = "normal";
       }
       if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
-        // Detected mobile, setting volume to 100% and removing volume bar
-        console.log("Detected mobile, removing volume bar");
+        // Detected mobile, setting volume to 100% and leaving volume bar hidden
+        console.log("Detected mobile, leaving volume bar hidden");
         document.getElementById("audio-stream").volume = 1.0;
-        document.getElementById("div-volume").remove();
       } else {
-        // Detected desktop, setting volume to 10%
+        // Detected desktop, setting volume to 10% and unhiding volume bar
+        console.log("Detected desktop, unhiding volume bar");
+        document.getElementById("audio-stream").volume = 0.1;
+        document.querySelector(".volume-percentage").textContent = "10%";
+        document.getElementById("input-volume").value = 10;
+        document.getElementById("div-volume").style.display = "block";
         let volumeCookie = cookieGet("volume");
         if (volumeCookie != "") {
           document.getElementById("audio-stream").volume = volumeCookie / 100;
           document.querySelector(".volume-percentage").textContent =
             volumeCookie + "%";
           document.getElementById("input-volume").value = volumeCookie;
-        } else {
-          document.getElementById("audio-stream").volume = 0.1;
-          document.querySelector(".volume-percentage").textContent = 10 + "%";
-          document.getElementById("input-volume").value = 10;
         }
       }
     });
+
     if (
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
