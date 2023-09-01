@@ -5,10 +5,10 @@
   <link
     rel="stylesheet"
     href="//pages.github.com/css/pages.css"
-    type="text/css"
-  />
+    type="text/css" />
   <link rel="stylesheet" href="css/buttons.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <style>
   @import url("https://fonts.googleapis.com/css?family=Source+Sans+Pro");
@@ -46,7 +46,7 @@
     <h2>ssamjh's Music Sync</h2>
     <h3>joinmymusic.com</h3>
     <br />
-    <audio id="audio-stream" preload="auto"></audio>
+    <audio id="audio-stream" preload="none"></audio>
     <br />
     <a>
       <b>Stream Quality:</b>
@@ -54,25 +54,21 @@
     <select
       name="select-quality"
       id="select-quality"
-      onchange="qualityUpdate(this.value);cookieSet('quality', this.value, 365);"
-    >
+      onchange="qualityUpdate(this.value);cookieSet('quality', this.value, 365);">
       <option
         value="high"
         selected="selected"
-        title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps AAC"
-      >
+        title="For those premium people that enjoy premium audio.&#13;&#10;&#13;&#10;256Kbps AAC">
         High
       </option>
       <option
         value="normal"
-        title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps AAC"
-      >
+        title="Smack-bang in the middle. Perfect for the normies.&#13;&#10;&#13;&#10;128Kbps AAC">
         Normal
       </option>
       <option
         value="low"
-        title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;48Kbps HE-AAC"
-      >
+        title="Do you struggle with internet? This stream will literally work on dialup.&#13;&#10;&#13;&#10;48Kbps HE-AAC">
         Low
       </option>
     </select>
@@ -100,8 +96,7 @@
         value="0"
         class="input-volume"
         oninput="volumeSet(this.value);cookieSet('volume', this.value, 365);"
-        onchange="volumeSet(this.value);cookieSet('volume', this.value, 365);"
-      />
+        onchange="volumeSet(this.value);cookieSet('volume', this.value, 365);" />
     </div>
     <br />
     <a>
@@ -121,8 +116,7 @@
           class="playing-image"
           alt="Now playing image"
           width="200"
-          height="200"
-        />
+          height="200" />
       </a>
     </div>
   </center>
@@ -172,8 +166,12 @@
         qualityUpdate(qualityCookie);
         document.getElementById("select-quality").value = qualityCookie;
       } else {
-        qualitySet("//icecast.sjh.at/spotifynet");
-        document.getElementById("select-quality").value = "normal";
+        if (isHlsSupported()) {
+          qualityUpdate("normal");
+        } else {
+          qualitySet("//icecast.sjh.at/spotifynet");
+          document.getElementById("select-quality").value = "normal";
+        }
       }
       if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
         // Detected mobile, setting volume to 100% and leaving volume bar hidden
@@ -213,34 +211,54 @@
 
     function qualityUpdate(qual) {
       var audioStream = document.getElementById("audio-stream");
-      if (qual == "high") {
-        if (audioStream.duration > 0 && !audioStream.paused) {
-          qualitySet("//icecast.sjh.at/spotifynet-hq");
-          buttonPlay();
-        } else {
-          qualitySet("//icecast.sjh.at/spotifynet-hq");
+      var source;
+      var wasPlaying = !audioStream.paused; // Check if audio was playing
+
+      if (isHlsSupported()) {
+        if (qual == "high") {
+          source = "https://hls.sjh.at/spotifynet/hq.m3u8";
+        } else if (qual == "normal") {
+          source = "https://hls.sjh.at/spotifynet/nq.m3u8";
+        } else if (qual == "low") {
+          source = "https://hls.sjh.at/spotifynet/lq.m3u8";
         }
-      } else if (qual == "normal") {
-        if (audioStream.duration > 0 && !audioStream.paused) {
-          qualitySet("//icecast.sjh.at/spotifynet");
-          buttonPlay();
-        } else {
-          qualitySet("//icecast.sjh.at/spotifynet");
+        initHls(source);
+      } else {
+        if (qual == "high") {
+          source = "https://icecast.sjh.at/spotifynet-hq";
+        } else if (qual == "normal") {
+          source = "https://icecast.sjh.at/spotifynet";
+        } else if (qual == "low") {
+          source = "https://icecast.sjh.at/spotifynet-lq";
         }
-      } else if (qual == "low") {
-        if (audioStream.duration > 0 && !audioStream.paused) {
-          qualitySet("//icecast.sjh.at/spotifynet-lq");
-          buttonPlay();
-        } else {
-          qualitySet("//icecast.sjh.at/spotifynet-lq");
-        }
+        qualitySet(source);
       }
+
+      // If audio was playing, play the new source
+      if (wasPlaying) {
+        audioStream.play();
+      }
+    }
+
+    // Check if audio is playing after setting the source
+    if (!audioStream.paused) {
+      document.getElementById("button-toggle").textContent = "Stop";
+      document
+        .getElementById("button-toggle")
+        .setAttribute("onClick", "javascript: buttonStop();");
+    } else {
+      document.getElementById("button-toggle").textContent = "Play";
+      document
+        .getElementById("button-toggle")
+        .setAttribute("onClick", "javascript: buttonPlay();");
     }
   </script>
   <script>
     function buttonPlay() {
-      document.getElementById("audio-stream").load();
-      document.getElementById("audio-stream").play();
+      var audioStream = document.getElementById("audio-stream");
+      var quality = document.getElementById("select-quality").value;
+      qualityUpdate(quality); // This will set the correct source based on the quality
+      audioStream.play(); // Add this line to play the audio
       document.getElementById("button-toggle").textContent = "Stop";
       document
         .getElementById("button-toggle")
@@ -248,7 +266,9 @@
     }
 
     function buttonStop() {
-      document.getElementById("audio-stream").pause();
+      var audioStream = document.getElementById("audio-stream");
+      audioStream.pause();
+      audioStream.currentTime = 0; // Reset the audio stream to the beginning
       document.getElementById("button-toggle").textContent = "Play";
       document
         .getElementById("button-toggle")
@@ -348,6 +368,26 @@
       document.getElementById("audio-stream").volume = rand / 100;
       document.querySelector(".volume-percentage").textContent = rand + "%";
       document.getElementById("input-volume").value = rand;
+    }
+  </script>
+  <script>
+    function isHlsSupported() {
+      return Hls.isSupported();
+    }
+
+    function initHls(source) {
+      source += "?r=" + Math.random().toString(36).substring(7); // Append random string
+      if (Hls.isSupported()) {
+        var hls = new Hls();
+        hls.loadSource(source);
+        hls.attachMedia(document.getElementById("audio-stream"));
+      } else if (
+        document
+          .getElementById("audio-stream")
+          .canPlayType("application/vnd.apple.mpegurl")
+      ) {
+        document.getElementById("audio-stream").src = source;
+      }
     }
   </script>
 </body>
