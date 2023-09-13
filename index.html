@@ -155,24 +155,22 @@
       }
       return "";
     }
+
     window.addEventListener("DOMContentLoaded", (event) => {
-      // Hide the stop button
       var qualityCookie = cookieGet("quality");
+
       if (qualityCookie === "audiophile") {
         cookieSet("quality", "high", 365);
         window.location.reload(true);
       }
+
       if (qualityCookie != "") {
-        qualityUpdate(qualityCookie);
         document.getElementById("select-quality").value = qualityCookie;
       } else {
-        if (isHlsSupported()) {
-          qualityUpdate("normal");
-        } else {
-          qualitySet("//icecast.sjh.at/spotifynet");
-          document.getElementById("select-quality").value = "normal";
-        }
+        document.getElementById("select-quality").value = "normal";
       }
+
+      // This part is for setting the volume based on device type
       if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
         // Detected mobile, setting volume to 100% and leaving volume bar hidden
         console.log("Detected mobile, leaving volume bar hidden");
@@ -258,7 +256,7 @@
       var audioStream = document.getElementById("audio-stream");
       var quality = document.getElementById("select-quality").value;
       qualityUpdate(quality); // This will set the correct source based on the quality
-      audioStream.play(); // Add this line to play the audio
+      audioStream.play(); // Play the audio
       document.getElementById("button-toggle").textContent = "Stop";
       document
         .getElementById("button-toggle")
