@@ -291,8 +291,11 @@
 
       // Fetch the metadata.json
       $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
+        // Extract the 'current' key from the data
+        const currentData = data.current;
+
         // Check if playing is false
-        if (!data.playing) {
+        if (!currentData.playing) {
           $(".div-playing-title").text(""); // Clear the title
           $(".div-playing-artist").text(""); // Clear the artist
           document.getElementById("playing-image").src =
@@ -306,14 +309,14 @@
         // Set song title with inline style to override link color and open in a new tab
         $(".div-playing-title").html(
           '<a href="https://open.spotify.com/track/' +
-            data.songid +
+            currentData.songid +
             '" target="_blank" style="color: inherit; text-decoration: none;">' +
-            data.song +
+            currentData.song +
             "</a>"
         );
 
         // Set artist(s) with inline style to override link color and open in a new tab
-        var artistLinks = data.artist
+        var artistLinks = currentData.artist
           .map(function (artist) {
             return (
               '<a href="https://open.spotify.com/artist/' +
@@ -327,14 +330,14 @@
         $(".div-playing-artist").html(artistLinks);
 
         // Set album cover
-        document.getElementById("playing-image").src = data.cover;
+        document.getElementById("playing-image").src = currentData.cover;
 
         // Set link for album cover
         document
           .getElementById("playing-link")
           .setAttribute(
             "href",
-            "https://open.spotify.com/track/" + data.songid
+            "https://open.spotify.com/album/" + currentData.albumid
           );
       });
     }
