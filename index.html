@@ -369,16 +369,30 @@
         // Populate the up next segment
         upNextData.forEach((song) => {
           let songItem = `
-                <div class="up-next-item">
-                    <img src="${song.cover}" alt="${song.song} cover">
-                    <div>
-                        <div>${song.song}</div>
-                        <div>${song.artist
-                          .map((artist) => artist.name)
-                          .join(", ")}</div>
-                    </div>
+        <div class="up-next-item">
+            <a href="https://open.spotify.com/album/${
+              song.albumid
+            }" target="_blank">
+                <img src="${song.cover}" alt="${song.song} cover">
+            </a>
+            <div>
+                <div>
+                    <a href="https://open.spotify.com/track/${
+                      song.songid
+                    }" target="_blank" style="color: inherit; text-decoration: none;">
+                        ${song.song}
+                    </a>
                 </div>
-            `;
+                <div>${song.artist
+                  .map(
+                    (artist) =>
+                      `<a href="https://open.spotify.com/artist/${artist.id}" target="_blank" style="color: inherit; text-decoration: none;">${artist.name}</a>`
+                  )
+                  .join(", ")}
+                </div>
+            </div>
+        </div>
+    `;
           $(".up-next").append(songItem);
         });
       });
