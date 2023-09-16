@@ -205,9 +205,11 @@
         document.querySelector(".volume-percentage").textContent = "10%";
         document.getElementById("input-volume").value = 10;
         document.getElementById("div-volume").style.display = "block";
+
         let volumeCookie = cookieGet("volume");
         if (volumeCookie != "") {
-          document.getElementById("audio-stream").volume = volumeCookie / 100;
+          let scaledVolume = scaleVolume(volumeCookie);
+          document.getElementById("audio-stream").volume = scaledVolume / 100;
           document.querySelector(".volume-percentage").textContent =
             volumeCookie + "%";
           document.getElementById("input-volume").value = volumeCookie;
@@ -284,10 +286,19 @@
     }
   </script>
   <script>
-    function volumeSet(val) {
-      document.getElementById("audio-stream").volume = val / 100;
-      // }
+    function scaleVolume(inputValue) {
+      if (inputValue <= 50) {
+        return inputValue * 0.2;
+      } else {
+        return 10 + (inputValue - 50) * 0.4;
+      }
     }
+
+    function volumeSet(val) {
+      let scaledVolume = scaleVolume(val);
+      document.getElementById("audio-stream").volume = scaledVolume / 100;
+    }
+
     document
       .querySelector("#input-volume")
       .addEventListener("input", function (e) {
