@@ -75,6 +75,32 @@
     flex-direction: column;
     align-items: center;
   }
+
+  .up-next {
+    display: flex;
+    flex-direction: column; /* This will stack items vertically */
+    align-items: center; /* Aligns the items to the center */
+  }
+
+  .up-next-item {
+    display: flex;
+    align-items: center;
+    margin: 5px 10px;
+  }
+
+  .up-next-item img {
+    width: 50px;
+    height: 50px;
+    margin-right: 10px;
+    border-radius: 8%;
+  }
+
+  #up-next-container {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
 </style>
 
 <body>
@@ -122,6 +148,12 @@
           width="200"
           height="200" />
       </a>
+    </div>
+    <div id="up-next-container">
+      <a>
+        <b>Up Next: </b>
+      </a>
+      <div class="up-next"></div>
     </div>
   </div>
 
@@ -317,6 +349,27 @@
             "href",
             "https://open.spotify.com/album/" + currentData.albumid
           );
+        // Extract the 'queue' key from the data for Up Next
+        const upNextData = data.queue;
+
+        // Clear previous entries
+        $(".up-next").empty();
+
+        // Populate the up next segment
+        upNextData.forEach((song) => {
+          let songItem = `
+                <div class="up-next-item">
+                    <img src="${song.cover}" alt="${song.song} cover">
+                    <div>
+                        <div>${song.song}</div>
+                        <div>${song.artist
+                          .map((artist) => artist.name)
+                          .join(", ")}</div>
+                    </div>
+                </div>
+            `;
+          $(".up-next").append(songItem);
+        });
       });
     }
 
