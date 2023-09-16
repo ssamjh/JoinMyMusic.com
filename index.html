@@ -78,8 +78,8 @@
 
   .up-next {
     display: flex;
-    flex-direction: column; /* This will stack items vertically */
-    align-items: center; /* Aligns the items to the center */
+    flex-direction: column;
+    align-items: center;
   }
 
   .up-next-item {
@@ -106,32 +106,29 @@
 <body>
   <div class="center-content">
     <h2>ssamjh's Music Sync</h2>
-    <h3>joinmymusic.com</h3>
+    <h3>JoinMyMusic.com</h3>
     <audio id="audio-stream" preload="none"></audio>
     <button class="small button" id="button-toggle" onclick="buttonPlay();">
       Play
     </button>
     <div id="div-volume">
       <div class="volume-label">
-        <a>
-          <b>Volume: </b>
-        </a>
-        <label class="volume-percentage" for="volume-percentage"></label>
+        <a><b>Volume:</b></a>
       </div>
       <input
         id="input-volume"
         type="range"
         min="0"
         max="100"
-        step="0.1"
+        step="1"
         value="0"
         class="input-volume"
-        oninput="volumeSet(this.value);cookieSet('volume', this.value, 365);"
-        onchange="volumeSet(this.value);cookieSet('volume', this.value, 365);" />
+        oninput="volumeSet(this.value);"
+        onchange="volumeSet(this.value);" />
     </div>
 
     <a>
-      <b>Now Playing: </b>
+      <b>Now Playing:</b>
     </a>
     <h4 style="font-size: 16px">
       <div class="div-playing-title"></div>
@@ -151,7 +148,7 @@
     </div>
     <div id="up-next-container">
       <a>
-        <b>Up Next: </b>
+        <b>Up Next:</b>
       </a>
       <div class="up-next"></div>
     </div>
@@ -170,26 +167,12 @@
   </div>
 
   <script>
-    function cookieSet(cname, cvalue, exdays) {
-      const d = new Date();
-      d.setTime(d.getTime() + exdays * 24 * 60 * 60 * 1000);
-      let expires = "expires=" + d.toUTCString();
-      document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
+    function storageSet(key, value) {
+      localStorage.setItem(key, value);
     }
 
-    function cookieGet(cname) {
-      let name = cname + "=";
-      let ca = document.cookie.split(";");
-      for (let i = 0; i < ca.length; i++) {
-        let c = ca[i];
-        while (c.charAt(0) == " ") {
-          c = c.substring(1);
-        }
-        if (c.indexOf(name) == 0) {
-          return c.substring(name.length, c.length);
-        }
-      }
-      return "";
+    function storageGet(key) {
+      return localStorage.getItem(key);
     }
 
     window.addEventListener("DOMContentLoaded", (event) => {
@@ -201,18 +184,15 @@
       } else {
         // Detected desktop, setting volume to 10% and unhiding volume bar
         console.log("Detected desktop, unhiding volume bar");
-        document.getElementById("audio-stream").volume = 0.1;
-        document.querySelector(".volume-percentage").textContent = "10%";
-        document.getElementById("input-volume").value = 10;
+        document.getElementById("audio-stream").volume = 0.5;
+        document.getElementById("input-volume").value = 50;
         document.getElementById("div-volume").style.display = "block";
 
-        let volumeCookie = cookieGet("volume");
-        if (volumeCookie != "") {
-          let scaledVolume = scaleVolume(volumeCookie);
+        let volumeStored = storageGet("volume");
+        if (volumeStored != null) {
+          let scaledVolume = scaleVolume(volumeStored);
           document.getElementById("audio-stream").volume = scaledVolume / 100;
-          document.querySelector(".volume-percentage").textContent =
-            volumeCookie + "%";
-          document.getElementById("input-volume").value = volumeCookie;
+          document.getElementById("input-volume").value = volumeStored;
         }
       }
     });
@@ -250,6 +230,8 @@
         audioStream.play();
       }
     }
+
+    var audioStream = document.getElementById("audio-stream");
 
     // Check if audio is playing after setting the source
     if (!audioStream.paused) {
@@ -297,19 +279,11 @@
     function volumeSet(val) {
       let scaledVolume = scaleVolume(val);
       document.getElementById("audio-stream").volume = scaledVolume / 100;
+      storageSet("volume", val);
     }
-
-    document
-      .querySelector("#input-volume")
-      .addEventListener("input", function (e) {
-        document.querySelector(".volume-percentage").textContent =
-          e.currentTarget.value + "%";
-      });
   </script>
   <script>
     function trackMeta() {
-      console.log("Refreshing metadata");
-
       // Fetch the metadata.json
       $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
         // Extract the 'current' key from the data
@@ -400,44 +374,6 @@
 
     trackMeta();
     setInterval(trackMeta, 10000);
-  </script>
-  <script>
-    const pressedOCD = [];
-    const pressedTest = [];
-    const pressedBeta = [];
-    const codeOCD = "ocd";
-    const codeTest = "test";
-    const codeBeta = "beta";
-    window.addEventListener("keyup", (e) => {
-      pressedOCD.push(e.key);
-      pressedOCD.splice(
-        -codeOCD.length - 1,
-        pressedOCD.length - codeOCD.length
-      );
-      if (pressedOCD.join("").includes(codeOCD)) {
-        document.getElementById("input-volume").step = "1.0";
-        console.log("OCD mode activated");
-      }
-    });
-    window.addEventListener("keyup", (e) => {
-      pressedTest.push(e.key);
-      pressedTest.splice(
-        -codeTest.length - 1,
-        pressedTest.length - codeTest.length
-      );
-      if (pressedTest.join("").includes(codeTest)) {
-        console.log("Test mode activated");
-        setInterval(modeTest, 10);
-      }
-    });
-  </script>
-  <script>
-    function modeTest() {
-      let rand = Math.floor(Math.random() * 100) + 1;
-      document.getElementById("audio-stream").volume = rand / 100;
-      document.querySelector(".volume-percentage").textContent = rand + "%";
-      document.getElementById("input-volume").value = rand;
-    }
   </script>
   <script>
     function isHlsSupported() {
