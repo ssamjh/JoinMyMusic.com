@@ -49,19 +49,25 @@
       .up-next {
         display: flex;
         flex-direction: column;
-        align-items: center;
+        align-items: flex-start;
       }
 
       .up-next-item {
         display: flex;
         align-items: center;
-        margin: 5px 10px;
+        margin: 5px 0;
+        text-align: left;
       }
+
+      .up-next-item > div {
+        margin-left: 1px;
+      }
+
       .up-next-item > div > div:first-child {
-        font-size: 16px;
+        font-size: 15px;
       }
       .up-next-item > div > div:last-child {
-        font-size: 12px;
+        font-size: 11px;
       }
 
       .up-next-item img {
@@ -79,11 +85,9 @@
       }
     </style>
 
-    <!-- jQuery and other JS libraries -->
     <script src="js/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
-    <!-- Bootstrap 5 JS with Popper.js -->
     <script
       src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
       integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
@@ -156,6 +160,13 @@
     </footer>
 
     <script>
+      const audioStream = document.getElementById("audio-stream");
+      const buttonToggle = document.getElementById("button-toggle");
+      const playingImage = document.getElementById("playing-image");
+      const playingLink = document.getElementById("playing-link");
+      const divVolume = document.getElementById("div-volume");
+      const inputVolume = document.getElementById("input-volume");
+
       // Utility Functions
       function storageSet(key, value) {
         localStorage.setItem(key, value);
@@ -165,49 +176,33 @@
         return localStorage.getItem(key);
       }
 
-      function isHlsSupported() {
-        return Hls.isSupported();
-      }
-
       function initHls(source) {
         if (Hls.isSupported()) {
-          var hls = new Hls();
+          let hls = new Hls();
           hls.loadSource(source);
-          hls.attachMedia(document.getElementById("audio-stream"));
-        } else if (
-          document
-            .getElementById("audio-stream")
-            .canPlayType("application/vnd.apple.mpegurl")
-        ) {
-          document.getElementById("audio-stream").src = source;
+          hls.attachMedia(audioStream);
+        } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
+          audioStream.src = source;
         }
       }
 
       function scaleVolume(inputValue) {
-        if (inputValue <= 50) {
-          return inputValue * 0.2;
-        } else {
-          return 10 + (inputValue - 50) * 0.4;
-        }
-      }
-
-      // Playback Quality Functions
-      function qualitySet(source) {
-        document.getElementById("audio-stream").setAttribute("src", source);
-        console.log("Set source to: " + source);
+        return inputValue <= 50
+          ? inputValue * 0.2
+          : 10 + (inputValue - 50) * 0.4;
       }
 
       function qualityUpdate() {
-        var audioStream = document.getElementById("audio-stream");
-        var source;
-        var wasPlaying = !audioStream.paused;
+        let source;
+        let wasPlaying = !audioStream.paused;
 
-        if (isHlsSupported()) {
+        if (Hls.isSupported()) {
           source = "https://hls.sjh.at/spotifynet/stream.m3u8";
           initHls(source);
         } else {
           source = "https://icecast.sjh.at/spotifynet";
-          qualitySet(source);
+          audioStream.setAttribute("src", source);
+          console.log("Set source to: " + source);
         }
 
         if (wasPlaying) {
@@ -215,155 +210,121 @@
         }
       }
 
-      // Playback Control Functions
-      function buttonPlay() {
-        var audioStream = document.getElementById("audio-stream");
+      function togglePlay() {
         qualityUpdate();
         audioStream.play();
-        document.getElementById("button-toggle").textContent = "Stop";
-        document
-          .getElementById("button-toggle")
-          .setAttribute("onClick", "javascript: buttonStop();");
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
       }
 
       function buttonStop() {
-        var audioStream = document.getElementById("audio-stream");
         audioStream.pause();
         audioStream.currentTime = 0;
-        document.getElementById("button-toggle").textContent = "Play";
-        document
-          .getElementById("button-toggle")
-          .setAttribute("onClick", "javascript: buttonPlay();");
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
       }
 
       function volumeSet(val) {
-        let scaledVolume = scaleVolume(val);
-        document.getElementById("audio-stream").volume = scaledVolume / 100;
+        const scaledVolume = scaleVolume(val);
+        audioStream.volume = scaledVolume / 100;
         storageSet("volume", val);
       }
 
       function trackMeta() {
-        // Fetch the metadata.json
         $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
-          // Extract the 'current' key from the data
           const currentData = data.current;
 
-          // Check if playing is false
           if (!currentData.playing) {
-            $(".div-playing-title").text(""); // Clear the title
-            $(".div-playing-artist").text(""); // Clear the artist
-            document.getElementById("playing-image").src =
-              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="; // Set to a 1x1 transparent pixel
-            document
-              .getElementById("playing-link")
-              .setAttribute("href", "javascript:void(0)"); // Set the href to void
-            return; // Exit the function
+            $(".div-playing-title, .div-playing-artist").text("");
+            playingImage.src =
+              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+            playingLink.setAttribute("href", "javascript:void(0)");
+            return;
           }
 
-          // Set song title with inline style to override link color and open in a new tab
+          const createLink = (url, id, name) =>
+            `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
           $(".div-playing-title").html(
-            '<a href="https://open.spotify.com/track/' +
-              currentData.songid +
-              '" target="_blank" style="color: inherit; text-decoration: none;">' +
-              currentData.song +
-              "</a>"
+            createLink(
+              "https://open.spotify.com/track/",
+              currentData.songid,
+              currentData.song
+            )
+          );
+          $(".div-playing-artist").html(
+            currentData.artist
+              .map((artist) =>
+                createLink(
+                  "https://open.spotify.com/artist/",
+                  artist.id,
+                  artist.name
+                )
+              )
+              .join(", ")
           );
 
-          // Set artist(s) with inline style to override link color and open in a new tab
-          var artistLinks = currentData.artist
-            .map(function (artist) {
-              return (
-                '<a href="https://open.spotify.com/artist/' +
-                artist.id +
-                '" target="_blank" style="color: inherit; text-decoration: none;">' +
-                artist.name +
-                "</a>"
-              );
-            })
-            .join(", "); // Join artists with commas
-          $(".div-playing-artist").html(artistLinks);
+          playingImage.src = currentData.cover;
+          playingLink.setAttribute(
+            "href",
+            `https://open.spotify.com/album/${currentData.albumid}`
+          );
 
-          // Set album cover
-          document.getElementById("playing-image").src = currentData.cover;
-
-          // Set link for album cover
-          document
-            .getElementById("playing-link")
-            .setAttribute(
-              "href",
-              "https://open.spotify.com/album/" + currentData.albumid
-            );
-          // Extract the 'queue' key from the data for Up Next
           const upNextData = data.queue;
-
-          // Clear previous entries
           $(".up-next").empty();
 
-          // Populate the up next segment
           upNextData.forEach((song) => {
-            let songItem = `
-        <div class="up-next-item">
-            <a href="https://open.spotify.com/album/${
-              song.albumid
-            }" target="_blank">
-                <img src="${song.cover}" alt="${song.song} cover">
-            </a>
-            <div>
+            const songItem = `
+            <div class="up-next-item">
+                <a href="https://open.spotify.com/album/${
+                  song.albumid
+                }" target="_blank">
+                    <img src="${song.cover}" alt="${song.song} cover">
+                </a>
                 <div>
-                    <a href="https://open.spotify.com/track/${
-                      song.songid
-                    }" target="_blank" style="color: inherit; text-decoration: none;">
-                        ${song.song}
-                    </a>
+                    <div>${createLink(
+                      "https://open.spotify.com/track/",
+                      song.songid,
+                      song.song
+                    )}</div>
+                    <div>${song.artist
+                      .map((artist) =>
+                        createLink(
+                          "https://open.spotify.com/artist/",
+                          artist.id,
+                          artist.name
+                        )
+                      )
+                      .join(", ")}</div>
                 </div>
-                <div>${song.artist
-                  .map(
-                    (artist) =>
-                      `<a href="https://open.spotify.com/artist/${artist.id}" target="_blank" style="color: inherit; text-decoration: none;">${artist.name}</a>`
-                  )
-                  .join(", ")}
-                </div>
-            </div>
-        </div>
-    `;
+            </div>`;
             $(".up-next").append(songItem);
           });
         });
       }
 
-      window.addEventListener("DOMContentLoaded", (event) => {
-        // This part is for setting the volume based on device type
+      window.addEventListener("DOMContentLoaded", () => {
         if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
-          // Detected mobile, setting volume to 100% and leaving volume bar hidden
           console.log("Detected mobile, leaving volume bar hidden");
-          document.getElementById("audio-stream").volume = 1.0;
+          audioStream.volume = 1.0;
         } else {
-          // Detected desktop, setting volume to 10% and unhiding volume bar
           console.log("Detected desktop, unhiding volume bar");
-          document.getElementById("audio-stream").volume = 0.5;
-          document.getElementById("input-volume").value = 50;
-          document.getElementById("div-volume").style.display = "block";
+          inputVolume.value = 50;
+          divVolume.style.display = "block";
+          volumeSet(inputVolume.value);
 
           let volumeStored = storageGet("volume");
-          if (volumeStored != null) {
-            let scaledVolume = scaleVolume(volumeStored);
-            document.getElementById("audio-stream").volume = scaledVolume / 100;
-            document.getElementById("input-volume").value = volumeStored;
+          if (volumeStored) {
+            volumeSet(volumeStored);
           }
         }
       });
 
-      var audioStream = document.getElementById("audio-stream");
       if (!audioStream.paused) {
-        document.getElementById("button-toggle").textContent = "Stop";
-        document
-          .getElementById("button-toggle")
-          .setAttribute("onClick", "javascript: buttonStop();");
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
       } else {
-        document.getElementById("button-toggle").textContent = "Play";
-        document
-          .getElementById("button-toggle")
-          .setAttribute("onClick", "javascript: buttonPlay();");
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
       }
 
       trackMeta();
