@@ -1,397 +1,334 @@
 <!DOCTYPE html>
-<head>
-  <title>ssamjh's Music Sync</title>
-  <script src="js/jquery-3.6.0.min.js"></script>
-  <link
-    rel="stylesheet"
-    href="//pages.github.com/css/pages.css"
-    type="text/css" />
-  <link rel="stylesheet" href="css/buttons.css" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-</head>
-<style>
-  @import url("https://fonts.googleapis.com/css?family=Source+Sans+Pro");
-  body {
-    padding: 0;
-  }
+<html lang="en" data-bs-theme="auto">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ssamjh's Music Sync</title>
 
-  .input-volume {
-    width: 500px;
-  }
+    <!-- Bootstrap 5 CSS -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+      crossorigin="anonymous" />
 
-  .playing-image {
-    border-radius: 8%;
-  }
+    <!-- FontAwesome for Icons -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
+      crossorigin="anonymous" />
 
-  .footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    max-width: 80%;
-    margin: 0 auto;
-  }
+    <script src="js/bootstrap-auto-colour.js"></script>
 
-  .footer-item {
-    flex: 1;
-    text-align: center;
-  }
-
-  #div-volume {
-    display: none;
-  }
-
-  .center-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .center-content > *:not(:last-child) {
-    margin-bottom: 5px;
-  }
-
-  .volume-wrapper {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .volume-label {
-    margin-top: 15px;
-    margin-bottom: 5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  h3 {
-    margin-bottom: 40px;
-  }
-
-  #div-volume {
-    display: none;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .up-next {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .up-next-item {
-    display: flex;
-    align-items: center;
-    margin: 5px 10px;
-  }
-
-  .up-next-item img {
-    width: 50px;
-    height: 50px;
-    margin-right: 10px;
-    border-radius: 8%;
-  }
-
-  #up-next-container {
-    margin-top: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-</style>
-
-<body>
-  <div class="center-content">
-    <h2>ssamjh's Music Sync</h2>
-    <h3>JoinMyMusic.com</h3>
-    <audio id="audio-stream" preload="none"></audio>
-    <button class="small button" id="button-toggle" onclick="buttonPlay();">
-      Play
-    </button>
-    <div id="div-volume">
-      <div class="volume-label">
-        <a><b>Volume:</b></a>
-      </div>
-      <input
-        id="input-volume"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        value="0"
-        class="input-volume"
-        oninput="volumeSet(this.value);"
-        onchange="volumeSet(this.value);" />
-    </div>
-
-    <a>
-      <b>Now Playing:</b>
-    </a>
-    <h4 style="font-size: 16px">
-      <div class="div-playing-title"></div>
-    </h4>
-    <h4 style="font-size: 12px">
-      <div class="div-playing-artist"></div>
-    </h4>
-    <div class="div-playing-image">
-      <a id="playing-link" target="_blank">
-        <img
-          id="playing-image"
-          class="playing-image"
-          alt="Now playing image"
-          width="200"
-          height="200" />
-      </a>
-    </div>
-    <div id="up-next-container">
-      <a>
-        <b>Up Next:</b>
-      </a>
-      <div class="up-next"></div>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-item">
-      <a href="https://ssamjh.nz/">Primary Website</a>
-    </div>
-    <div class="footer-item">
-      <a href="https://github.com/ssamjh/JoinMyMusic.com">
-        <span class="mega-octicon octicon-mark-github"></span>
-      </a>
-    </div>
-    <div class="footer-item">&copy; 2023 <span>ssamjh</span></div>
-  </div>
-
-  <script>
-    function storageSet(key, value) {
-      localStorage.setItem(key, value);
-    }
-
-    function storageGet(key) {
-      return localStorage.getItem(key);
-    }
-
-    window.addEventListener("DOMContentLoaded", (event) => {
-      // This part is for setting the volume based on device type
-      if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
-        // Detected mobile, setting volume to 100% and leaving volume bar hidden
-        console.log("Detected mobile, leaving volume bar hidden");
-        document.getElementById("audio-stream").volume = 1.0;
-      } else {
-        // Detected desktop, setting volume to 10% and unhiding volume bar
-        console.log("Detected desktop, unhiding volume bar");
-        document.getElementById("audio-stream").volume = 0.5;
-        document.getElementById("input-volume").value = 50;
-        document.getElementById("div-volume").style.display = "block";
-
-        let volumeStored = storageGet("volume");
-        if (volumeStored != null) {
-          let scaledVolume = scaleVolume(volumeStored);
-          document.getElementById("audio-stream").volume = scaledVolume / 100;
-          document.getElementById("input-volume").value = volumeStored;
-        }
-      }
-    });
-
-    if (
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
-      document.body.style.backgroundColor = "#222";
-      document.body.style.color = "gray";
-      console.log("Detected device in dark mode, turning off the lights!");
-    }
-  </script>
-  <script>
-    function qualitySet(source) {
-      document.getElementById("audio-stream").setAttribute("src", source);
-      console.log("Set source to: " + source);
-    }
-
-    function qualityUpdate() {
-      var audioStream = document.getElementById("audio-stream");
-      var source;
-      var wasPlaying = !audioStream.paused; // Check if audio was playing
-
-      if (isHlsSupported()) {
-        source = "https://hls.sjh.at/spotifynet/stream.m3u8";
-        initHls(source);
-      } else {
-        source = "https://icecast.sjh.at/spotifynet";
-        qualitySet(source);
+    <!-- Custom CSS (After Bootstrap to override if necessary) -->
+    <style>
+      .volume-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
       }
 
-      // If audio was playing, play the new source
-      if (wasPlaying) {
-        audioStream.play();
+      .volume-label {
+        margin-top: 15px;
+        margin-bottom: 5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
-    }
 
-    var audioStream = document.getElementById("audio-stream");
-
-    // Check if audio is playing after setting the source
-    if (!audioStream.paused) {
-      document.getElementById("button-toggle").textContent = "Stop";
-      document
-        .getElementById("button-toggle")
-        .setAttribute("onClick", "javascript: buttonStop();");
-    } else {
-      document.getElementById("button-toggle").textContent = "Play";
-      document
-        .getElementById("button-toggle")
-        .setAttribute("onClick", "javascript: buttonPlay();");
-    }
-  </script>
-  <script>
-    function buttonPlay() {
-      var audioStream = document.getElementById("audio-stream");
-      qualityUpdate(); // This will set the correct source based on the quality
-      audioStream.play(); // Play the audio
-      document.getElementById("button-toggle").textContent = "Stop";
-      document
-        .getElementById("button-toggle")
-        .setAttribute("onClick", "javascript: buttonStop();");
-    }
-
-    function buttonStop() {
-      var audioStream = document.getElementById("audio-stream");
-      audioStream.pause();
-      audioStream.currentTime = 0; // Reset the audio stream to the beginning
-      document.getElementById("button-toggle").textContent = "Play";
-      document
-        .getElementById("button-toggle")
-        .setAttribute("onClick", "javascript: buttonPlay();");
-    }
-  </script>
-  <script>
-    function scaleVolume(inputValue) {
-      if (inputValue <= 50) {
-        return inputValue * 0.2;
-      } else {
-        return 10 + (inputValue - 50) * 0.4;
+      #input-volume {
+        max-width: 500px;
       }
-    }
 
-    function volumeSet(val) {
-      let scaledVolume = scaleVolume(val);
-      document.getElementById("audio-stream").volume = scaledVolume / 100;
-      storageSet("volume", val);
-    }
-  </script>
-  <script>
-    function trackMeta() {
-      // Fetch the metadata.json
-      $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
-        // Extract the 'current' key from the data
-        const currentData = data.current;
+      #div-volume {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+      }
 
-        // Check if playing is false
-        if (!currentData.playing) {
-          $(".div-playing-title").text(""); // Clear the title
-          $(".div-playing-artist").text(""); // Clear the artist
-          document.getElementById("playing-image").src =
-            "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="; // Set to a 1x1 transparent pixel
-          document
-            .getElementById("playing-link")
-            .setAttribute("href", "javascript:void(0)"); // Set the href to void
-          return; // Exit the function
-        }
+      .up-next {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+      }
 
-        // Set song title with inline style to override link color and open in a new tab
-        $(".div-playing-title").html(
-          '<a href="https://open.spotify.com/track/' +
-            currentData.songid +
-            '" target="_blank" style="color: inherit; text-decoration: none;">' +
-            currentData.song +
-            "</a>"
-        );
+      .up-next-item {
+        display: flex;
+        align-items: center;
+        margin: 5px 0;
+        text-align: left;
+      }
 
-        // Set artist(s) with inline style to override link color and open in a new tab
-        var artistLinks = currentData.artist
-          .map(function (artist) {
-            return (
-              '<a href="https://open.spotify.com/artist/' +
-              artist.id +
-              '" target="_blank" style="color: inherit; text-decoration: none;">' +
-              artist.name +
-              "</a>"
-            );
-          })
-          .join(", "); // Join artists with commas
-        $(".div-playing-artist").html(artistLinks);
+      .up-next-item > div {
+        margin-left: 1px;
+      }
 
-        // Set album cover
-        document.getElementById("playing-image").src = currentData.cover;
+      .up-next-item > div > div:first-child {
+        font-size: 15px;
+      }
+      .up-next-item > div > div:last-child {
+        font-size: 11px;
+      }
 
-        // Set link for album cover
-        document
-          .getElementById("playing-link")
-          .setAttribute(
-            "href",
-            "https://open.spotify.com/album/" + currentData.albumid
-          );
-        // Extract the 'queue' key from the data for Up Next
-        const upNextData = data.queue;
+      .up-next-item img {
+        width: 50px;
+        height: 50px;
+        margin-right: 10px;
+        border-radius: 8%;
+      }
 
-        // Clear previous entries
-        $(".up-next").empty();
+      #up-next-container {
+        margin-top: 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+    </style>
 
-        // Populate the up next segment
-        upNextData.forEach((song) => {
-          let songItem = `
-        <div class="up-next-item">
-            <a href="https://open.spotify.com/album/${
-              song.albumid
-            }" target="_blank">
-                <img src="${song.cover}" alt="${song.song} cover">
-            </a>
-            <div>
-                <div>
-                    <a href="https://open.spotify.com/track/${
-                      song.songid
-                    }" target="_blank" style="color: inherit; text-decoration: none;">
-                        ${song.song}
-                    </a>
-                </div>
-                <div>${song.artist
-                  .map(
-                    (artist) =>
-                      `<a href="https://open.spotify.com/artist/${artist.id}" target="_blank" style="color: inherit; text-decoration: none;">${artist.name}</a>`
-                  )
-                  .join(", ")}
-                </div>
-            </div>
+    <script src="js/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+      crossorigin="anonymous"></script>
+  </head>
+
+  <body class="bg">
+    <div class="container text-center py-3">
+      <h2>ssamjh's Music Sync</h2>
+      <h5 class="mb-4">JoinMyMusic.com</h5>
+
+      <audio id="audio-stream" preload="none"></audio>
+      <button
+        class="btn btn-primary btn-sm mb-2"
+        id="button-toggle"
+        onclick="buttonPlay();">
+        Play
+      </button>
+
+      <div id="div-volume" class="mb-2">
+        <div class="d-flex justify-content-center align-items-center mb-1">
+          <strong>Volume:</strong>
         </div>
-    `;
-          $(".up-next").append(songItem);
-        });
-      });
-    }
+        <input
+          id="input-volume"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value="0"
+          class="form-range"
+          oninput="volumeSet(this.value);"
+          onchange="volumeSet(this.value);" />
+      </div>
 
-    trackMeta();
-    setInterval(trackMeta, 10000);
-  </script>
-  <script>
-    function isHlsSupported() {
-      return Hls.isSupported();
-    }
+      <strong class="d-block mb-1">Now Playing:</strong>
+      <h4 class="mb-1" style="font-size: 16px">
+        <div class="div-playing-title"></div>
+      </h4>
+      <h4 class="mb-2" style="font-size: 12px">
+        <div class="div-playing-artist"></div>
+      </h4>
 
-    function initHls(source) {
-      if (Hls.isSupported()) {
-        var hls = new Hls();
-        hls.loadSource(source);
-        hls.attachMedia(document.getElementById("audio-stream"));
-      } else if (
-        document
-          .getElementById("audio-stream")
-          .canPlayType("application/vnd.apple.mpegurl")
-      ) {
-        document.getElementById("audio-stream").src = source;
+      <div class="mb-3">
+        <a id="playing-link" target="_blank">
+          <img
+            id="playing-image"
+            class="rounded"
+            src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+            alt=""
+            width="200"
+            height="200" />
+        </a>
+      </div>
+
+      <div id="up-next-container" class="mb-3">
+        <strong class="d-block mb-1">Up Next:</strong>
+        <div class="up-next"></div>
+      </div>
+    </div>
+
+    <footer class="py-5">
+      <div class="container d-flex justify-content-between">
+        <a href="https://ssamjh.nz/" class="text">Primary Website</a>
+        <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
+          <i class="fab fa-github fa-lg"></i>
+        </a>
+        <div>&copy; 2023 <span>ssamjh</span></div>
+      </div>
+    </footer>
+
+    <script>
+      const audioStream = document.getElementById("audio-stream");
+      const buttonToggle = document.getElementById("button-toggle");
+      const playingImage = document.getElementById("playing-image");
+      const playingLink = document.getElementById("playing-link");
+      const divVolume = document.getElementById("div-volume");
+      const inputVolume = document.getElementById("input-volume");
+
+      // Utility Functions
+      function storageSet(key, value) {
+        localStorage.setItem(key, value);
       }
-    }
-  </script>
-</body>
+
+      function storageGet(key) {
+        return localStorage.getItem(key);
+      }
+
+      function initHls(source) {
+        if (Hls.isSupported()) {
+          let hls = new Hls();
+          hls.loadSource(source);
+          hls.attachMedia(audioStream);
+        } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
+          audioStream.src = source;
+        }
+      }
+
+      function scaleVolume(inputValue) {
+        return inputValue <= 50
+          ? inputValue * 0.2
+          : 10 + (inputValue - 50) * 0.4;
+      }
+
+      function qualityUpdate() {
+        let source;
+        let wasPlaying = !audioStream.paused;
+
+        if (Hls.isSupported()) {
+          source = "https://hls.sjh.at/spotifynet/stream.m3u8";
+          initHls(source);
+        } else {
+          source = "https://icecast.sjh.at/spotifynet";
+          audioStream.setAttribute("src", source);
+          console.log("Set source to: " + source);
+        }
+
+        if (wasPlaying) {
+          audioStream.play();
+        }
+      }
+
+      function togglePlay() {
+        qualityUpdate();
+        audioStream.play();
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+      }
+
+      function buttonStop() {
+        audioStream.pause();
+        audioStream.currentTime = 0;
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      function volumeSet(val) {
+        const scaledVolume = scaleVolume(val);
+        audioStream.volume = scaledVolume / 100;
+        storageSet("volume", val);
+      }
+
+      function trackMeta() {
+        $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
+          const currentData = data.current;
+
+          if (!currentData.playing) {
+            $(".div-playing-title, .div-playing-artist").text("");
+            playingImage.src =
+              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+            playingLink.setAttribute("href", "javascript:void(0)");
+            return;
+          }
+
+          const createLink = (url, id, name) =>
+            `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+          $(".div-playing-title").html(
+            createLink(
+              "https://open.spotify.com/track/",
+              currentData.songid,
+              currentData.song
+            )
+          );
+          $(".div-playing-artist").html(
+            currentData.artist
+              .map((artist) =>
+                createLink(
+                  "https://open.spotify.com/artist/",
+                  artist.id,
+                  artist.name
+                )
+              )
+              .join(", ")
+          );
+
+          playingImage.src = currentData.cover;
+          playingLink.setAttribute(
+            "href",
+            `https://open.spotify.com/album/${currentData.albumid}`
+          );
+
+          const upNextData = data.queue;
+          $(".up-next").empty();
+
+          upNextData.forEach((song) => {
+            const songItem = `
+            <div class="up-next-item">
+                <a href="https://open.spotify.com/album/${
+                  song.albumid
+                }" target="_blank">
+                    <img src="${song.cover}" alt="${song.song} cover">
+                </a>
+                <div>
+                    <div>${createLink(
+                      "https://open.spotify.com/track/",
+                      song.songid,
+                      song.song
+                    )}</div>
+                    <div>${song.artist
+                      .map((artist) =>
+                        createLink(
+                          "https://open.spotify.com/artist/",
+                          artist.id,
+                          artist.name
+                        )
+                      )
+                      .join(", ")}</div>
+                </div>
+            </div>`;
+            $(".up-next").append(songItem);
+          });
+        });
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
+          console.log("Detected mobile, leaving volume bar hidden");
+          audioStream.volume = 1.0;
+        } else {
+          console.log("Detected desktop, unhiding volume bar");
+          inputVolume.value = 50;
+          divVolume.style.display = "block";
+          volumeSet(inputVolume.value);
+
+          let volumeStored = storageGet("volume");
+          if (volumeStored) {
+            volumeSet(volumeStored);
+          }
+        }
+      });
+
+      if (!audioStream.paused) {
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+      } else {
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      trackMeta();
+      setInterval(trackMeta, 10000);
+    </script>
+  </body>
+</html>
