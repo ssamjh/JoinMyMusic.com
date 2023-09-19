@@ -5,22 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ssamjh's Music Sync</title>
 
-    <!-- Bootstrap 5 CSS -->
     <link
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
       rel="stylesheet"
       integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
       crossorigin="anonymous" />
 
-    <!-- FontAwesome for Icons -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
       crossorigin="anonymous" />
 
     <script src="js/bootstrap-auto-colour.js"></script>
+    <script src="js/DOMContentLoaded.js"></script>
 
-    <!-- Custom CSS (After Bootstrap to override if necessary) -->
     <style>
       .volume-wrapper {
         display: flex;
@@ -44,6 +42,14 @@
         display: none;
         flex-direction: column;
         align-items: center;
+      }
+
+      .div-playing-title {
+        min-height: 17px;
+      }
+
+      .div-playing-artist {
+        min-height: 13px;
       }
 
       .up-next {
@@ -73,7 +79,7 @@
       .up-next-item img {
         width: 50px;
         height: 50px;
-        margin-right: 10px;
+        margin-right: 6px;
         border-radius: 8%;
       }
 
@@ -124,10 +130,10 @@
       </div>
 
       <strong class="d-block mb-1">Now Playing:</strong>
-      <h4 class="mb-1" style="font-size: 16px">
+      <h4 class="mb-1" style="font-size: 17px">
         <div class="div-playing-title"></div>
       </h4>
-      <h4 class="mb-2" style="font-size: 12px">
+      <h4 class="mb-2" style="font-size: 13px">
         <div class="div-playing-artist"></div>
       </h4>
 
@@ -138,14 +144,42 @@
             class="rounded"
             src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
             alt=""
-            width="200"
-            height="200" />
+            width="250"
+            height="250" />
         </a>
       </div>
 
       <div id="up-next-container" class="mb-3">
         <strong class="d-block mb-1">Up Next:</strong>
-        <div class="up-next"></div>
+        <div class="up-next">
+          <div class="up-next-item">
+            <a href="javascript:void(0)" target="_blank">
+              <img
+                src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+                alt="Placeholder cover"
+                width="64"
+                height="64" />
+            </a>
+          </div>
+          <div class="up-next-item">
+            <a href="javascript:void(0)" target="_blank">
+              <img
+                src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+                alt="Placeholder cover"
+                width="64"
+                height="64" />
+            </a>
+          </div>
+          <div class="up-next-item">
+            <a href="javascript:void(0)" target="_blank">
+              <img
+                src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+                alt="Placeholder cover"
+                width="64"
+                height="64" />
+            </a>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -167,7 +201,6 @@
       const divVolume = document.getElementById("div-volume");
       const inputVolume = document.getElementById("input-volume");
 
-      // Utility Functions
       function storageSet(key, value) {
         localStorage.setItem(key, value);
       }
@@ -239,6 +272,18 @@
             playingImage.src =
               "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
             playingLink.setAttribute("href", "javascript:void(0)");
+
+            $(".up-next").empty();
+            for (let i = 0; i < 3; i++) {
+              $(".up-next").append(`
+            <div class="up-next-item">
+                <a href="javascript:void(0)" target="_blank">
+                    <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="Placeholder cover" width="64" height="64">
+                </a>
+            </div>
+        `);
+            }
+
             return;
           }
 
@@ -301,23 +346,6 @@
           });
         });
       }
-
-      window.addEventListener("DOMContentLoaded", () => {
-        if (navigator.userAgent.toLowerCase().match(/mobile/i)) {
-          console.log("Detected mobile, leaving volume bar hidden");
-          audioStream.volume = 1.0;
-        } else {
-          console.log("Detected desktop, unhiding volume bar");
-          inputVolume.value = 50;
-          divVolume.style.display = "block";
-          volumeSet(inputVolume.value);
-
-          let volumeStored = storageGet("volume");
-          if (volumeStored) {
-            volumeSet(volumeStored);
-          }
-        }
-      });
 
       if (!audioStream.paused) {
         buttonToggle.textContent = "Stop";
