@@ -1,340 +1,265 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="auto">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ssamjh's Music Sync</title>
-
-    <link
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
-      rel="stylesheet"
-      crossorigin="anonymous" />
-
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
-      crossorigin="anonymous" />
-
-    <script src="js/bootstrap-auto-colour.js"></script>
-    <script src="js/DOMContentLoaded.js"></script>
-
-    <style>
-      .volume-wrapper {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-      }
-
-      .volume-label {
-        margin-top: 15px;
-        margin-bottom: 5px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      #input-volume {
-        max-width: 500px;
-      }
-
-      #div-volume {
-        display: none;
-        flex-direction: column;
-        align-items: center;
-      }
-
-      .div-playing-title {
-        min-height: 17px;
-      }
-
-      .div-playing-artist {
-        min-height: 13px;
-      }
-    </style>
-
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
-
-    <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
-      crossorigin="anonymous"></script>
-  </head>
-
-  <body class="bg">
-    <div class="container text-center py-3">
+   <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>ssamjh's Music Sync</title>
+      <link
+         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+         rel="stylesheet"
+         crossorigin="anonymous" />
+      <link
+         rel="stylesheet"
+         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
+         crossorigin="anonymous" />
+      <script src="js/bootstrap-auto-colour.js"></script>
+      <script src="js/DOMContentLoaded.js"></script>
+      <style>
+         .volume-wrapper {
+         display: flex;
+         flex-direction: column;
+         align-items: center;
+         }
+         .volume-label {
+         margin-top: 15px;
+         margin-bottom: 5px;
+         display: flex;
+         align-items: center;
+         justify-content: center;
+         }
+         #input-volume {
+         max-width: 500px;
+         }
+         #div-volume {
+         display: none;
+         flex-direction: column;
+         align-items: center;
+         }
+         .div-playing-title {
+         min-height: 17px;
+         }
+         .div-playing-artist {
+         min-height: 13px;
+         }
+      </style>
+      <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+      <script
+         src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+         crossorigin="anonymous"></script>
+   </head>
+   <body class="bg">
+      <div class="container text-center py-3">
       <h2>ssamjh's Music Sync</h2>
       <h5 class="mb-4">JoinMyMusic.com</h5>
-
       <audio id="audio-stream" preload="none"></audio>
       <button
-        class="btn btn-primary btn-sm mb-2"
-        id="button-toggle"
-        onclick="buttonPlay();">
-        Play
+         class="btn btn-primary btn-sm mb-2"
+         id="button-toggle"
+         onclick="buttonPlay();">
+      Play
       </button>
-
       <div id="div-volume" class="mb-2">
-        <div class="d-flex justify-content-center align-items-center mb-1">
-          <strong>Volume:</strong>
-        </div>
-        <input
-          id="input-volume"
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value="0"
-          class="form-range"
-          oninput="volumeSet(this.value);"
-          onchange="volumeSet(this.value);" />
+         <div class="d-flex justify-content-center align-items-center mb-1">
+            <strong>Volume:</strong>
+         </div>
+         <input
+            id="input-volume"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="0"
+            class="form-range"
+            oninput="volumeSet(this.value);"
+            onchange="volumeSet(this.value);" />
       </div>
-
       <strong class="d-block mb-1">Now Playing:</strong>
       <h4 class="mb-1" style="font-size: 17px">
-        <div class="div-playing-title"></div>
+         <div class="div-playing-title"></div>
       </h4>
       <h4 class="mb-2" style="font-size: 13px">
-        <div class="div-playing-artist"></div>
+         <div class="div-playing-artist"></div>
       </h4>
-
       <div class="mb-3">
-        <a id="playing-link" target="_blank">
-          <img
+         <a id="playing-link" target="_blank">
+         <img
             id="playing-image"
             class="rounded"
             src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
             alt=""
             width="250"
             height="250" />
-        </a>
+         </a>
       </div>
-
-    <footer class="py-5">
-      <div class="container d-flex justify-content-between">
-        <a href="https://ssamjh.nz/" class="text">Primary Website</a>
-        <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
-          <i class="fab fa-github fa-lg"></i>
-        </a>
-        <div>&copy; 2023 <span>ssamjh</span></div>
-      </div>
-    </footer>
-
-    <script>
-      const audioStream = document.getElementById("audio-stream");
-      const buttonToggle = document.getElementById("button-toggle");
-      const playingImage = document.getElementById("playing-image");
-      const playingLink = document.getElementById("playing-link");
-      const divVolume = document.getElementById("div-volume");
-      const inputVolume = document.getElementById("input-volume");
-
-      function storageSet(key, value) {
-        localStorage.setItem(key, value);
-      }
-
-      function storageGet(key) {
-        return localStorage.getItem(key);
-      }
-
-      function initHls(source) {
-        if (Hls.isSupported()) {
-          let hls = new Hls();
-          hls.loadSource(source);
-          hls.attachMedia(audioStream);
-        } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
-          audioStream.src = source;
-        }
-      }
-
-      function scaleVolume(inputValue) {
-        return inputValue <= 50
-          ? inputValue * 0.2
-          : 10 + (inputValue - 50) * 0.4;
-      }
-
-      function qualityUpdate() {
-        let source;
-        let wasPlaying = !audioStream.paused;
-
-        if (Hls.isSupported()) {
-          source = "https://hls.sjh.at/spotifynet/stream.m3u8";
-          initHls(source);
-        } else {
-          source = "https://icecast.sjh.at/spotifynet";
-          audioStream.setAttribute("src", source);
-          console.log("Set source to: " + source);
-        }
-
-        if (wasPlaying) {
-          audioStream.play();
-        }
-      }
-
-      function togglePlay() {
-        qualityUpdate();
-        audioStream.play();
-        buttonToggle.textContent = "Stop";
-        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
-      }
-
-      function buttonStop() {
-        audioStream.pause();
-        audioStream.currentTime = 0;
-        buttonToggle.textContent = "Play";
-        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
-      }
-
-      function volumeSet(val) {
-        const scaledVolume = scaleVolume(val);
-        audioStream.volume = scaledVolume / 100;
-        storageSet("volume", val);
-      }
-
-      function preloadImage(url, callback) {
-        let img = new Image();
-        img.src = url;
-        img.onload = callback;
-      }
-
-      function trackMeta() {
-        $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
-          const currentData = data.current;
-
-          if (!currentData.playing) {
-            $(".div-playing-title, .div-playing-artist").text("");
-            if (
-              playingImage.src !==
-              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
-            ) {
-              playingImage.src =
-                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-            }
-            playingLink.setAttribute("href", "javascript:void(0)");
-
-            $(".up-next").empty();
-            for (let i = 0; i < 3; i++) {
-              $(".up-next").append(`
-                    <div class="up-next-item">
-                        <a href="javascript:void(0)" target="_blank">
-                            <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="Placeholder cover" width="64" height="64">
-                        </a>
-                    </div>
-                `);
-            }
-            return;
-          }
-
-          const createLink = (url, id, name) =>
-            `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
-
-          // Preload current playing image and then update
-          if (playingImage.src !== currentData.cover) {
-            preloadImage(currentData.cover, function () {
-              playingImage.src = currentData.cover;
-
-              // Update text after image has loaded
-              $(".div-playing-title").html(
-                createLink(
-                  "https://open.spotify.com/track/",
-                  currentData.songid,
-                  currentData.song
-                )
-              );
-              $(".div-playing-artist").html(
-                currentData.artist
-                  .map((artist) =>
-                    createLink(
-                      "https://open.spotify.com/artist/",
-                      artist.id,
-                      artist.name
-                    )
-                  )
-                  .join(", ")
-              );
-              playingLink.setAttribute(
-                "href",
-                `https://open.spotify.com/album/${currentData.albumid}`
-              );
-            });
-          } else {
-            // If image doesn't need updating, still update text
-            $(".div-playing-title").html(
-              createLink(
-                "https://open.spotify.com/track/",
-                currentData.songid,
-                currentData.song
-              )
-            );
-            $(".div-playing-artist").html(
-              currentData.artist
-                .map((artist) =>
-                  createLink(
-                    "https://open.spotify.com/artist/",
-                    artist.id,
-                    artist.name
-                  )
-                )
-                .join(", ")
-            );
-          }
-
-          const upNextData = data.queue;
-
-          // Create an array of promises for image preloading
-          const imagePreloadPromises = upNextData.map((song) => {
-            return new Promise((resolve) => {
-              if ($(`img[src="${song.cover}"]`).length === 0) {
-                preloadImage(song.cover, resolve);
-              } else {
-                resolve();
-              }
-            });
-          });
-
-          // Wait for all images to preload
-          Promise.all(imagePreloadPromises).then(() => {
-            $(".up-next").empty();
-
-            upNextData.forEach((song) => {
-              const songItem = `
-            <div class="up-next-item">
-                <a href="https://open.spotify.com/album/${
-                  song.albumid
-                }" target="_blank">
-                    <img src="${song.cover}" alt="${song.song} cover">
-                </a>
-                <div>
-                    <div>${createLink(
-                      "https://open.spotify.com/track/",
-                      song.songid,
-                      song.song
-                    )}</div>
-                    <div>${song.artist
-                      .map((artist) =>
-                        createLink(
-                          "https://open.spotify.com/artist/",
-                          artist.id,
-                          artist.name
-                        )
-                      )
-                      .join(", ")}</div>
-                </div>
-            </div>`;
-              $(".up-next").append(songItem);
-            });
-          });
-        });
-      }
-
-      if (!audioStream.paused) {
-        buttonToggle.textContent = "Stop";
-        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
-      } else {
-        buttonToggle.textContent = "Play";
-        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
-      }
-
-      trackMeta();
-      setInterval(trackMeta, 5000);
-    </script>
-  </body>
+      <footer class="py-5">
+         <div class="container d-flex justify-content-between">
+            <a href="https://ssamjh.nz/" class="text">Primary Website</a>
+            <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
+            <i class="fab fa-github fa-lg"></i>
+            </a>
+            <div>&copy; 2023 <span>ssamjh</span></div>
+         </div>
+      </footer>
+      <script>
+         const audioStream = document.getElementById("audio-stream");
+         const buttonToggle = document.getElementById("button-toggle");
+         const playingImage = document.getElementById("playing-image");
+         const playingLink = document.getElementById("playing-link");
+         const divVolume = document.getElementById("div-volume");
+         const inputVolume = document.getElementById("input-volume");
+         
+         function storageSet(key, value) {
+           localStorage.setItem(key, value);
+         }
+         
+         function storageGet(key) {
+           return localStorage.getItem(key);
+         }
+         
+         function initHls(source) {
+           if (Hls.isSupported()) {
+             let hls = new Hls();
+             hls.loadSource(source);
+             hls.attachMedia(audioStream);
+           } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
+             audioStream.src = source;
+           }
+         }
+         
+         function scaleVolume(inputValue) {
+           return inputValue <= 50
+             ? inputValue * 0.2
+             : 10 + (inputValue - 50) * 0.4;
+         }
+         
+         function qualityUpdate() {
+           let source;
+           let wasPlaying = !audioStream.paused;
+         
+           if (Hls.isSupported()) {
+             source = "https://hls.sjh.at/spotifynet/stream.m3u8";
+             initHls(source);
+           } else {
+             source = "https://icecast.sjh.at/spotifynet";
+             audioStream.setAttribute("src", source);
+             console.log("Set source to: " + source);
+           }
+         
+           if (wasPlaying) {
+             audioStream.play();
+           }
+         }
+         
+         function togglePlay() {
+           qualityUpdate();
+           audioStream.play();
+           buttonToggle.textContent = "Stop";
+           buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+         }
+         
+         function buttonStop() {
+           audioStream.pause();
+           audioStream.currentTime = 0;
+           buttonToggle.textContent = "Play";
+           buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+         }
+         
+         function volumeSet(val) {
+           const scaledVolume = scaleVolume(val);
+           audioStream.volume = scaledVolume / 100;
+           storageSet("volume", val);
+         }
+         
+         function preloadImage(url, callback) {
+           let img = new Image();
+           img.src = url;
+           img.onload = callback;
+         }
+         
+         function trackMeta() {
+           $.getJSON("./metadata.json?rand=" + Math.random(), function (data) {
+             const currentData = data.current;
+         
+             if (!currentData.playing) {
+               $(".div-playing-title, .div-playing-artist").text("");
+               if (
+                 playingImage.src !==
+                 "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+               ) {
+                 playingImage.src =
+                   "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+               }
+               playingLink.setAttribute("href", "javascript:void(0)");
+               return;
+             }
+         
+             const createLink = (url, id, name) =>
+               `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+         
+             // Preload current playing image and then update
+             if (playingImage.src !== currentData.cover) {
+               preloadImage(currentData.cover, function () {
+                 playingImage.src = currentData.cover;
+         
+                 // Update text after image has loaded
+                 $(".div-playing-title").html(
+                   createLink(
+                     "https://open.spotify.com/track/",
+                     currentData.songid,
+                     currentData.song
+                   )
+                 );
+                 $(".div-playing-artist").html(
+                   currentData.artist
+                     .map((artist) =>
+                       createLink(
+                         "https://open.spotify.com/artist/",
+                         artist.id,
+                         artist.name
+                       )
+                     )
+                     .join(", ")
+                 );
+                 playingLink.setAttribute(
+                   "href",
+                   `https://open.spotify.com/album/${currentData.albumid}`
+                 );
+               });
+             } else {
+               // If image doesn't need updating, still update text
+               $(".div-playing-title").html(
+                 createLink(
+                   "https://open.spotify.com/track/",
+                   currentData.songid,
+                   currentData.song
+                 )
+               );
+               $(".div-playing-artist").html(
+                 currentData.artist
+                   .map((artist) =>
+                     createLink(
+                       "https://open.spotify.com/artist/",
+                       artist.id,
+                       artist.name
+                     )
+                   )
+                   .join(", ")
+               );
+             }
+           });
+         }
+         
+         if (!audioStream.paused) {
+           buttonToggle.textContent = "Stop";
+           buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+         } else {
+           buttonToggle.textContent = "Play";
+           buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+         }
+         
+         trackMeta();
+         setInterval(trackMeta, 5000);
+      </script>
+   </body>
 </html>
