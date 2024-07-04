@@ -325,12 +325,6 @@
         console.log("songSearchButton:", songSearchButton);
         console.log("searchResults:", searchResults);
 
-        if (songSearchInput) {
-          songSearchInput.addEventListener("input", debounce(searchSongs, 300));
-        } else {
-          console.error("songSearchInput not found");
-        }
-
         if (songSearchButton) {
           songSearchButton.addEventListener("click", function () {
             console.log("Search button clicked");
