@@ -1,106 +1,508 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="auto">
-   <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>ssamjh's Music Sync</title>
-      <link
-         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
-         rel="stylesheet"
-         crossorigin="anonymous" />
-      <link
-         rel="stylesheet"
-         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
-         crossorigin="anonymous" />
-      <script src="js/bootstrap-auto-colour.js"></script>
-      <script src="js/DOMContentLoaded.js"></script>
-      <style>
-         .volume-wrapper {
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-         }
-         .volume-label {
-         margin-top: 15px;
-         margin-bottom: 5px;
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         }
-         #input-volume {
-         max-width: 500px;
-         }
-         #div-volume {
-         display: none;
-         flex-direction: column;
-         align-items: center;
-         }
-         .div-playing-title {
-         min-height: 17px;
-         }
-         .div-playing-artist {
-         min-height: 13px;
-         }
-      </style>
-      <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
-      <script
-         src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
-         crossorigin="anonymous"></script>
-   </head>
-   <body class="bg">
-      <div class="container text-center py-3">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ssamjh's Music Sync</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      crossorigin="anonymous" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
+      crossorigin="anonymous" />
+    <script src="js/bootstrap-auto-colour.js"></script>
+    <script src="js/DOMContentLoaded.js"></script>
+    <style>
+      .volume-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .volume-label {
+        margin-top: 15px;
+        margin-bottom: 5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #input-volume {
+        max-width: 500px;
+      }
+      #div-volume {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+      }
+      .div-playing-title {
+        min-height: 17px;
+      }
+      .div-playing-artist {
+        min-height: 13px;
+      }
+      /* Song Request Modal Styles */
+      .song-result-item {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        text-decoration: none;
+        color: inherit;
+        transition: background-color 0.2s;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .song-result-item:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+      }
+      .song-result-image {
+        width: 40px;
+        height: 40px;
+        margin-right: 15px;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+      .song-result-info {
+        flex-grow: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        min-width: 0; /* This allows flex items to shrink below their minimum content size */
+      }
+      .song-result-title {
+        font-weight: bold;
+        margin: 0;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+        margin-right: 10px; /* Add some space between title and artist */
+      }
+      .song-result-artist {
+        margin: 0;
+        font-size: 0.9em;
+        color: #8c8c8c;
+        text-align: right;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+      crossorigin="anonymous"></script>
+  </head>
+  <body class="bg">
+    <div class="container text-center py-3">
       <h2>ssamjh's Music Sync</h2>
       <h5 class="mb-4">JoinMyMusic.com</h5>
       <audio id="audio-stream" preload="none"></audio>
       <button
-         class="btn btn-primary btn-sm mb-2"
-         id="button-toggle"
-         onclick="buttonPlay();">
-      Play
+        class="btn btn-primary btn-sm mb-2"
+        id="button-toggle"
+        onclick="buttonPlay();">
+        Play
+      </button>
+      <button
+        class="btn btn-secondary btn-sm mb-2 ms-2"
+        data-bs-toggle="modal"
+        data-bs-target="#songRequestModal">
+        Request Song
       </button>
       <div id="div-volume" class="mb-2">
-         <div class="d-flex justify-content-center align-items-center mb-1">
-            <strong>Volume:</strong>
-         </div>
-         <input
-            id="input-volume"
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            value="0"
-            class="form-range"
-            oninput="volumeSet(this.value);"
-            onchange="volumeSet(this.value);" />
+        <div class="d-flex justify-content-center align-items-center mb-1">
+          <strong>Volume:</strong>
+        </div>
+        <input
+          id="input-volume"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value="0"
+          class="form-range"
+          oninput="volumeSet(this.value);"
+          onchange="volumeSet(this.value);" />
       </div>
       <strong class="d-block mb-1">Now Playing:</strong>
       <h4 class="mb-1" style="font-size: 17px">
-         <div class="div-playing-title"></div>
+        <div class="div-playing-title"></div>
       </h4>
       <h4 class="mb-2" style="font-size: 13px">
-         <div class="div-playing-artist"></div>
+        <div class="div-playing-artist"></div>
       </h4>
       <div class="mb-3">
-         <a id="playing-link" target="_blank">
-         <img
+        <a id="playing-link" target="_blank">
+          <img
             id="playing-image"
             class="rounded"
             src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
             alt=""
             width="250"
             height="250" />
-         </a>
+        </a>
       </div>
       <footer class="py-5">
-         <div class="container d-flex justify-content-between">
-            <a href="https://ssamjh.nz/" class="text">Primary Website</a>
-            <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
+        <div class="container d-flex justify-content-between">
+          <a href="https://ssamjh.nz/" class="text">Primary Website</a>
+          <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
             <i class="fab fa-github fa-lg"></i>
-            </a>
-            <div>&copy; 2023 <span>ssamjh</span></div>
-         </div>
+          </a>
+          <div>&copy; 2023 <span>ssamjh</span></div>
+        </div>
       </footer>
-      <script type="text/javascript" src="js/index.js"></script>
-   </body>
+    </div>
+    <script>
+      const audioStream = document.getElementById("audio-stream");
+      const buttonToggle = document.getElementById("button-toggle");
+      const playingImage = document.getElementById("playing-image");
+      const playingLink = document.getElementById("playing-link");
+      const divVolume = document.getElementById("div-volume");
+      const inputVolume = document.getElementById("input-volume");
+
+      function storageSet(key, value) {
+        localStorage.setItem(key, value);
+      }
+
+      function storageGet(key) {
+        return localStorage.getItem(key);
+      }
+
+      function initHls(source) {
+        if (Hls.isSupported()) {
+          let hls = new Hls();
+          hls.loadSource(source);
+          hls.attachMedia(audioStream);
+        } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
+          audioStream.src = source;
+        }
+      }
+
+      function scaleVolume(inputValue) {
+        return inputValue <= 50
+          ? inputValue * 0.2
+          : 10 + (inputValue - 50) * 0.4;
+      }
+
+      function qualityUpdate() {
+        let source;
+        let wasPlaying = !audioStream.paused;
+
+        if (Hls.isSupported()) {
+          source = "https://hls.sjh.at/spotifynet/stream.m3u8";
+          initHls(source);
+        } else {
+          source = "https://icecast.sjh.at/spotifynet";
+          audioStream.setAttribute("src", source);
+          console.log("Set source to: " + source);
+        }
+
+        if (wasPlaying) {
+          audioStream.play();
+        }
+      }
+
+      function togglePlay() {
+        qualityUpdate();
+        audioStream.play();
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+      }
+
+      function buttonStop() {
+        audioStream.pause();
+        audioStream.currentTime = 0;
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      function volumeSet(val) {
+        const scaledVolume = scaleVolume(val);
+        audioStream.volume = scaledVolume / 100;
+        storageSet("volume", val);
+      }
+
+      function preloadImage(url, callback) {
+        let img = new Image();
+        img.src = url;
+        img.onload = callback;
+      }
+
+      function trackMeta() {
+        $.getJSON("./metadata.php?rand=" + Math.random(), function (data) {
+          const currentData = data.current;
+
+          if (!currentData || !currentData.song) {
+            $(".div-playing-title, .div-playing-artist").text("");
+            if (
+              playingImage.src !==
+              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+            ) {
+              playingImage.src =
+                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+            }
+            playingLink.setAttribute("href", "javascript:void(0)");
+            return;
+          }
+
+          const createLink = (url, id, name) =>
+            `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+
+          // Preload current playing image and then update
+          if (playingImage.src !== currentData.cover) {
+            preloadImage(currentData.cover, function () {
+              playingImage.src = currentData.cover;
+
+              // Update text after image has loaded
+              $(".div-playing-title").html(
+                createLink(
+                  "https://open.spotify.com/track/",
+                  currentData.songid,
+                  currentData.song
+                )
+              );
+              $(".div-playing-artist").html(
+                currentData.artist
+                  .map((artist) =>
+                    createLink(
+                      "https://open.spotify.com/artist/",
+                      artist.id,
+                      artist.name
+                    )
+                  )
+                  .join(", ")
+              );
+              playingLink.setAttribute(
+                "href",
+                `https://open.spotify.com/album/${currentData.albumid}`
+              );
+            });
+          } else {
+            // If image doesn't need updating, still update text
+            $(".div-playing-title").html(
+              createLink(
+                "https://open.spotify.com/track/",
+                currentData.songid,
+                currentData.song
+              )
+            );
+            $(".div-playing-artist").html(
+              currentData.artist
+                .map((artist) =>
+                  createLink(
+                    "https://open.spotify.com/artist/",
+                    artist.id,
+                    artist.name
+                  )
+                )
+                .join(", ")
+            );
+          }
+        });
+      }
+
+      if (!audioStream.paused) {
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+      } else {
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      trackMeta();
+      setInterval(trackMeta, 5000);
+
+      // Song Request Modal functionality
+      document.addEventListener("DOMContentLoaded", function () {
+        console.log("DOM fully loaded and parsed");
+
+        const songSearchInput = document.getElementById("songSearchInput");
+        const songSearchButton = document.getElementById("songSearchButton");
+        const searchResults = document.getElementById("searchResults");
+
+        console.log("songSearchInput:", songSearchInput);
+        console.log("songSearchButton:", songSearchButton);
+        console.log("searchResults:", searchResults);
+
+        if (songSearchInput) {
+          songSearchInput.addEventListener("input", debounce(searchSongs, 300));
+        } else {
+          console.error("songSearchInput not found");
+        }
+
+        if (songSearchButton) {
+          songSearchButton.addEventListener("click", function () {
+            console.log("Search button clicked");
+            searchSongs();
+          });
+        } else {
+          console.error("songSearchButton not found");
+        }
+
+        function debounce(func, wait) {
+          let timeout;
+          return function executedFunction(...args) {
+            const later = () => {
+              clearTimeout(timeout);
+              func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+          };
+        }
+
+        function searchSongs() {
+          const query = songSearchInput.value.trim();
+          if (query.length < 2) {
+            searchResults.innerHTML = "";
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append("action", "search");
+          formData.append("query", query);
+
+          fetch("requests.php", {
+            method: "POST",
+            body: formData,
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.error) {
+                displayMessage(data.error, true);
+              } else {
+                displaySearchResults(data);
+              }
+            })
+            .catch((error) => {
+              console.error("Error:", error);
+              displayMessage("An error occurred while searching.", true);
+            });
+        }
+
+        function displaySearchResults(data) {
+          searchResults.innerHTML = "";
+          if (data.error) {
+            displayMessage(data.error, true);
+            return;
+          }
+
+          const tracks = data.results.tracks.hits;
+
+          if (tracks.length === 0) {
+            displayMessage("No songs found.");
+            return;
+          }
+
+          tracks.forEach((track) => {
+            const resultItem = document.createElement("a");
+            resultItem.href = "#";
+            resultItem.className = "song-result-item";
+            resultItem.innerHTML = `
+<img src="${track.image}" alt="${track.name}" class="song-result-image">
+<div class="song-result-info">
+<div class="song-result-title">${track.name}</div>
+<div class="song-result-artist">${track.artists
+              .map((artist) => artist.name)
+              .join(", ")}</div>
+</div>
+`;
+            resultItem.addEventListener("click", (e) => {
+              e.preventDefault();
+              requestSong(track.uri);
+            });
+            searchResults.appendChild(resultItem);
+          });
+        }
+
+        function requestSong(uri) {
+          const formData = new FormData();
+          formData.append("action", "addToQueue");
+          formData.append("uri", uri);
+
+          fetch("requests.php", {
+            method: "POST",
+            body: formData,
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.success) {
+                displayMessage(data.message);
+                setTimeout(() => $("#songRequestModal").modal("hide"), 2000);
+              } else if (data.error) {
+                displayMessage(data.error, true);
+              } else {
+                displayMessage("Failed to send song request.", true);
+              }
+            })
+            .catch((error) => {
+              console.error("Error:", error);
+              displayMessage(
+                "An error occurred while sending the song request.",
+                true
+              );
+            });
+        }
+
+        function displayMessage(message, isError = false) {
+          const messageDiv = document.createElement("div");
+          messageDiv.className = `alert ${
+            isError ? "alert-danger" : "alert-success"
+          } mt-3`;
+          messageDiv.textContent = message;
+          searchResults.innerHTML = "";
+          searchResults.appendChild(messageDiv);
+        }
+      });
+    </script>
+    <!-- Song Request Modal -->
+    <div
+      class="modal fade"
+      id="songRequestModal"
+      tabindex="-1"
+      aria-labelledby="songRequestModalLabel"
+      aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="songRequestModalLabel">
+              Request a Song
+            </h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3 input-group">
+              <input
+                type="text"
+                class="form-control"
+                id="songSearchInput"
+                placeholder="Search for a song..." />
+              <button
+                class="btn btn-primary"
+                type="button"
+                id="songSearchButton">
+                Search
+              </button>
+            </div>
+            <div id="searchResults" class="list-group">
+              <!-- Search results will be dynamically added here -->
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
 </html>
