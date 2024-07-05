@@ -219,7 +219,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $token = $conn->real_escape_string($token);
             $newPassword = password_hash($newPassword, PASSWORD_DEFAULT);
 
-            $stmt = $conn->prepare("UPDATE users SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE reset_token = ? AND reset_token_expiry > NOW()");
+            // First, check if the token is valid and not expired
+            $stmt = $conn->prepare("SELECT id FROM users WHERE reset_token = ? AND reset_token_expiry > NOW()");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result->num_rows === 0) {
+                echo json_encode(['success' => false, 'message' => 'Invalid or expired reset token']);
+                exit;
+            }
+
+            // If valid, update the password and invalidate the token
+            $stmt = $conn->prepare("UPDATE users SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE reset_token = ?");
             $stmt->bind_param("ss", $newPassword, $token);
 
             if ($stmt->execute()) {
@@ -261,12 +273,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         case 'reset_password':
             $token = $_GET['token'] ?? '';
             if (empty($token)) {
-                echo json_encode(['success' => false, 'message' => 'Invalid or missing token']);
+                echo "Invalid or missing token";
             } else {
-                // Return JSON with the token, so the frontend can handle displaying the form
-                echo json_encode(['success' => true, 'token' => $token]);
+                // Check if the token is valid and not expired
+                $stmt = $conn->prepare("SELECT id FROM users WHERE reset_token = ? AND reset_token_expiry > NOW()");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $result = $stmt->get_result();
+
+                if ($result->num_rows === 0) {
+                    echo "Invalid or expired reset token. Please request a new password reset.";
+                } else {
+                    // Serve a basic HTML page with the password reset form
+                    echo '<!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                            <title>Reset Password</title>
+                        </head>
+                        <body>
+                            <h2>Reset Your Password</h2>
+                            <form id="resetPasswordForm">
+                                <input type="hidden" name="action" value="reset_password">
+                                <input type="hidden" name="token" value="' . htmlspecialchars($token) . '">
+                                <label for="new_password">New Password:</label>
+                                <input type="password" name="new_password" id="new_password" required>
+                                <button type="submit">Reset Password</button>
+                            </form>
+                            <script>
+                                document.getElementById("resetPasswordForm").addEventListener("submit", function(e) {
+                                    e.preventDefault();
+                                    fetch("account.php", {
+                                        method: "POST",
+                                        body: new FormData(this)
+                                    })
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        if (data.success) {
+                                            alert("Password reset successful. You can now log in with your new password.");
+                                            window.location.href = "./";
+                                        } else {
+                                            alert("Error: " + data.message);
+                                        }
+                                    })
+                                    .catch(error => {
+                                        console.error("Error:", error);
+                                        alert("An error occurred. Please try again.");
+                                    });
+                                });
+                            </script>
+                        </body>
+                        </html>';
+                }
             }
-            break;
+            exit; // Ensure no further processing of this request
 
         default:
             echo json_encode(['success' => false, 'message' => 'Invalid action']);

@@ -32,7 +32,7 @@ function updateLoginStatus(isLoggedIn, username = "") {
 
 function logout() {
   const formData = new FormData();
-  formData.append('action', 'logout');
+  formData.append("action", "logout");
 
   fetch("account.php", {
     method: "POST",

@@ -76,7 +76,7 @@ function trackMeta() {
     const currentData = data.current;
 
     if (!currentData || !currentData.song) {
-      $(".div-playing-title, .div-playing-artist").text("");
+      $(".player-playing-title, .player-playing-artist").text("");
       if (
         playingImage.src !==
         "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
@@ -97,14 +97,14 @@ function trackMeta() {
         playingImage.src = currentData.cover;
 
         // Update text after image has loaded
-        $(".div-playing-title").html(
+        $(".player-playing-title").html(
           createLink(
             "https://open.spotify.com/track/",
             currentData.songid,
             currentData.song
           )
         );
-        $(".div-playing-artist").html(
+        $(".player-playing-artist").html(
           currentData.artist
             .map((artist) =>
               createLink(
@@ -122,14 +122,14 @@ function trackMeta() {
       });
     } else {
       // If image doesn't need updating, still update text
-      $(".div-playing-title").html(
+      $(".player-playing-title").html(
         createLink(
           "https://open.spotify.com/track/",
           currentData.songid,
           currentData.song
         )
       );
-      $(".div-playing-artist").html(
+      $(".player-playing-artist").html(
         currentData.artist
           .map((artist) =>
             createLink(
