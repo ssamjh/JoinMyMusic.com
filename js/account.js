@@ -129,7 +129,6 @@ document.addEventListener("DOMContentLoaded", function () {
       e.preventDefault();
       const formData = new FormData(this);
       formData.append("action", "login");
-      formData.append("cf-turnstile-response", turnstile.getResponse());
 
       // Add remember me value to form data
       const rememberMe = document.getElementById("rememberMe").checked;

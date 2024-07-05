@@ -37,21 +37,17 @@ function validateRememberMeCookie()
         $token = $_COOKIE['remember_me'];
         global $conn;
 
-        $stmt = $conn->prepare("SELECT r.user_id, u.username FROM remember_tokens r JOIN users u ON r.user_id = u.id WHERE r.token = ? AND r.expires > NOW()");
+        $stmt = $conn->prepare("SELECT user_id FROM remember_tokens WHERE token = ? AND expires > NOW()");
         $stmt->bind_param("s", $token);
         $stmt->execute();
         $result = $stmt->get_result();
 
         if ($user = $result->fetch_assoc()) {
-            // Token is valid and user exists, log the user in
+            // Token is valid, log the user in
             $_SESSION['user_id'] = $user['user_id'];
-            $_SESSION['username'] = $user['username'];
             // Refresh the token
             setRememberMeCookie($user['user_id']);
             return true;
-        } else {
-            // Invalid token or user doesn't exist, clear the cookie
-            setcookie('remember_me', '', time() - 3600, '/', '', true, true);
         }
     }
     return false;
@@ -104,47 +100,6 @@ function validateInput($input, $type)
     }
 }
 
-function logout()
-{
-    // Clear session
-    session_unset();
-    session_destroy();
-
-    // Clear remember me cookie
-    setcookie('remember_me', '', time() - 3600, '/', '', true, true);
-
-    // Remove remember token from database
-    if (isset($_COOKIE['remember_me'])) {
-        $token = $_COOKIE['remember_me'];
-        global $conn;
-        $stmt = $conn->prepare("DELETE FROM remember_tokens WHERE token = ?");
-        $stmt->bind_param("s", $token);
-        $stmt->execute();
-    }
-}
-
-function validateTurnstile($response)
-{
-    $url = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
-    $data = [
-        'secret' => TURNSTILE_SECRET_KEY,
-        'response' => $response,
-        'remoteip' => $_SERVER['REMOTE_ADDR']
-    ];
-
-    $options = [
-        'http' => [
-            'header' => "Content-type: application/x-www-form-urlencoded\r\n",
-            'method' => 'POST',
-            'content' => http_build_query($data)
-        ]
-    ];
-
-    $context = stream_context_create($options);
-    $result = file_get_contents($url, false, $context);
-    return json_decode($result, true);
-}
-
 // Handle POST requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -154,13 +109,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = $_POST['username'] ?? '';
             $email = $_POST['email'] ?? '';
             $password = $_POST['password'] ?? '';
-            $turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
-
-            $turnstileResult = validateTurnstile($turnstileResponse);
-            if (!$turnstileResult['success']) {
-                echo json_encode(['success' => false, 'message' => 'Turnstile validation failed']);
-                exit;
-            }
 
             if (!validateInput($username, 'username') || !validateInput($email, 'email') || !validateInput($password, 'password')) {
                 echo json_encode(['success' => false, 'message' => 'Invalid input']);
@@ -185,13 +133,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = $_POST['username'] ?? '';
             $password = $_POST['password'] ?? '';
             $remember_me = isset($_POST['remember_me']) ? true : false;
-            $turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
-
-            $turnstileResult = validateTurnstile($turnstileResponse);
-            if (!$turnstileResult['success']) {
-                echo json_encode(['success' => false, 'message' => 'Turnstile validation failed']);
-                exit;
-            }
 
             if (!validateInput($username, 'username')) {
                 echo json_encode(['success' => false, 'message' => 'Invalid username']);
@@ -231,13 +172,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         case 'reset_password_request':
             $username = $_POST['username'] ?? '';
-            $turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
-
-            $turnstileResult = validateTurnstile($turnstileResponse);
-            if (!$turnstileResult['success']) {
-                echo json_encode(['success' => false, 'message' => 'Turnstile validation failed']);
-                exit;
-            }
 
             if (!validateInput($username, 'username')) {
                 echo json_encode(['success' => false, 'message' => 'Invalid username']);
@@ -322,31 +256,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     switch ($action) {
         case 'check_login':
             if (isset($_SESSION['user_id'])) {
-                // Verify user still exists in the database
-                $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
-                $stmt->bind_param("i", $_SESSION['user_id']);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                if ($user = $result->fetch_assoc()) {
-                    echo json_encode(['loggedIn' => true, 'username' => $user['username']]);
-                } else {
-                    // User no longer exists, destroy session
-                    session_destroy();
-                    echo json_encode(['loggedIn' => false]);
-                }
+                echo json_encode(['loggedIn' => true, 'username' => $_SESSION['username']]);
             } elseif (validateRememberMeCookie()) {
-                // Similar verification for remember me cookie
+                // If the session is not set, but the remember me cookie is valid
                 $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
                 $stmt->bind_param("i", $_SESSION['user_id']);
                 $stmt->execute();
                 $result = $stmt->get_result();
-                if ($user = $result->fetch_assoc()) {
-                    echo json_encode(['loggedIn' => true, 'username' => $user['username']]);
-                } else {
-                    // User no longer exists, clear cookie
-                    setcookie('remember_me', '', time() - 3600, '/', '', true, true);
-                    echo json_encode(['loggedIn' => false]);
-                }
+                $user = $result->fetch_assoc();
+                echo json_encode(['loggedIn' => true, 'username' => $user['username']]);
             } else {
                 echo json_encode(['loggedIn' => false]);
             }

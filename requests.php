@@ -1,18 +1,16 @@
 <?php
 session_start();
-require_once 'config.php';
-require_once 'account.php';
 header('Content-Type: application/json');
 
-// Validate user for all actions
-if (!isset($_SESSION['user_id']) && !validateRememberMeCookie()) {
-    echo json_encode(['error' => 'User not authenticated']);
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    echo json_encode(['error' => 'Unauthorized. Please log in.']);
     exit;
 }
 
 // Redis connection setup
 $redis = new Redis();
-$redis->connect(REDIS_IP, REDIS_PORT);
+$redis->connect('127.0.0.1', 6379);
 
 $action = $_POST['action'] ?? '';
 $clientIP = $_SERVER['REMOTE_ADDR'];
@@ -59,7 +57,7 @@ switch ($action) {
             echo json_encode(['error' => 'No search text provided.']);
             exit;
         }
-        $url = LIBRESPOT . "/search/" . urlencode($query);
+        $url = "http://172.16.2.27:24879/search/" . urlencode($query);
         echo makeRequest($url);
         break;
 
@@ -75,7 +73,7 @@ switch ($action) {
             echo json_encode(['error' => 'No URI provided']);
             exit;
         }
-        $url = LIBRESPOT . "/player/addToQueue";
+        $url = "http://172.16.2.27:24879/player/addToQueue";
         makeRequest($url, 'POST', ['uri' => $uri]);
 
         echo json_encode(['success' => true, 'message' => 'Thanks, your request has been sent!']);
