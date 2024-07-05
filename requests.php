@@ -12,7 +12,7 @@ if (!isset($_SESSION['user_id']) && !validateRememberMeCookie()) {
 
 // Redis connection setup
 $redis = new Redis();
-$redis->connect('127.0.0.1', 6379);
+$redis->connect(REDIS_IP, REDIS_PORT);
 
 $action = $_POST['action'] ?? '';
 $clientIP = $_SERVER['REMOTE_ADDR'];
@@ -59,7 +59,7 @@ switch ($action) {
             echo json_encode(['error' => 'No search text provided.']);
             exit;
         }
-        $url = "http://172.16.2.27:24879/search/" . urlencode($query);
+        $url = LIBRESPOT . "/search/" . urlencode($query);
         echo makeRequest($url);
         break;
 
@@ -75,7 +75,7 @@ switch ($action) {
             echo json_encode(['error' => 'No URI provided']);
             exit;
         }
-        $url = "http://172.16.2.27:24879/player/addToQueue";
+        $url = LIBRESPOT . "/player/addToQueue";
         makeRequest($url, 'POST', ['uri' => $uri]);
 
         echo json_encode(['success' => true, 'message' => 'Thanks, your request has been sent!']);
