@@ -37,17 +37,21 @@ function validateRememberMeCookie()
         $token = $_COOKIE['remember_me'];
         global $conn;
 
-        $stmt = $conn->prepare("SELECT user_id FROM remember_tokens WHERE token = ? AND expires > NOW()");
+        $stmt = $conn->prepare("SELECT r.user_id, u.username FROM remember_tokens r JOIN users u ON r.user_id = u.id WHERE r.token = ? AND r.expires > NOW()");
         $stmt->bind_param("s", $token);
         $stmt->execute();
         $result = $stmt->get_result();
 
         if ($user = $result->fetch_assoc()) {
-            // Token is valid, log the user in
+            // Token is valid and user exists, log the user in
             $_SESSION['user_id'] = $user['user_id'];
+            $_SESSION['username'] = $user['username'];
             // Refresh the token
             setRememberMeCookie($user['user_id']);
             return true;
+        } else {
+            // Invalid token or user doesn't exist, clear the cookie
+            setcookie('remember_me', '', time() - 3600, '/', '', true, true);
         }
     }
     return false;
@@ -97,6 +101,25 @@ function validateInput($input, $type)
             return strlen($input) >= 8;
         default:
             return false;
+    }
+}
+
+function logout()
+{
+    // Clear session
+    session_unset();
+    session_destroy();
+
+    // Clear remember me cookie
+    setcookie('remember_me', '', time() - 3600, '/', '', true, true);
+
+    // Remove remember token from database
+    if (isset($_COOKIE['remember_me'])) {
+        $token = $_COOKIE['remember_me'];
+        global $conn;
+        $stmt = $conn->prepare("DELETE FROM remember_tokens WHERE token = ?");
+        $stmt->bind_param("s", $token);
+        $stmt->execute();
     }
 }
 
@@ -256,15 +279,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     switch ($action) {
         case 'check_login':
             if (isset($_SESSION['user_id'])) {
-                echo json_encode(['loggedIn' => true, 'username' => $_SESSION['username']]);
-            } elseif (validateRememberMeCookie()) {
-                // If the session is not set, but the remember me cookie is valid
+                // Verify user still exists in the database
                 $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
                 $stmt->bind_param("i", $_SESSION['user_id']);
                 $stmt->execute();
                 $result = $stmt->get_result();
-                $user = $result->fetch_assoc();
-                echo json_encode(['loggedIn' => true, 'username' => $user['username']]);
+                if ($user = $result->fetch_assoc()) {
+                    echo json_encode(['loggedIn' => true, 'username' => $user['username']]);
+                } else {
+                    // User no longer exists, destroy session
+                    session_destroy();
+                    echo json_encode(['loggedIn' => false]);
+                }
+            } elseif (validateRememberMeCookie()) {
+                // Similar verification for remember me cookie
+                $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
+                $stmt->bind_param("i", $_SESSION['user_id']);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($user = $result->fetch_assoc()) {
+                    echo json_encode(['loggedIn' => true, 'username' => $user['username']]);
+                } else {
+                    // User no longer exists, clear cookie
+                    setcookie('remember_me', '', time() - 3600, '/', '', true, true);
+                    echo json_encode(['loggedIn' => false]);
+                }
             } else {
                 echo json_encode(['loggedIn' => false]);
             }

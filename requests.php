@@ -1,10 +1,12 @@
 <?php
 session_start();
+require_once 'config.php';
+require_once 'account.php';
 header('Content-Type: application/json');
 
-// Check if the user is logged in
-if (!isset($_SESSION['user_id'])) {
-    echo json_encode(['error' => 'Unauthorized. Please log in.']);
+// Validate user for all actions
+if (!isset($_SESSION['user_id']) && !validateRememberMeCookie()) {
+    echo json_encode(['error' => 'User not authenticated']);
     exit;
 }
 
