@@ -86,6 +86,13 @@
         white-space: nowrap;
         flex-shrink: 0;
       }
+
+      .account-forms {
+        display: none;
+      }
+      #songSearchArea {
+        display: none;
+      }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
@@ -153,6 +160,7 @@
         </div>
       </footer>
     </div>
+    <!-- Main functionality script -->
     <script>
       const audioStream = document.getElementById("audio-stream");
       const buttonToggle = document.getElementById("button-toggle");
@@ -312,8 +320,103 @@
 
       trackMeta();
       setInterval(trackMeta, 5000);
+    </script>
 
-      // Song Request Modal functionality
+    <!-- Song request and account management script -->
+    <script>
+      // Define checkLoginStatus in the global scope
+      function checkLoginStatus() {
+        fetch("account.php?action=check_login", {
+          method: "GET",
+          credentials: "include",
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.loggedIn) {
+              updateLoginStatus(true, data.username);
+              showForm(songSearchArea);
+            } else {
+              updateLoginStatus(false);
+              showForm(loginForm);
+            }
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+          });
+      }
+
+      // Update the updateLoginStatus function
+      function updateLoginStatus(isLoggedIn, username = "") {
+        const modalTitle = document.querySelector("#songRequestModalLabel");
+        const logoutButton = document.getElementById("logoutButton");
+        if (isLoggedIn) {
+          modalTitle.textContent = `Request a Song (Logged in as ${username})`;
+          logoutButton.style.display = "inline-block";
+        } else {
+          modalTitle.textContent = "Request a Song";
+          logoutButton.style.display = "none";
+        }
+      }
+
+      // Add this new function to handle logout
+      function logout() {
+        fetch("account.php", {
+          method: "POST",
+          body: JSON.stringify({ action: "logout" }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.success) {
+              updateLoginStatus(false);
+              showForm(loginForm);
+              displayModalMessage("Logged out successfully");
+            } else {
+              displayModalMessage("Logout failed: " + data.message, true);
+            }
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+            displayModalMessage("An error occurred while logging out", true);
+          });
+      }
+
+      function showForm(formToShow) {
+        [loginForm, registerForm, resetRequestForm, songSearchArea].forEach(
+          (form) => {
+            form.style.display = "none";
+          }
+        );
+        formToShow.style.display = "block";
+      }
+
+      // Add this function to display messages in the modal
+      function displayModalMessage(message, isError = false) {
+        const messageDiv = document.createElement("div");
+        messageDiv.className = `alert ${
+          isError ? "alert-danger" : "alert-success"
+        } mt-3`;
+        messageDiv.textContent = message;
+
+        // Remove any existing message
+        const existingMessage = document.querySelector(".modal-body > .alert");
+        if (existingMessage) {
+          existingMessage.remove();
+        }
+
+        // Insert the new message at the top of the modal body
+        const modalBody = document.querySelector(".modal-body");
+        modalBody.insertBefore(messageDiv, modalBody.firstChild);
+
+        // Automatically remove the message after 5 seconds
+        setTimeout(() => {
+          messageDiv.remove();
+        }, 5000);
+      }
+
       document.addEventListener("DOMContentLoaded", function () {
         console.log("DOM fully loaded and parsed");
 
@@ -321,9 +424,138 @@
         const songSearchButton = document.getElementById("songSearchButton");
         const searchResults = document.getElementById("searchResults");
 
-        console.log("songSearchInput:", songSearchInput);
-        console.log("songSearchButton:", songSearchButton);
-        console.log("searchResults:", searchResults);
+        const loginForm = document.getElementById("loginForm");
+        const registerForm = document.getElementById("registerForm");
+        const resetRequestForm = document.getElementById("resetRequestForm");
+        const songSearchArea = document.getElementById("songSearchArea");
+
+        const showLogin = document.getElementById("showLogin");
+        const showRegister = document.getElementById("showRegister");
+        const showResetRequest = document.getElementById("showResetRequest");
+        const showLoginFromReset =
+          document.getElementById("showLoginFromReset");
+
+        showLogin.addEventListener("click", (e) => {
+          e.preventDefault();
+          showForm(loginForm);
+        });
+        showRegister.addEventListener("click", (e) => {
+          e.preventDefault();
+          showForm(registerForm);
+        });
+        showResetRequest.addEventListener("click", (e) => {
+          e.preventDefault();
+          showForm(resetRequestForm);
+        });
+        showLoginFromReset.addEventListener("click", (e) => {
+          e.preventDefault();
+          showForm(loginForm);
+        });
+
+        // Call this when the modal is opened
+        $("#songRequestModal").on("show.bs.modal", function () {
+          checkLoginStatus();
+        });
+
+        // Handle form submissions
+        document
+          .getElementById("loginFormSubmit")
+          .addEventListener("submit", function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append("action", "login");
+
+            // Add remember me value to form data
+            const rememberMe = document.getElementById("rememberMe").checked;
+            formData.append("remember_me", rememberMe);
+
+            fetch("account.php", {
+              method: "POST",
+              body: formData,
+              credentials: "include",
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.success) {
+                  showForm(songSearchArea);
+                  updateLoginStatus(true, data.username);
+                  displayModalMessage("Login successful");
+                } else {
+                  displayModalMessage(data.message, true);
+                }
+              })
+              .catch((error) => {
+                console.error("Error:", error);
+                displayModalMessage(
+                  "An error occurred while logging in. Please try again.",
+                  true
+                );
+              });
+          });
+
+        document
+          .getElementById("registerFormSubmit")
+          .addEventListener("submit", function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append("action", "register");
+
+            fetch("account.php", {
+              method: "POST",
+              body: formData,
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.success) {
+                  displayModalMessage(
+                    "Account created successfully. Please log in."
+                  );
+                  showForm(loginForm);
+                } else {
+                  displayModalMessage(data.message, true);
+                }
+              });
+          });
+
+        document
+          .getElementById("resetRequestFormSubmit")
+          .addEventListener("submit", function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append("action", "reset_password_request");
+
+            fetch("account.php", {
+              method: "POST",
+              body: formData,
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                displayModalMessage(data.message, !data.success);
+                if (data.success) {
+                  showForm(loginForm);
+                }
+              });
+          });
+
+        document
+          .getElementById("resetRequestFormSubmit")
+          .addEventListener("submit", function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append("action", "reset_password_request");
+
+            fetch("account.php", {
+              method: "POST",
+              body: formData,
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                alert(data.message);
+                if (data.success) {
+                  showForm(loginForm);
+                }
+              });
+          });
 
         if (songSearchButton) {
           songSearchButton.addEventListener("click", function () {
@@ -332,18 +564,6 @@
           });
         } else {
           console.error("songSearchButton not found");
-        }
-
-        function debounce(func, wait) {
-          let timeout;
-          return function executedFunction(...args) {
-            const later = () => {
-              clearTimeout(timeout);
-              func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-          };
         }
 
         function searchSongs() {
@@ -394,14 +614,16 @@
             resultItem.href = "#";
             resultItem.className = "song-result-item";
             resultItem.innerHTML = `
-<img src="${track.image}" alt="${track.name}" class="song-result-image">
-<div class="song-result-info">
-<div class="song-result-title">${track.name}</div>
-<div class="song-result-artist">${track.artists
-              .map((artist) => artist.name)
-              .join(", ")}</div>
-</div>
-`;
+            <img src="${track.image}" alt="${
+              track.name
+            }" class="song-result-image">
+            <div class="song-result-info">
+              <div class="song-result-title">${track.name}</div>
+              <div class="song-result-artist">${track.artists
+                .map((artist) => artist.name)
+                .join(", ")}</div>
+            </div>
+          `;
             resultItem.addEventListener("click", (e) => {
               e.preventDefault();
               requestSong(track.uri);
@@ -449,6 +671,9 @@
           searchResults.appendChild(messageDiv);
         }
       });
+
+      // Call this function when the page loads
+      document.addEventListener("DOMContentLoaded", checkLoginStatus);
     </script>
     <!-- Song Request Modal -->
     <div
@@ -470,21 +695,126 @@
               aria-label="Close"></button>
           </div>
           <div class="modal-body">
-            <div class="mb-3 input-group">
-              <input
-                type="text"
-                class="form-control"
-                id="songSearchInput"
-                placeholder="Search for a song..." />
-              <button
-                class="btn btn-primary"
-                type="button"
-                id="songSearchButton">
-                Search
-              </button>
+            <button
+              id="logoutButton"
+              class="btn btn-secondary mb-3"
+              style="display: none"
+              onclick="logout()">
+              Logout
+            </button>
+            <div id="loginForm" class="account-forms">
+              <h3 class="mb-3">Login</h3>
+              <form id="loginFormSubmit">
+                <div class="mb-3">
+                  <input
+                    type="text"
+                    name="username"
+                    class="form-control"
+                    placeholder="Username"
+                    required />
+                </div>
+                <div class="mb-3">
+                  <input
+                    type="password"
+                    name="password"
+                    class="form-control"
+                    placeholder="Password"
+                    required />
+                </div>
+                <div class="mb-3 form-check">
+                  <input
+                    type="checkbox"
+                    class="form-check-input"
+                    id="rememberMe"
+                    name="remember_me" />
+                  <label class="form-check-label" for="rememberMe"
+                    >Remember Me</label
+                  >
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+              </form>
+              <p class="mt-3">
+                Don't have an account?
+                <a href="#" id="showRegister">Register</a>
+              </p>
+              <p>
+                Forgot password?
+                <a href="#" id="showResetRequest">Reset Password</a>
+              </p>
             </div>
-            <div id="searchResults" class="list-group">
-              <!-- Search results will be dynamically added here -->
+
+            <div id="registerForm" class="account-forms">
+              <h3 class="mb-3">Register</h3>
+              <form id="registerFormSubmit">
+                <div class="mb-3">
+                  <input
+                    type="text"
+                    name="username"
+                    class="form-control"
+                    placeholder="Username"
+                    required />
+                </div>
+                <div class="mb-3">
+                  <input
+                    type="email"
+                    name="email"
+                    class="form-control"
+                    placeholder="Email"
+                    required />
+                </div>
+                <div class="mb-3">
+                  <input
+                    type="password"
+                    name="password"
+                    class="form-control"
+                    placeholder="Password"
+                    required />
+                </div>
+                <button type="submit" class="btn btn-primary">Register</button>
+              </form>
+              <p class="mt-3">
+                Already have an account? <a href="#" id="showLogin">Login</a>
+              </p>
+            </div>
+
+            <div id="resetRequestForm" class="account-forms">
+              <h3 class="mb-3">Reset Password</h3>
+              <form id="resetRequestFormSubmit">
+                <div class="mb-3">
+                  <input
+                    type="text"
+                    name="username"
+                    class="form-control"
+                    placeholder="Username"
+                    required />
+                </div>
+                <button type="submit" class="btn btn-primary">
+                  Send Reset Link
+                </button>
+              </form>
+              <p class="mt-3">
+                Remember your password?
+                <a href="#" id="showLoginFromReset">Login</a>
+              </p>
+            </div>
+
+            <div id="songSearchArea">
+              <div class="mb-3 input-group">
+                <input
+                  type="text"
+                  class="form-control"
+                  id="songSearchInput"
+                  placeholder="Search for a song..." />
+                <button
+                  class="btn btn-primary"
+                  type="button"
+                  id="songSearchButton">
+                  Search
+                </button>
+              </div>
+              <div id="searchResults" class="list-group">
+                <!-- Search results will be dynamically added here -->
+              </div>
             </div>
           </div>
           <div class="modal-footer">

@@ -1,0 +1,18 @@
+<?php
+// Database configuration
+define('DB_HOST', 'localhost');
+define('DB_USER', 'your_database_username');
+define('DB_PASS', 'your_database_password');
+define('DB_NAME', 'your_database_name');
+
+// Brevo API configuration
+define('BREVO_API_KEY', 'your_brevo_api_key');
+
+// Other configuration constants
+define('SITE_URL', 'https://JoinMyMusic.com');
+define('FROM_EMAIL', 'noreply@sjh.at');
+define('FROM_NAME', 'JoinMyMusic.com');
+
+// Session configuration
+define('SESSION_SECRET', 'your_long_random_string_here');
+?>
