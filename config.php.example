@@ -22,4 +22,8 @@ define('REDIS_PORT', '6379');
 
 // librespot-java-api server
 define('LIBRESPOT', 'http://127.0.0.1:24879');
+
+define('TURNSTILE_SITE_KEY', 'your_site_key_here');
+// also needs to go in index.html - search for data-sitekey=
+define('TURNSTILE_SECRET_KEY', 'your_secret_key_here');
 ?>

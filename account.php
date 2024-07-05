@@ -123,6 +123,28 @@ function logout()
     }
 }
 
+function validateTurnstile($response)
+{
+    $url = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+    $data = [
+        'secret' => TURNSTILE_SECRET_KEY,
+        'response' => $response,
+        'remoteip' => $_SERVER['REMOTE_ADDR']
+    ];
+
+    $options = [
+        'http' => [
+            'header' => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method' => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+
+    $context = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    return json_decode($result, true);
+}
+
 // Handle POST requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -132,6 +154,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = $_POST['username'] ?? '';
             $email = $_POST['email'] ?? '';
             $password = $_POST['password'] ?? '';
+            $turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
+
+            $turnstileResult = validateTurnstile($turnstileResponse);
+            if (!$turnstileResult['success']) {
+                echo json_encode(['success' => false, 'message' => 'Turnstile validation failed']);
+                exit;
+            }
 
             if (!validateInput($username, 'username') || !validateInput($email, 'email') || !validateInput($password, 'password')) {
                 echo json_encode(['success' => false, 'message' => 'Invalid input']);
@@ -156,6 +185,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = $_POST['username'] ?? '';
             $password = $_POST['password'] ?? '';
             $remember_me = isset($_POST['remember_me']) ? true : false;
+            $turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
+
+            $turnstileResult = validateTurnstile($turnstileResponse);
+            if (!$turnstileResult['success']) {
+                echo json_encode(['success' => false, 'message' => 'Turnstile validation failed']);
+                exit;
+            }
 
             if (!validateInput($username, 'username')) {
                 echo json_encode(['success' => false, 'message' => 'Invalid username']);
@@ -195,6 +231,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         case 'reset_password_request':
             $username = $_POST['username'] ?? '';
+            $turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
+
+            $turnstileResult = validateTurnstile($turnstileResponse);
+            if (!$turnstileResult['success']) {
+                echo json_encode(['success' => false, 'message' => 'Turnstile validation failed']);
+                exit;
+            }
 
             if (!validateInput($username, 'username')) {
                 echo json_encode(['success' => false, 'message' => 'Invalid username']);
