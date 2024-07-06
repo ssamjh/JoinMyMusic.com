@@ -86,13 +86,6 @@
         white-space: nowrap;
         flex-shrink: 0;
       }
-
-      .account-forms {
-        display: none;
-      }
-      #songSearchArea {
-        display: none;
-      }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
@@ -134,10 +127,10 @@
       </div>
       <strong class="d-block mb-1">Now Playing:</strong>
       <h4 class="mb-1" style="font-size: 17px">
-        <div class="player-playing-title"></div>
+        <div class="div-playing-title"></div>
       </h4>
       <h4 class="mb-2" style="font-size: 13px">
-        <div class="player-playing-artist"></div>
+        <div class="div-playing-artist"></div>
       </h4>
       <div class="mb-3">
         <a id="playing-link" target="_blank">
@@ -160,9 +153,303 @@
         </div>
       </footer>
     </div>
-    <script src="js/player.js"></script>
-    <script src="js/account.js"></script>
-    <script src="js/request.js"></script>
+    <script>
+      const audioStream = document.getElementById("audio-stream");
+      const buttonToggle = document.getElementById("button-toggle");
+      const playingImage = document.getElementById("playing-image");
+      const playingLink = document.getElementById("playing-link");
+      const divVolume = document.getElementById("div-volume");
+      const inputVolume = document.getElementById("input-volume");
+
+      function storageSet(key, value) {
+        localStorage.setItem(key, value);
+      }
+
+      function storageGet(key) {
+        return localStorage.getItem(key);
+      }
+
+      function initHls(source) {
+        if (Hls.isSupported()) {
+          let hls = new Hls();
+          hls.loadSource(source);
+          hls.attachMedia(audioStream);
+        } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
+          audioStream.src = source;
+        }
+      }
+
+      function scaleVolume(inputValue) {
+        return inputValue <= 50
+          ? inputValue * 0.2
+          : 10 + (inputValue - 50) * 0.4;
+      }
+
+      function qualityUpdate() {
+        let source;
+        let wasPlaying = !audioStream.paused;
+
+        if (Hls.isSupported()) {
+          source = "https://hls.sjh.at/spotifynet/stream.m3u8";
+          initHls(source);
+        } else {
+          source = "https://icecast.sjh.at/spotifynet";
+          audioStream.setAttribute("src", source);
+          console.log("Set source to: " + source);
+        }
+
+        if (wasPlaying) {
+          audioStream.play();
+        }
+      }
+
+      function togglePlay() {
+        qualityUpdate();
+        audioStream.play();
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+      }
+
+      function buttonStop() {
+        audioStream.pause();
+        audioStream.currentTime = 0;
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      function volumeSet(val) {
+        const scaledVolume = scaleVolume(val);
+        audioStream.volume = scaledVolume / 100;
+        storageSet("volume", val);
+      }
+
+      function preloadImage(url, callback) {
+        let img = new Image();
+        img.src = url;
+        img.onload = callback;
+      }
+
+      function trackMeta() {
+        $.getJSON("./metadata.php?rand=" + Math.random(), function (data) {
+          const currentData = data.current;
+
+          if (!currentData || !currentData.song) {
+            $(".div-playing-title, .div-playing-artist").text("");
+            if (
+              playingImage.src !==
+              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+            ) {
+              playingImage.src =
+                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+            }
+            playingLink.setAttribute("href", "javascript:void(0)");
+            return;
+          }
+
+          const createLink = (url, id, name) =>
+            `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+
+          // Preload current playing image and then update
+          if (playingImage.src !== currentData.cover) {
+            preloadImage(currentData.cover, function () {
+              playingImage.src = currentData.cover;
+
+              // Update text after image has loaded
+              $(".div-playing-title").html(
+                createLink(
+                  "https://open.spotify.com/track/",
+                  currentData.songid,
+                  currentData.song
+                )
+              );
+              $(".div-playing-artist").html(
+                currentData.artist
+                  .map((artist) =>
+                    createLink(
+                      "https://open.spotify.com/artist/",
+                      artist.id,
+                      artist.name
+                    )
+                  )
+                  .join(", ")
+              );
+              playingLink.setAttribute(
+                "href",
+                `https://open.spotify.com/album/${currentData.albumid}`
+              );
+            });
+          } else {
+            // If image doesn't need updating, still update text
+            $(".div-playing-title").html(
+              createLink(
+                "https://open.spotify.com/track/",
+                currentData.songid,
+                currentData.song
+              )
+            );
+            $(".div-playing-artist").html(
+              currentData.artist
+                .map((artist) =>
+                  createLink(
+                    "https://open.spotify.com/artist/",
+                    artist.id,
+                    artist.name
+                  )
+                )
+                .join(", ")
+            );
+          }
+        });
+      }
+
+      if (!audioStream.paused) {
+        buttonToggle.textContent = "Stop";
+        buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+      } else {
+        buttonToggle.textContent = "Play";
+        buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      trackMeta();
+      setInterval(trackMeta, 5000);
+
+      // Song Request Modal functionality
+      document.addEventListener("DOMContentLoaded", function () {
+        console.log("DOM fully loaded and parsed");
+
+        const songSearchInput = document.getElementById("songSearchInput");
+        const songSearchButton = document.getElementById("songSearchButton");
+        const searchResults = document.getElementById("searchResults");
+
+        console.log("songSearchInput:", songSearchInput);
+        console.log("songSearchButton:", songSearchButton);
+        console.log("searchResults:", searchResults);
+
+        if (songSearchButton) {
+          songSearchButton.addEventListener("click", function () {
+            console.log("Search button clicked");
+            searchSongs();
+          });
+        } else {
+          console.error("songSearchButton not found");
+        }
+
+        function debounce(func, wait) {
+          let timeout;
+          return function executedFunction(...args) {
+            const later = () => {
+              clearTimeout(timeout);
+              func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+          };
+        }
+
+        function searchSongs() {
+          const query = songSearchInput.value.trim();
+          if (query.length < 2) {
+            searchResults.innerHTML = "";
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append("action", "search");
+          formData.append("query", query);
+
+          fetch("requests.php", {
+            method: "POST",
+            body: formData,
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.error) {
+                displayMessage(data.error, true);
+              } else {
+                displaySearchResults(data);
+              }
+            })
+            .catch((error) => {
+              console.error("Error:", error);
+              displayMessage("An error occurred while searching.", true);
+            });
+        }
+
+        function displaySearchResults(data) {
+          searchResults.innerHTML = "";
+          if (data.error) {
+            displayMessage(data.error, true);
+            return;
+          }
+
+          const tracks = data.results.tracks.hits;
+
+          if (tracks.length === 0) {
+            displayMessage("No songs found.");
+            return;
+          }
+
+          tracks.forEach((track) => {
+            const resultItem = document.createElement("a");
+            resultItem.href = "#";
+            resultItem.className = "song-result-item";
+            resultItem.innerHTML = `
+<img src="${track.image}" alt="${track.name}" class="song-result-image">
+<div class="song-result-info">
+<div class="song-result-title">${track.name}</div>
+<div class="song-result-artist">${track.artists
+              .map((artist) => artist.name)
+              .join(", ")}</div>
+</div>
+`;
+            resultItem.addEventListener("click", (e) => {
+              e.preventDefault();
+              requestSong(track.uri);
+            });
+            searchResults.appendChild(resultItem);
+          });
+        }
+
+        function requestSong(uri) {
+          const formData = new FormData();
+          formData.append("action", "addToQueue");
+          formData.append("uri", uri);
+
+          fetch("requests.php", {
+            method: "POST",
+            body: formData,
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.success) {
+                displayMessage(data.message);
+                setTimeout(() => $("#songRequestModal").modal("hide"), 2000);
+              } else if (data.error) {
+                displayMessage(data.error, true);
+              } else {
+                displayMessage("Failed to send song request.", true);
+              }
+            })
+            .catch((error) => {
+              console.error("Error:", error);
+              displayMessage(
+                "An error occurred while sending the song request.",
+                true
+              );
+            });
+        }
+
+        function displayMessage(message, isError = false) {
+          const messageDiv = document.createElement("div");
+          messageDiv.className = `alert ${
+            isError ? "alert-danger" : "alert-success"
+          } mt-3`;
+          messageDiv.textContent = message;
+          searchResults.innerHTML = "";
+          searchResults.appendChild(messageDiv);
+        }
+      });
+    </script>
     <!-- Song Request Modal -->
     <div
       class="modal fade"
@@ -183,126 +470,21 @@
               aria-label="Close"></button>
           </div>
           <div class="modal-body">
-            <button
-              id="logoutButton"
-              class="btn btn-secondary mb-3"
-              style="display: none"
-              onclick="logout()">
-              Logout
-            </button>
-            <div id="loginForm" class="account-forms">
-              <h3 class="mb-3">Login</h3>
-              <form id="loginFormSubmit">
-                <div class="mb-3">
-                  <input
-                    type="text"
-                    name="username"
-                    class="form-control"
-                    placeholder="Username"
-                    required />
-                </div>
-                <div class="mb-3">
-                  <input
-                    type="password"
-                    name="password"
-                    class="form-control"
-                    placeholder="Password"
-                    required />
-                </div>
-                <div class="mb-3 form-check">
-                  <input
-                    type="checkbox"
-                    class="form-check-input"
-                    id="rememberMe"
-                    name="remember_me" />
-                  <label class="form-check-label" for="rememberMe"
-                    >Remember Me</label
-                  >
-                </div>
-                <button type="submit" class="btn btn-primary">Login</button>
-              </form>
-              <p class="mt-3">
-                Don't have an account?
-                <a href="#" id="showRegister">Register</a>
-              </p>
-              <p>
-                Forgot password?
-                <a href="#" id="showResetRequest">Reset Password</a>
-              </p>
+            <div class="mb-3 input-group">
+              <input
+                type="text"
+                class="form-control"
+                id="songSearchInput"
+                placeholder="Search for a song..." />
+              <button
+                class="btn btn-primary"
+                type="button"
+                id="songSearchButton">
+                Search
+              </button>
             </div>
-
-            <div id="registerForm" class="account-forms">
-              <h3 class="mb-3">Register</h3>
-              <form id="registerFormSubmit">
-                <div class="mb-3">
-                  <input
-                    type="text"
-                    name="username"
-                    class="form-control"
-                    placeholder="Username"
-                    required />
-                </div>
-                <div class="mb-3">
-                  <input
-                    type="email"
-                    name="email"
-                    class="form-control"
-                    placeholder="Email"
-                    required />
-                </div>
-                <div class="mb-3">
-                  <input
-                    type="password"
-                    name="password"
-                    class="form-control"
-                    placeholder="Password"
-                    required />
-                </div>
-                <button type="submit" class="btn btn-primary">Register</button>
-              </form>
-              <p class="mt-3">
-                Already have an account? <a href="#" id="showLogin">Login</a>
-              </p>
-            </div>
-
-            <div id="resetRequestForm" class="account-forms">
-              <h3 class="mb-3">Reset Password</h3>
-              <form id="resetRequestFormSubmit">
-                <div class="mb-3">
-                  <input
-                    type="text"
-                    name="username"
-                    class="form-control"
-                    placeholder="Username"
-                    required />
-                </div>
-                <button type="submit" class="btn btn-primary">
-                  Send Reset Link
-                </button>
-              </form>
-              <p class="mt-3">
-                Remember your password?
-                <a href="#" id="showLoginFromReset">Login</a>
-              </p>
-            </div>
-
-            <div id="songSearchArea">
-              <div class="mb-3 input-group">
-                <input
-                  type="text"
-                  class="form-control"
-                  id="songSearchInput"
-                  placeholder="Search for a song..." />
-                <button
-                  class="btn btn-primary"
-                  type="button"
-                  id="songSearchButton">
-                  Search
-                </button>
-              </div>
-              <div id="searchResults" class="list-group">
-                <!-- Search results will be dynamically added here -->
-              </div>
+            <div id="searchResults" class="list-group">
+              <!-- Search results will be dynamically added here -->
             </div>
           </div>
           <div class="modal-footer">

@@ -1,12 +1,5 @@
 <?php
-session_start();
 header('Content-Type: application/json');
-
-// Check if the user is logged in
-if (!isset($_SESSION['user_id'])) {
-    echo json_encode(['error' => 'Unauthorized. Please log in.']);
-    exit;
-}
 
 // Redis connection setup
 $redis = new Redis();
@@ -14,6 +7,7 @@ $redis->connect('127.0.0.1', 6379);
 
 $action = $_POST['action'] ?? '';
 $clientIP = $_SERVER['REMOTE_ADDR'];
+
 function makeRequest($url, $method = 'POST', $data = null)
 {
     $ch = curl_init($url);
@@ -46,7 +40,7 @@ function checkRateLimit($key, $limit, $period)
 
 switch ($action) {
     case 'search':
-        $searchKey = "search_limit:{$_SESSION['user_id']}";
+        $searchKey = "search_limit:{$clientIP}";
         if (!checkRateLimit($searchKey, 10, 180)) {
             echo json_encode(['error' => 'Oops you are searching too much. Wait a bit and try again.']);
             exit;
@@ -62,7 +56,7 @@ switch ($action) {
         break;
 
     case 'addToQueue':
-        $addKey = "add_limit:{$_SESSION['user_id']}";
+        $addKey = "add_limit:{$clientIP}";
         if (!checkRateLimit($addKey, 5, 1800)) {
             echo json_encode(['error' => 'Slow down on the requests there bud. Try again soon.']);
             exit;
