@@ -1,8 +1,8 @@
 <?php
 require_once 'config.php';
 
-// Authentication check
-if (!isset($_GET['auth']) || $_GET['auth'] !== AUTH_KEY) {
+// Authentication check for both GET and POST requests
+if ((!isset($_GET['auth']) && !isset($_POST['auth'])) || ($_GET['auth'] !== AUTH_KEY && $_POST['auth'] !== AUTH_KEY)) {
     http_response_code(403);
     die('Access denied');
 }
@@ -62,16 +62,26 @@ function approveRequest($uri)
 
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['approve'])) {
-        $requestJson = $_POST['request'];
+    $postData = json_decode(file_get_contents('php://input'), true);
+    if (isset($postData['approve'])) {
+        $requestJson = $postData['request'];
         $requestData = json_decode($requestJson, true);
         $uri = $requestData['uri'];
-        approveRequest($uri);
+        $result = approveRequest($uri);
+        if ($result === false) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Failed to add to queue']);
+            exit;
+        }
         $redis->lRem('requests', $requestJson, 0);
-    } elseif (isset($_POST['delete'])) {
-        $requestJson = $_POST['request'];
+    } elseif (isset($postData['delete'])) {
+        $requestJson = $postData['request'];
         $redis->lRem('requests', $requestJson, 0);
     }
+    // Send a JSON response
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true]);
+    exit;
 }
 
 // Fetch all pending requests
@@ -212,20 +222,36 @@ if (isset($_GET['ajax'])) {
 
         setInterval(reloadRequests, 10000); // Reload every 10 seconds
 
-        // Update form submissions to include auth key
+        // Update form submissions to include auth key in URL
         document.addEventListener('submit', function (event) {
             if (event.target.tagName === 'FORM') {
                 event.preventDefault();
                 const form = event.target;
                 const formData = new FormData(form);
-                formData.append('auth', authKey);
+                const data = {
+                    request: formData.get('request')
+                };
 
-                fetch('manage-requests.php?auth=' + authKey, {
+                if (form.approve) {
+                    data.approve = true;
+                } else if (form.delete) {
+                    data.delete = true;
+                }
+
+                fetch(`manage-requests.php?auth=${authKey}`, {
                     method: 'POST',
-                    body: formData
-                }).then(() => {
-                    reloadRequests();
-                });
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                }).then(response => response.json())
+                    .then(result => {
+                        if (result.success) {
+                            reloadRequests();
+                        } else {
+                            console.error('Failed to process request');
+                        }
+                    });
             }
         });
     </script>
