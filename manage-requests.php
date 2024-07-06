@@ -114,28 +114,26 @@ function generateRequestsHtml($requests)
         $imageUrl = strtolower($imageUrl);
 
         $html .= '
-        <div class="request-item">
-            <div class="row align-items-center">
-                <div class="col-3 col-sm-2">
-                    ' . ($imageUrl ? '<img src="https://i.scdn.co/image/' . htmlspecialchars($imageUrl) . '" alt="Album Art" class="album-art">' : '<div class="album-art bg-secondary d-flex align-items-center justify-content-center text-white">No Image</div>') . '
+                <div class="request-item">
+    <div class="row align-items-center">
+        <div class="col-3 col-sm-2">
+            ' . ($imageUrl ? '<img src="https://i.scdn.co/image/' . htmlspecialchars($imageUrl) . '" alt="Album Art" class="album-art">' : '<div class="album-art bg-secondary d-flex align-items-center justify-content-center text-white">No Image</div>') . '
+        </div>
+        <div class="col-9 col-sm-10 song-info">
+            <h4>' . htmlspecialchars($metadata['name'] ?? 'Unknown') . '</h4>
+            <p>' . htmlspecialchars($metadata['artist'][0]['name'] ?? 'Unknown') . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
+            <p>From: ' . htmlspecialchars($requestData['name'] ?? 'Anonymous') . ' - ' . htmlspecialchars($requestData['ip'] ?? 'Unknown') . '</p>
+            <p><em>' . (isset($requestData['timestamp']) ? date('Y-m-d H:i:s', $requestData['timestamp']) : 'Unknown') . '</em></p>
+            <form method="post" class="mt-2">
+                <input type="hidden" name="request" value="' . htmlspecialchars($request) . '">
+                <div class="d-flex justify-content-start">
+                    <button type="submit" name="approve" class="btn btn-success btn-sm me-2">Approve</button>
+                    <button type="submit" name="delete" class="btn btn-danger btn-sm">Delete</button>
                 </div>
-                <div class="col-6 col-sm-8 song-info">
-                    <h4>' . htmlspecialchars($metadata['name'] ?? 'Unknown') . '</h4>
-                    <p>' . htmlspecialchars($metadata['artist'][0]['name'] ?? 'Unknown') . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
-                    <p>From: ' . htmlspecialchars($requestData['name'] ?? 'Anonymous') . ' - ' . htmlspecialchars($requestData['ip'] ?? 'Unknown') . '</p>
-                    <p><em>' . (isset($requestData['timestamp']) ? date('Y-m-d H:i:s', $requestData['timestamp']) : 'Unknown') . '</em></p>
-                </div>
-                <div class="col-3 col-sm-2">
-                    <form method="post">
-                        <input type="hidden" name="request" value="' . htmlspecialchars($request) . '">
-                        <div class="btn-group-vertical w-100">
-                            <button type="submit" name="approve" class="btn btn-success btn-sm">Approve</button>
-                            <button type="submit" name="delete" class="btn btn-danger btn-sm">Delete</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>';
+            </form>
+        </div>
+    </div>
+</div>';
     }
     return $html;
 }
@@ -191,8 +189,19 @@ if (isset($_GET['ajax'])) {
             margin-bottom: 0.2rem;
         }
 
-        .btn-group-vertical {
+        .btn-group {
+            display: flex;
+            justify-content: space-between;
             gap: 5px;
+        }
+
+        .btn-group .btn {
+            flex: 1;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
         }
     </style>
 </head>
@@ -223,20 +232,21 @@ if (isset($_GET['ajax'])) {
         setInterval(reloadRequests, 10000); // Reload every 10 seconds
 
         // Update form submissions to include auth key in URL
-        document.addEventListener('submit', function (event) {
-            if (event.target.tagName === 'FORM') {
-                event.preventDefault();
-                const form = event.target;
+        document.addEventListener('click', function (event) {
+            if (event.target.tagName === 'BUTTON' && event.target.closest('form')) {
+                const form = event.target.closest('form');
                 const formData = new FormData(form);
                 const data = {
                     request: formData.get('request')
                 };
 
-                if (form.approve) {
+                if (event.target.name === 'approve') {
                     data.approve = true;
-                } else if (form.delete) {
+                } else if (event.target.name === 'delete') {
                     data.delete = true;
                 }
+
+                event.preventDefault();
 
                 fetch(`manage-requests.php?auth=${authKey}`, {
                     method: 'POST',
