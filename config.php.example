@@ -1,0 +1,18 @@
+<?php
+// Redis Configuration
+define('REDIS_HOST', '127.0.0.1');
+define('REDIS_PORT', 6379);
+
+// Librespot API Configuration
+define('LIBRESPOT_API_URL', 'http://127.0.0.1:24879');
+
+// Authentication Key
+define('AUTH_KEY', 'your_secret_auth_key_here');
+
+// Optional: You can add a function to get the Redis instance
+function getRedisInstance() {
+    $redis = new Redis();
+    $redis->connect(REDIS_HOST, REDIS_PORT);
+    return $redis;
+}
+?>

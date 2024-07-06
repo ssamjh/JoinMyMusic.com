@@ -1,9 +1,10 @@
 <?php
 header('Content-Type: application/json');
 
+require_once 'config.php';
+
 // Redis connection setup
-$redis = new Redis();
-$redis->connect('127.0.0.1', 6379);
+$redis = getRedisInstance();
 
 $action = $_POST['action'] ?? '';
 $clientIP = $_SERVER['REMOTE_ADDR'];
@@ -51,26 +52,41 @@ switch ($action) {
             echo json_encode(['error' => 'No search text provided.']);
             exit;
         }
-        $url = "http://172.16.2.27:24879/search/" . urlencode($query);
+        $url = LIBRESPOT_API_URL . "/search/" . urlencode($query);
         echo makeRequest($url);
         break;
 
     case 'addToQueue':
         $addKey = "add_limit:{$clientIP}";
-        if (!checkRateLimit($addKey, 5, 1800)) {
+        if (!checkRateLimit($addKey, 10, 1800)) {
             echo json_encode(['error' => 'Slow down on the requests there bud. Try again soon.']);
             exit;
         }
 
         $uri = $_POST['uri'] ?? '';
+        $name = $_POST['name'] ?? '';
         if (empty($uri)) {
             echo json_encode(['error' => 'No URI provided']);
             exit;
         }
-        $url = "http://172.16.2.27:24879/player/addToQueue";
-        makeRequest($url, 'POST', ['uri' => $uri]);
+        if (empty($name)) {
+            echo json_encode(['error' => 'Please provide your name']);
+            exit;
+        }
 
-        echo json_encode(['success' => true, 'message' => 'Thanks, your request has been sent!']);
+        // Sanitize the name
+        $sanitizedName = filter_var($name, FILTER_SANITIZE_STRING);
+
+        // Store the request in Redis
+        $requestData = json_encode([
+            'uri' => $uri,
+            'ip' => $clientIP,
+            'timestamp' => time(),
+            'name' => $sanitizedName
+        ]);
+        $redis->rPush('requests', $requestData);
+
+        echo json_encode(['success' => true, 'message' => 'Thanks, your request has been added to the queue!']);
         break;
 
     default:

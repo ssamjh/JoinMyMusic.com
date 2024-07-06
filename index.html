@@ -315,11 +315,65 @@
 
       // Song Request Modal functionality
       document.addEventListener("DOMContentLoaded", function () {
-        console.log("DOM fully loaded and parsed");
-
         const songSearchInput = document.getElementById("songSearchInput");
         const songSearchButton = document.getElementById("songSearchButton");
         const searchResults = document.getElementById("searchResults");
+        const requesterNameInput = document.getElementById("requesterName");
+        const changeNameBtn = document.getElementById("changeNameBtn");
+
+        // Function to set a cookie
+        function setCookie(name, value, days) {
+          let expires = "";
+          if (days) {
+            const date = new Date();
+            date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
+            expires = "; expires=" + date.toUTCString();
+          }
+          document.cookie = name + "=" + (value || "") + expires + "; path=/";
+        }
+
+        // Function to get a cookie
+        function getCookie(name) {
+          const nameEQ = name + "=";
+          const ca = document.cookie.split(";");
+          for (let i = 0; i < ca.length; i++) {
+            let c = ca[i];
+            while (c.charAt(0) == " ") c = c.substring(1, c.length);
+            if (c.indexOf(nameEQ) == 0)
+              return c.substring(nameEQ.length, c.length);
+          }
+          return null;
+        }
+
+        // Load the name from cookie if it exists
+        const savedName = getCookie("requesterName");
+        if (savedName) {
+          requesterNameInput.value = savedName;
+          requesterNameInput.disabled = true;
+          changeNameBtn.textContent = "Change Name";
+        } else {
+          changeNameBtn.textContent = "Save Name";
+        }
+
+        // Handle change name button click
+        changeNameBtn.addEventListener("click", function () {
+          if (requesterNameInput.disabled) {
+            // Enable editing
+            requesterNameInput.disabled = false;
+            changeNameBtn.textContent = "Save Name";
+            requesterNameInput.focus();
+          } else {
+            // Save name
+            const newName = requesterNameInput.value.trim();
+            if (newName) {
+              setCookie("requesterName", newName, 365); // Save for 1 year
+              requesterNameInput.disabled = true;
+              changeNameBtn.textContent = "Change Name";
+            } else {
+              alert("Please enter a valid name.");
+            }
+          }
+        });
 
         console.log("songSearchInput:", songSearchInput);
         console.log("songSearchButton:", songSearchButton);
@@ -411,9 +465,19 @@
         }
 
         function requestSong(uri) {
+          const requesterName = requesterNameInput.value.trim();
+          if (!requesterName) {
+            displayMessage(
+              "Please enter your name before requesting a song.",
+              true
+            );
+            return;
+          }
+
           const formData = new FormData();
           formData.append("action", "addToQueue");
           formData.append("uri", uri);
+          formData.append("name", requesterName);
 
           fetch("requests.php", {
             method: "POST",
@@ -424,6 +488,13 @@
               if (data.success) {
                 displayMessage(data.message);
                 setTimeout(() => $("#songRequestModal").modal("hide"), 2000);
+
+                // Save the name in cookie if it's not already saved
+                if (!getCookie("requesterName")) {
+                  setCookie("requesterName", requesterName, 365);
+                  requesterNameInput.disabled = true;
+                  changeNameBtn.textContent = "Change Name";
+                }
               } else if (data.error) {
                 displayMessage(data.error, true);
               } else {
@@ -470,6 +541,21 @@
               aria-label="Close"></button>
           </div>
           <div class="modal-body">
+            <div class="mb-3">
+              <div class="input-group">
+                <input
+                  type="text"
+                  class="form-control"
+                  id="requesterName"
+                  placeholder="Enter your name" />
+                <button
+                  class="btn btn-outline-secondary"
+                  type="button"
+                  id="changeNameBtn">
+                  Change Name
+                </button>
+              </div>
+            </div>
             <div class="mb-3 input-group">
               <input
                 type="text"
