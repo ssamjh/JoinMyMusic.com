@@ -73,10 +73,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['success' => false, 'message' => 'Failed to add to queue']);
             exit;
         }
+        // Remove the request from the queue after successful approval
         $redis->lRem('requests', $requestJson, 0);
     } elseif (isset($postData['delete'])) {
         $requestJson = $postData['request'];
         $redis->lRem('requests', $requestJson, 0);
+    } elseif (isset($postData['toggleAutoApprove'])) {
+        $currentValue = $redis->get('auto_approve') ?: '0';
+        $newValue = $currentValue === '1' ? '0' : '1';
+        $redis->set('auto_approve', $newValue);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => true, 'autoApprove' => $newValue]);
+        exit;
     }
     // Send a JSON response
     header('Content-Type: application/json');
@@ -86,6 +94,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Fetch all pending requests
 $requests = $redis->lRange('requests', 0, -1);
+
+// Get auto-approve setting
+$autoApprove = $redis->get('auto_approve');
+$autoApproveChecked = ($autoApprove === '1') ? 'checked' : '';
 
 // Function to generate HTML for requests
 function generateRequestsHtml($requests)
@@ -217,6 +229,11 @@ if (isset($_GET['ajax'])) {
         <h2 class="text-center">Manage Requests</h2>
         <h5 class="text-center mb-4">ssamjh's Music Sync</h5>
 
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="autoApproveToggle" <?php echo $autoApproveChecked; ?>>
+            <label class="form-check-label" for="autoApproveToggle">Auto-approve requests</label>
+        </div>
+
         <div id="requests-container">
             <?php echo generateRequestsHtml($requests); ?>
         </div>
@@ -269,6 +286,28 @@ if (isset($_GET['ajax'])) {
                         }
                     });
             }
+        });
+
+        // Add event listener for auto-approve toggle
+        document.getElementById('autoApproveToggle').addEventListener('change', function (event) {
+            fetch(`manage-requests.php?auth=${authKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ toggleAutoApprove: true })
+            }).then(response => response.json())
+                .then(result => {
+                    if (result.success) {
+                        console.log('Auto-approve setting updated');
+                        // Update the checkbox state based on the server response
+                        event.target.checked = result.autoApprove === '1';
+                    } else {
+                        console.error('Failed to update auto-approve setting');
+                        // Revert the checkbox state if the update failed
+                        event.target.checked = !event.target.checked;
+                    }
+                });
         });
     </script>
 </body>

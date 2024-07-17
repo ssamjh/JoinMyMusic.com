@@ -39,6 +39,13 @@ function checkRateLimit($key, $limit, $period)
     return true;
 }
 
+function approveRequest($uri)
+{
+    $url = LIBRESPOT_API_URL . "/player/addToQueue";
+    $data = ['uri' => $uri];
+    return makeRequest($url, 'POST', $data);
+}
+
 switch ($action) {
     case 'search':
         $searchKey = "search_limit:{$clientIP}";
@@ -77,16 +84,28 @@ switch ($action) {
         // Sanitize the name
         $sanitizedName = filter_var($name, FILTER_SANITIZE_STRING);
 
-        // Store the request in Redis
-        $requestData = json_encode([
-            'uri' => $uri,
-            'ip' => $clientIP,
-            'timestamp' => time(),
-            'name' => $sanitizedName
-        ]);
-        $redis->rPush('requests', $requestData);
+        // Check if auto-approve is enabled
+        $autoApprove = $redis->get('auto_approve') ?: '0';
 
-        echo json_encode(['success' => true, 'message' => 'Thanks, your request has been added to the queue!']);
+        if ($autoApprove === '1') {
+            // Automatically approve the request
+            $result = approveRequest($uri);
+            if ($result === false) {
+                echo json_encode(['error' => 'Failed to add to queue']);
+                exit;
+            }
+            echo json_encode(['success' => true, 'message' => 'Your request has been automatically approved and added to the queue!']);
+        } else {
+            // Store the request in Redis for manual approval
+            $requestData = json_encode([
+                'uri' => $uri,
+                'ip' => $clientIP,
+                'timestamp' => time(),
+                'name' => $sanitizedName
+            ]);
+            $redis->rPush('requests', $requestData);
+            echo json_encode(['success' => true, 'message' => 'Thanks, your request has been added to the queue for approval!']);
+        }
         break;
 
     default:
