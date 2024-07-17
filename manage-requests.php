@@ -87,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Fetch all pending requests
 $requests = $redis->lRange('requests', 0, -1);
 
-// New function to generate HTML for requests
+// Function to generate HTML for requests
 function generateRequestsHtml($requests)
 {
     $html = '';
@@ -113,6 +113,12 @@ function generateRequestsHtml($requests)
         // Convert the image URL to lowercase
         $imageUrl = strtolower($imageUrl);
 
+        // Generate artist string
+        $artists = isset($metadata['artist']) ? array_map(function ($artist) {
+            return htmlspecialchars($artist['name']);
+        }, $metadata['artist']) : ['Unknown'];
+        $artistString = implode(', ', $artists);
+
         $html .= '
                 <div class="request-item">
     <div class="row align-items-center">
@@ -121,7 +127,7 @@ function generateRequestsHtml($requests)
         </div>
         <div class="col-9 col-sm-10 song-info">
             <h4>' . htmlspecialchars($metadata['name'] ?? 'Unknown') . '</h4>
-            <p>' . htmlspecialchars($metadata['artist'][0]['name'] ?? 'Unknown') . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
+            <p>' . $artistString . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
             <p>From: ' . htmlspecialchars($requestData['name'] ?? 'Anonymous') . ' - ' . htmlspecialchars($requestData['ip'] ?? 'Unknown') . '</p>
             <p><em>' . (isset($requestData['timestamp']) ? date('Y-m-d H:i:s', $requestData['timestamp']) : 'Unknown') . '</em></p>
             <form method="post" class="mt-2">
