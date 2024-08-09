@@ -1,7 +1,8 @@
 <?php
+require_once 'config.php';
+
 // Redis connection setup
-$redis = new Redis();
-$redis->connect('127.0.0.1', 6379); // Adjust host and port as needed
+$redis = getRedisInstance();
 
 function fetchData($url, $method = 'POST')
 {
@@ -16,13 +17,13 @@ function fetchData($url, $method = 'POST')
     return $response;
 }
 
-function getSpotifyData($baseUrl, $trackId)
+function getSpotifyData($trackId)
 {
-    $webApiUrl = $baseUrl . "/web-api/v1/tracks/" . $trackId;
+    $webApiUrl = LIBRESPOT_API_URL . "/web-api/v1/tracks/" . $trackId;
     return json_decode(fetchData($webApiUrl, 'GET'), true);
 }
 
-function transformData($data, $baseUrl)
+function transformData($data)
 {
     $original = json_decode($data, true);
 
@@ -44,7 +45,7 @@ function transformData($data, $baseUrl)
     $trackUri = $original['current'];
     $trackId = explode(':', $trackUri)[2];
     // Fetch Spotify data
-    $spotifyData = getSpotifyData($baseUrl, $trackId);
+    $spotifyData = getSpotifyData($trackId);
     $spotifyAlbumId = $spotifyData['album']['id'] ?? '';
     $spotifyArtistId = $spotifyData['artists'][0]['id'] ?? '';
 
@@ -76,8 +77,7 @@ if (ob_get_level())
 header('Content-Type: application/json');
 
 try {
-    $baseUrl = "http://172.16.2.27:24879";
-    $playerUrl = $baseUrl . "/player/current";
+    $playerUrl = LIBRESPOT_API_URL . "/player/current";
 
     // Generate a unique cache key based on the URL
     $cacheKey = 'spotify_data_' . md5($playerUrl);
@@ -88,7 +88,7 @@ try {
     if ($cachedData === false) {
         // If not in cache, fetch and transform the data
         $rawData = fetchData($playerUrl);
-        $formattedData = transformData($rawData, $baseUrl);
+        $formattedData = transformData($rawData);
 
         // Cache the formatted data for 10 seconds
         $redis->setex($cacheKey, 10, json_encode($formattedData));
