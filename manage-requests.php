@@ -48,6 +48,7 @@ function getMetadata($uri)
 // Function to approve a request
 function approveRequest($uri)
 {
+    global $redis;
     $url = LIBRESPOT_API_URL . "/player/addToQueue";
     $data = ['uri' => $uri];
     $ch = curl_init();
@@ -57,7 +58,16 @@ function approveRequest($uri)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $response = curl_exec($ch);
     curl_close($ch);
-    return $response;
+
+    if ($response !== false) {
+        // Move the request from 'requests' to 'approved_requests'
+        $requestJson = $redis->lPop('requests');
+        if ($requestJson) {
+            $redis->rPush('approved_requests', $requestJson);
+        }
+        return true;
+    }
+    return false;
 }
 
 // Handle form submissions
@@ -73,8 +83,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['success' => false, 'message' => 'Failed to add to queue']);
             exit;
         }
-        // Remove the request from the queue after successful approval
-        $redis->lRem('requests', $requestJson, 0);
     } elseif (isset($postData['delete'])) {
         $requestJson = $postData['request'];
         $redis->lRem('requests', $requestJson, 0);
@@ -93,20 +101,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Fetch all pending requests
-$requests = $redis->lRange('requests', 0, -1);
+$pendingRequests = $redis->lRange('requests', 0, -1);
+
+// Fetch approved requests (let's limit to the last 20 for performance)
+$approvedRequests = array_reverse($redis->lRange('approved_requests', -20, -1));
 
 // Get auto-approve setting
 $autoApprove = $redis->get('auto_approve');
 $autoApproveChecked = ($autoApprove === '1') ? 'checked' : '';
 
 // Function to generate HTML for requests
-function generateRequestsHtml($requests)
+function generateRequestsHtml($requests, $isApproved = false)
 {
     $html = '';
     foreach ($requests as $request) {
         $requestData = json_decode($request, true);
         $uri = $requestData['uri'];
         $metadata = getMetadata($uri);
+
 
         // Try to get the largest available image
         $imageUrl = '';
@@ -132,33 +144,38 @@ function generateRequestsHtml($requests)
         $artistString = implode(', ', $artists);
 
         $html .= '
-                <div class="request-item">
-    <div class="row align-items-center">
-        <div class="col-3 col-sm-2">
-            ' . ($imageUrl ? '<img src="https://i.scdn.co/image/' . htmlspecialchars($imageUrl) . '" alt="Album Art" class="album-art">' : '<div class="album-art bg-secondary d-flex align-items-center justify-content-center text-white">No Image</div>') . '
-        </div>
-        <div class="col-9 col-sm-10 song-info">
-            <h4>' . htmlspecialchars($metadata['name'] ?? 'Unknown') . '</h4>
-            <p>' . $artistString . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
-            <p>From: ' . htmlspecialchars($requestData['name'] ?? 'Anonymous') . ' - ' . htmlspecialchars($requestData['ip'] ?? 'Unknown') . '</p>
-            <p><em>' . (isset($requestData['timestamp']) ? date('Y-m-d H:i:s', $requestData['timestamp']) : 'Unknown') . '</em></p>
-            <form method="post" class="mt-2">
-                <input type="hidden" name="request" value="' . htmlspecialchars($request) . '">
-                <div class="d-flex justify-content-start">
-                    <button type="submit" name="approve" class="btn btn-success btn-sm me-2">Approve</button>
-                    <button type="submit" name="delete" class="btn btn-danger btn-sm">Delete</button>
+        <div class="request-item ' . ($isApproved ? 'approved' : '') . '">
+            <div class="row align-items-center">
+                <div class="col-3 col-sm-2">
+                    ' . ($imageUrl ? '<img src="https://i.scdn.co/image/' . htmlspecialchars($imageUrl) . '" alt="Album Art" class="album-art">' : '<div class="album-art bg-secondary d-flex align-items-center justify-content-center text-white">No Image</div>') . '
                 </div>
-            </form>
-        </div>
-    </div>
-</div>';
+                <div class="col-9 col-sm-10 song-info">
+                    <h4>' . htmlspecialchars($metadata['name'] ?? 'Unknown') . '</h4>
+                    <p>' . $artistString . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
+                    <p>From: ' . htmlspecialchars($requestData['name'] ?? 'Anonymous') . ' - ' . htmlspecialchars($requestData['ip'] ?? 'Unknown') . '</p>
+                    <p><em>' . (isset($requestData['timestamp']) ? date('Y-m-d H:i:s', $requestData['timestamp']) : 'Unknown') . '</em></p>
+                    ' . (!$isApproved ? '
+                    <form method="post" class="mt-2">
+                        <input type="hidden" name="request" value="' . htmlspecialchars($request) . '">
+                        <div class="d-flex justify-content-start">
+                            <button type="submit" name="approve" class="btn btn-success btn-sm me-2">Approve</button>
+                            <button type="submit" name="delete" class="btn btn-danger btn-sm">Delete</button>
+                        </div>
+                    </form>
+                    ' : '') . '
+                </div>
+            </div>
+        </div>';
     }
     return $html;
 }
 
 // If it's an AJAX request, return only the requests HTML
 if (isset($_GET['ajax'])) {
-    echo generateRequestsHtml($requests);
+    echo '<h3>Pending Requests</h3>';
+    echo generateRequestsHtml($pendingRequests);
+    echo '<h3>Approved Requests</h3>';
+    echo generateRequestsHtml($approvedRequests, true);
     exit;
 }
 ?>
@@ -185,6 +202,10 @@ if (isset($_GET['ajax'])) {
             padding: 15px;
             margin-bottom: 15px;
             border-radius: 8px;
+        }
+
+        .request-item.approved {
+            background-color: rgba(0, 255, 0, 0.1);
         }
 
         .album-art {
@@ -235,7 +256,10 @@ if (isset($_GET['ajax'])) {
         </div>
 
         <div id="requests-container">
-            <?php echo generateRequestsHtml($requests); ?>
+            <h3>Pending Requests</h3>
+            <?php echo generateRequestsHtml($pendingRequests); ?>
+            <h3>Approved Requests</h3>
+            <?php echo generateRequestsHtml($approvedRequests, true); ?>
         </div>
     </div>
 

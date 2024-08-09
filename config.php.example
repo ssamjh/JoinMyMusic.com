@@ -15,4 +15,6 @@ function getRedisInstance() {
     $redis->connect(REDIS_HOST, REDIS_PORT);
     return $redis;
 }
+
+date_default_timezone_set('Pacific/Auckland');
 ?>

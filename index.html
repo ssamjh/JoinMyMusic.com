@@ -160,6 +160,28 @@
       const playingLink = document.getElementById("playing-link");
       const divVolume = document.getElementById("div-volume");
       const inputVolume = document.getElementById("input-volume");
+      let isPlaying = false;
+      let pollInterval = null;
+
+      function generateUUID() {
+        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+          /[xy]/g,
+          function (c) {
+            var r = (Math.random() * 16) | 0,
+              v = c == "x" ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          }
+        );
+      }
+
+      function getOrCreateUUID() {
+        let uuid = storageGet("userUUID");
+        if (!uuid) {
+          uuid = generateUUID();
+          storageSet("userUUID", uuid);
+        }
+        return uuid;
+      }
 
       function storageSet(key, value) {
         localStorage.setItem(key, value);
@@ -167,6 +189,37 @@
 
       function storageGet(key) {
         return localStorage.getItem(key);
+      }
+
+      function pollServer() {
+        if (!isPlaying) return;
+
+        const listenerName = storageGet("requesterName") || "";
+        const userUUID = getOrCreateUUID();
+
+        fetch("listener-tracker.php", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: `name=${encodeURIComponent(
+            listenerName
+          )}&uuid=${encodeURIComponent(userUUID)}`,
+        }).catch((error) => console.error("Error polling server:", error));
+      }
+
+      function startPolling() {
+        if (!pollInterval) {
+          pollInterval = setInterval(pollServer, 30000); // Poll every 30 seconds
+          pollServer(); // Poll immediately
+        }
+      }
+
+      function stopPolling() {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
       }
 
       function initHls(source) {
@@ -208,6 +261,8 @@
         audioStream.play();
         buttonToggle.textContent = "Stop";
         buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+        isPlaying = true;
+        startPolling();
       }
 
       function buttonStop() {
@@ -215,6 +270,8 @@
         audioStream.currentTime = 0;
         buttonToggle.textContent = "Play";
         buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+        isPlaying = false;
+        stopPolling();
       }
 
       function volumeSet(val) {
@@ -321,32 +378,17 @@
         const requesterNameInput = document.getElementById("requesterName");
         const changeNameBtn = document.getElementById("changeNameBtn");
 
-        // Function to set a cookie
-        function setCookie(name, value, days) {
-          let expires = "";
-          if (days) {
-            const date = new Date();
-            date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
-            expires = "; expires=" + date.toUTCString();
-          }
-          document.cookie = name + "=" + (value || "") + expires + "; path=/";
+        if (!audioStream.paused) {
+          isPlaying = true;
+          startPolling();
         }
 
-        // Function to get a cookie
-        function getCookie(name) {
-          const nameEQ = name + "=";
-          const ca = document.cookie.split(";");
-          for (let i = 0; i < ca.length; i++) {
-            let c = ca[i];
-            while (c.charAt(0) == " ") c = c.substring(1, c.length);
-            if (c.indexOf(nameEQ) == 0)
-              return c.substring(nameEQ.length, c.length);
-          }
-          return null;
-        }
+        // Get or create UUID when the page loads
+        const userUUID = getOrCreateUUID();
+        console.log("User UUID:", userUUID);
 
-        // Load the name from cookie if it exists
-        const savedName = getCookie("requesterName");
+        // Load the name from localStorage if it exists
+        const savedName = storageGet("requesterName");
         if (savedName) {
           requesterNameInput.value = savedName;
           requesterNameInput.disabled = true;
@@ -366,7 +408,7 @@
             // Save name
             const newName = requesterNameInput.value.trim();
             if (newName) {
-              setCookie("requesterName", newName, 365); // Save for 1 year
+              storageSet("requesterName", newName);
               requesterNameInput.disabled = true;
               changeNameBtn.textContent = "Change Name";
             } else {
@@ -489,9 +531,9 @@
                 displayMessage(data.message);
                 setTimeout(() => $("#songRequestModal").modal("hide"), 2000);
 
-                // Save the name in cookie if it's not already saved
-                if (!getCookie("requesterName")) {
-                  setCookie("requesterName", requesterName, 365);
+                // Save the name in localStorage if it's not already saved
+                if (!storageGet("requesterName")) {
+                  storageSet("requesterName", requesterName);
                   requesterNameInput.disabled = true;
                   changeNameBtn.textContent = "Change Name";
                 }
@@ -519,6 +561,11 @@
           searchResults.innerHTML = "";
           searchResults.appendChild(messageDiv);
         }
+      });
+
+      audioStream.addEventListener("ended", function () {
+        isPlaying = false;
+        stopPolling();
       });
     </script>
     <!-- Song Request Modal -->

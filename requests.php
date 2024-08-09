@@ -84,6 +84,14 @@ switch ($action) {
         // Sanitize the name
         $sanitizedName = filter_var($name, FILTER_SANITIZE_STRING);
 
+        // Create request data
+        $requestData = json_encode([
+            'uri' => $uri,
+            'ip' => $clientIP,
+            'timestamp' => time(),
+            'name' => $sanitizedName
+        ]);
+
         // Check if auto-approve is enabled
         $autoApprove = $redis->get('auto_approve') ?: '0';
 
@@ -94,15 +102,11 @@ switch ($action) {
                 echo json_encode(['error' => 'Failed to add to queue']);
                 exit;
             }
+            // Store the approved request in the approved_requests list
+            $redis->rPush('approved_requests', $requestData);
             echo json_encode(['success' => true, 'message' => 'Your request has been automatically approved and added to the queue!']);
         } else {
             // Store the request in Redis for manual approval
-            $requestData = json_encode([
-                'uri' => $uri,
-                'ip' => $clientIP,
-                'timestamp' => time(),
-                'name' => $sanitizedName
-            ]);
             $redis->rPush('requests', $requestData);
             echo json_encode(['success' => true, 'message' => 'Thanks, your request has been added to the queue for approval!']);
         }
