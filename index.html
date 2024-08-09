@@ -110,6 +110,9 @@
         data-bs-target="#songRequestModal">
         Request Song
       </button>
+      <button id="voteSkipBtn" class="btn btn-secondary ms-2" disabled>
+        Vote Skip
+      </button>
       <div id="div-volume" class="mb-2">
         <div class="d-flex justify-content-center align-items-center mb-1">
           <strong>Volume:</strong>
@@ -149,7 +152,7 @@
           <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
             <i class="fab fa-github fa-lg"></i>
           </a>
-          <div>&copy; 2023 <span>ssamjh</span></div>
+          <div>&copy; 2024 <span>ssamjh</span></div>
         </div>
       </footer>
     </div>
@@ -162,6 +165,7 @@
       const inputVolume = document.getElementById("input-volume");
       let isPlaying = false;
       let pollInterval = null;
+      let lastVotedSongId = null;
 
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
@@ -189,6 +193,15 @@
 
       function storageGet(key) {
         return localStorage.getItem(key);
+      }
+
+      function updateVoteSkipButton() {
+        const voteSkipBtn = document.getElementById("voteSkipBtn");
+        if (isPlaying && songId && songId !== lastVotedSongId) {
+          voteSkipBtn.disabled = false;
+        } else {
+          voteSkipBtn.disabled = true;
+        }
       }
 
       function pollServer() {
@@ -300,8 +313,13 @@
                 "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
             }
             playingLink.setAttribute("href", "javascript:void(0)");
+            songId = null;
+            updateVoteSkipButton();
             return;
           }
+
+          // Update songId
+          songId = currentData.songid;
 
           const createLink = (url, id, name) =>
             `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
@@ -356,6 +374,9 @@
                 .join(", ")
             );
           }
+
+          // Update vote skip button
+          updateVoteSkipButton();
         });
       }
 
@@ -567,6 +588,32 @@
         isPlaying = false;
         stopPolling();
       });
+
+      document
+        .getElementById("voteSkipBtn")
+        .addEventListener("click", function () {
+          if (!isPlaying || !songId || songId === lastVotedSongId) return;
+
+          const userUUID = getOrCreateUUID();
+
+          fetch("vote-skip.php", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: `uuid=${encodeURIComponent(
+              userUUID
+            )}&songid=${encodeURIComponent(songId)}`,
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.success) {
+                lastVotedSongId = songId;
+                updateVoteSkipButton();
+              }
+            })
+            .catch((error) => console.error("Error:", error));
+        });
     </script>
     <!-- Song Request Modal -->
     <div
