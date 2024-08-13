@@ -157,8 +157,8 @@ function handleStatsRequest($redis)
     // Get total number of active listeners
     $totalListeners = $redis->sCard('active_listeners');
 
-    // Calculate votes needed
-    $votesNeeded = max(0, max(2, ceil($totalListeners / 2)) - $voteCount);
+    // Calculate total votes needed (not remaining votes)
+    $votesNeeded = max(2, ceil($totalListeners / 2));
 
     // Prepare and send the response
     $response = [

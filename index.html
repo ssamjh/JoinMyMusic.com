@@ -111,7 +111,7 @@
         Request Song
       </button>
       <button id="voteSkipBtn" class="btn btn-danger btn-sm mb-2 ms-2" disabled>
-        Vote Skip
+        Skip Votes
       </button>
       <div id="div-volume" class="mb-2">
         <div class="d-flex justify-content-center align-items-center mb-1">
@@ -145,6 +145,13 @@
             width="250"
             height="250" />
         </a>
+      </div>
+      <div id="stats-container" class="mb-3">
+        <p>Listeners: <span id="listener-count">0</span></p>
+        <p>
+          Skip Votes: <span id="vote-count">0</span> /
+          <span id="votes-needed">0</span>
+        </p>
       </div>
       <footer class="py-5">
         <div class="container d-flex justify-content-between">
@@ -299,6 +306,28 @@
         img.onload = callback;
       }
 
+      function updateStats() {
+        // Fetch listener stats
+        fetch("https://joinmymusic.com/listeners.php?stats")
+          .then((response) => response.json())
+          .then((data) => {
+            document.getElementById("listener-count").textContent =
+              data.listeners;
+          })
+          .catch((error) =>
+            console.error("Error fetching listener stats:", error)
+          );
+
+        // Fetch vote stats
+        fetch("https://joinmymusic.com/skip.php?stats")
+          .then((response) => response.json())
+          .then((data) => {
+            document.getElementById("vote-count").textContent = data.count;
+            document.getElementById("votes-needed").textContent = data.needed;
+          })
+          .catch((error) => console.error("Error fetching vote stats:", error));
+      }
+
       function trackMeta() {
         $.getJSON("./metadata.php?rand=" + Math.random(), function (data) {
           const currentData = data.current;
@@ -389,7 +418,9 @@
       }
 
       trackMeta();
-      setInterval(trackMeta, 5000);
+      updateStats();
+      setInterval(trackMeta, 10000);
+      setInterval(updateStats, 10000);
 
       // Song Request Modal functionality
       document.addEventListener("DOMContentLoaded", function () {
@@ -610,6 +641,7 @@
               if (data.success) {
                 lastVotedSongId = songId;
                 updateVoteSkipButton();
+                updateStats();
               }
             })
             .catch((error) => console.error("Error:", error));

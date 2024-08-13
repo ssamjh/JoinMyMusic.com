@@ -329,7 +329,7 @@ if (isset($_GET['ajax'])) {
         const authKey = '<?php echo AUTH_KEY; ?>';
 
         function reloadRequests() {
-            fetch(`manage-requests.php?ajax=1&auth=${authKey}`)
+            fetch(`manage.php?ajax=1&auth=${authKey}`)
                 .then(response => response.text())
                 .then(html => {
                     document.getElementById('requests-container').innerHTML = html;
@@ -355,7 +355,7 @@ if (isset($_GET['ajax'])) {
 
                 event.preventDefault();
 
-                fetch(`manage-requests.php?auth=${authKey}`, {
+                fetch(`manage.php?auth=${authKey}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -374,7 +374,7 @@ if (isset($_GET['ajax'])) {
 
         // Add event listener for auto-approve toggle
         document.getElementById('autoApproveToggle').addEventListener('change', function (event) {
-            fetch(`manage-requests.php?auth=${authKey}`, {
+            fetch(`manage.php?auth=${authKey}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
