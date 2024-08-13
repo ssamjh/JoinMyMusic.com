@@ -3,25 +3,26 @@ require_once 'config.php';
 
 $redis = getRedisInstance();
 
-// Check if the stats parameter is set
-if (isset($_GET['stats'])) {
-    // Perform active cleanup of expired listeners
+// Function to get active listeners count
+function getActiveListenersCount($redis)
+{
     $now = time();
     $allListeners = $redis->sMembers('active_listeners');
     $activeCount = 0;
-
     foreach ($allListeners as $uuid) {
         $listenerKey = "listener:$uuid";
         $lastSeen = $redis->hGet($listenerKey, 'last_seen');
-        
         if ($lastSeen !== false && $now - $lastSeen <= 60) {
             $activeCount++;
-        } else {
-            // Remove expired listener
-            $redis->sRem('active_listeners', $uuid);
-            $redis->del($listenerKey);
         }
     }
+    return $activeCount;
+}
+
+// Check if the stats parameter is set
+if (isset($_GET['stats'])) {
+    // Get the active listener count without modifying the database
+    $activeCount = getActiveListenersCount($redis);
 
     // Return the active listener count
     header('Content-Type: application/json');

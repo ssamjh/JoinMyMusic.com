@@ -24,6 +24,23 @@ if (!$redis) {
     exit(json_encode(['error' => 'Internal server error: Redis connection failed']));
 }
 
+// Function to get the count of active listeners
+function getActiveListenersCount($redis)
+{
+    $now = time();
+    $allListeners = $redis->sMembers('active_listeners');
+    $activeCount = 0;
+    foreach ($allListeners as $uuid) {
+        $listenerKey = "listener:$uuid";
+        $lastSeen = $redis->hGet($listenerKey, 'last_seen');
+
+        if ($lastSeen !== false && $now - $lastSeen <= 60) {
+            $activeCount++;
+        }
+    }
+    return $activeCount;
+}
+
 // Check if the UUID is in the active listeners set
 if (!$uuid) {
     http_response_code(400);
@@ -100,7 +117,7 @@ if ($songId !== $currentSongId) {
 }
 
 // Get total number of active listeners
-$totalListeners = $redis->sCard('active_listeners');
+$totalListeners = getActiveListenersCount($redis);
 
 if ($totalListeners === 0) {
     http_response_code(400);
@@ -155,7 +172,7 @@ function handleStatsRequest($redis)
     $voteCount = $redis->sCard($voteKey);
 
     // Get total number of active listeners
-    $totalListeners = $redis->sCard('active_listeners');
+    $totalListeners = getActiveListenersCount($redis);
 
     // Calculate total votes needed (not remaining votes)
     $votesNeeded = max(2, ceil($totalListeners / 2));
