@@ -10,6 +10,21 @@ if ((!isset($_GET['auth']) && !isset($_POST['auth'])) || ($_GET['auth'] !== AUTH
 // Redis connection setup
 $redis = getRedisInstance();
 
+// function to get all active listeners
+function getActiveListeners($redis)
+{
+    $activeListeners = $redis->sMembers('active_listeners');
+    $listeners = [];
+    foreach ($activeListeners as $uuid) {
+        $listenerKey = "listener:$uuid";
+        $listenerData = $redis->hGetAll($listenerKey);
+        if (!empty($listenerData)) {
+            $listeners[] = $listenerData;
+        }
+    }
+    return $listeners;
+}
+
 // Function to fetch metadata from Spotify API
 function fetchMetadata($uri)
 {
@@ -170,12 +185,42 @@ function generateRequestsHtml($requests, $isApproved = false)
     return $html;
 }
 
-// If it's an AJAX request, return only the requests HTML
+function generateActiveListenersHtml($listeners)
+{
+    $html = '';
+    foreach ($listeners as $listener) {
+        $html .= '
+        <div class="listener-item">
+            <div class="row align-items-center">
+                <div class="col-12 listener-info">
+                    <h5>' . htmlspecialchars($listener['name'] ?? 'Anonymous') . '</h5>
+                    <p><strong>IP:</strong> ' . htmlspecialchars($listener['ip']) . '</p>
+                    <p><strong>User Agent:</strong> ' . htmlspecialchars($listener['user_agent']) . '</p>
+                    <p><strong>Last Seen:</strong> ' . date('Y-m-d H:i:s', $listener['last_seen']) . '</p>
+                </div>
+            </div>
+        </div>';
+    }
+    return $html ?: '<p>No active listeners found.</p>';
+}
+
+// Get active listeners
+$activeListeners = getActiveListeners($redis);
+
+// If it's an AJAX request, return only the requests HTML and active listeners
 if (isset($_GET['ajax'])) {
+    echo '<div class="row">';
+    echo '<div class="col-md-6">';
     echo '<h3>Pending Requests</h3>';
     echo generateRequestsHtml($pendingRequests);
     echo '<h3>Approved Requests</h3>';
     echo generateRequestsHtml($approvedRequests, true);
+    echo '</div>';
+    echo '<div class="col-md-6">';
+    echo '<h3>Active Listeners</h3>';
+    echo generateActiveListenersHtml($activeListeners);
+    echo '</div>';
+    echo '</div>';
     exit;
 }
 ?>
@@ -193,14 +238,10 @@ if (isset($_GET['ajax'])) {
         crossorigin="anonymous">
     <script src="js/bootstrap-auto-colour.js"></script>
     <style>
-        .container {
-            max-width: 800px;
-        }
-
         .request-item {
             border: 1px solid #ddd;
-            padding: 15px;
-            margin-bottom: 15px;
+            padding: 10px;
+            margin-bottom: 10px;
             border-radius: 8px;
         }
 
@@ -209,44 +250,55 @@ if (isset($_GET['ajax'])) {
         }
 
         .album-art {
-            width: 80px;
-            height: 80px;
+            width: 60px;
+            height: 60px;
             object-fit: cover;
             border-radius: 4px;
         }
 
         .song-info {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         .song-info h4 {
-            font-size: 1.2rem;
-            margin-bottom: 0.3rem;
-        }
-
-        .song-info p {
+            font-size: 1rem;
             margin-bottom: 0.2rem;
         }
 
-        .btn-group {
-            display: flex;
-            justify-content: space-between;
-            gap: 5px;
-        }
-
-        .btn-group .btn {
-            flex: 1;
+        .song-info p {
+            margin-bottom: 0.1rem;
         }
 
         .btn-sm {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.875rem;
+            padding: 0.2rem 0.4rem;
+            font-size: 0.75rem;
+        }
+
+        .listener-item {
+            border: 1px solid #ddd;
+            padding: 8px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            background-color: rgba(0, 123, 255, 0.1);
+        }
+
+        .listener-info {
+            font-size: 0.85rem;
+        }
+
+        .listener-info h5 {
+            font-size: 1rem;
+            margin-bottom: 0.2rem;
+        }
+
+        .listener-info p {
+            margin-bottom: 0.1rem;
         }
     </style>
 </head>
 
 <body class="bg">
-    <div class="container py-3">
+    <div class="container-fluid py-3">
         <h2 class="text-center">Manage Requests</h2>
         <h5 class="text-center mb-4">ssamjh's Music Sync</h5>
 
@@ -256,10 +308,18 @@ if (isset($_GET['ajax'])) {
         </div>
 
         <div id="requests-container">
-            <h3>Pending Requests</h3>
-            <?php echo generateRequestsHtml($pendingRequests); ?>
-            <h3>Approved Requests</h3>
-            <?php echo generateRequestsHtml($approvedRequests, true); ?>
+            <div class="row">
+                <div class="col-md-6">
+                    <h3>Pending Requests</h3>
+                    <?php echo generateRequestsHtml($pendingRequests); ?>
+                    <h3>Approved Requests</h3>
+                    <?php echo generateRequestsHtml($approvedRequests, true); ?>
+                </div>
+                <div class="col-md-6">
+                    <h3>Active Listeners</h3>
+                    <?php echo generateActiveListenersHtml($activeListeners); ?>
+                </div>
+            </div>
         </div>
     </div>
 

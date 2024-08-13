@@ -210,7 +210,7 @@
         const listenerName = storageGet("requesterName") || "";
         const userUUID = getOrCreateUUID();
 
-        fetch("listener-tracker.php", {
+        fetch("listeners.php", {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -596,7 +596,7 @@
 
           const userUUID = getOrCreateUUID();
 
-          fetch("vote-skip.php", {
+          fetch("skip.php", {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",

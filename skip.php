@@ -4,6 +4,12 @@ require_once 'config.php';
 // Set up Redis connection
 $redis = getRedisInstance();
 
+// Check if it's a stats request
+if (isset($_SERVER['QUERY_STRING']) && $_SERVER['QUERY_STRING'] === 'stats') {
+    handleStatsRequest($redis);
+    exit;
+}
+
 // Get client IP and user agent
 $clientIP = $_SERVER['REMOTE_ADDR'];
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
@@ -49,20 +55,42 @@ function fetchData($url, $method = 'GET')
     return $response;
 }
 
-// Fetch current track information from metadata.php
-try {
-    $metadataUrl = "https://joinmymusic.com/metadata.php";
-    $rawData = fetchData($metadataUrl);
-    $metadata = json_decode($rawData, true);
+function fetchCurrentSongId($redis)
+{
+    $playerUrl = LIBRESPOT_API_URL . "/player/current";
+    $cacheKey = 'spotify_data_' . md5($playerUrl);
 
-    if (!isset($metadata['current']['songid']) || empty($metadata['current']['songid'])) {
-        throw new Exception("No current song ID in metadata");
+    $cachedData = $redis->get($cacheKey);
+
+    if ($cachedData !== false) {
+        $data = json_decode($cachedData, true);
+        if (isset($data['current']['songid']) && !empty($data['current']['songid'])) {
+            return $data['current']['songid'];
+        }
     }
 
-    $currentSongId = $metadata['current']['songid'];
+    // If we couldn't get the song ID from Redis, fall back to the metadata.php method
+    try {
+        $metadataUrl = "https://joinmymusic.com/metadata.php";
+        $rawData = fetchData($metadataUrl);
+        $metadata = json_decode($rawData, true);
+
+        if (!isset($metadata['current']['songid']) || empty($metadata['current']['songid'])) {
+            throw new Exception("No current song ID in metadata");
+        }
+
+        return $metadata['current']['songid'];
+    } catch (Exception $e) {
+        throw new Exception('Failed to fetch or process metadata: ' . $e->getMessage());
+    }
+}
+
+// Fetch current song ID
+try {
+    $currentSongId = fetchCurrentSongId($redis);
 } catch (Exception $e) {
     http_response_code(500);
-    exit(json_encode(['error' => 'Failed to fetch or process metadata: ' . $e->getMessage()]));
+    exit(json_encode(['error' => $e->getMessage()]));
 }
 
 // Check if the voted song is currently playing
@@ -100,21 +128,45 @@ if ($skipConditionsMet) {
 
         echo json_encode([
             'success' => true,
-            'message' => 'Song skipped successfully',
-            'votes' => $voteCount,
-            'totalListeners' => $totalListeners
+            'message' => 'Song skipped successfully'
         ]);
     } catch (Exception $e) {
         http_response_code(500);
         exit(json_encode(['error' => 'Failed to skip the song']));
     }
 } else {
-    $votesNeeded = max(2, ceil($totalListeners / 2)) - $voteCount;
     echo json_encode([
         'success' => true,
-        'message' => 'Vote recorded',
-        'votes' => $voteCount,
-        'totalListeners' => $totalListeners,
-        'votesNeeded' => $votesNeeded
+        'message' => 'Vote recorded'
     ]);
+}
+
+function handleStatsRequest($redis)
+{
+    try {
+        $currentSongId = fetchCurrentSongId($redis);
+    } catch (Exception $e) {
+        http_response_code(500);
+        exit(json_encode(['error' => $e->getMessage()]));
+    }
+
+    // Get vote count for the current song
+    $voteKey = "vote_skip:{$currentSongId}";
+    $voteCount = $redis->sCard($voteKey);
+
+    // Get total number of active listeners
+    $totalListeners = $redis->sCard('active_listeners');
+
+    // Calculate votes needed
+    $votesNeeded = max(0, max(2, ceil($totalListeners / 2)) - $voteCount);
+
+    // Prepare and send the response
+    $response = [
+        'song' => $currentSongId,
+        'count' => $voteCount,
+        'needed' => $votesNeeded
+    ];
+
+    header('Content-Type: application/json');
+    echo json_encode($response);
 }

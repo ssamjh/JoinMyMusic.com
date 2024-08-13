@@ -46,6 +46,32 @@ function approveRequest($uri)
     return makeRequest($url, 'POST', $data);
 }
 
+function sanitizeName($name)
+{
+    // Remove all HTML tags
+    $name = strip_tags($name);
+
+    // Remove all non-printable characters
+    $name = preg_replace('/[\x00-\x1F\x7F-\xFF]/', '', $name);
+
+    // Remove potential JavaScript events
+    $name = preg_replace('/on\w+\s*=\s*(?:(?:"|\')[^"\']*(?:"|\')|[^\s>])+/i', '', $name);
+
+    // Remove excessive whitespace
+    $name = preg_replace('/\s+/', ' ', $name);
+
+    // Trim whitespace from the beginning and end
+    $name = trim($name);
+
+    // Convert special characters to HTML entities
+    $name = htmlspecialchars($name, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    // Limit the length of the name
+    $name = substr($name, 0, 50);
+
+    return $name;
+}
+
 switch ($action) {
     case 'search':
         $searchKey = "search_limit:{$clientIP}";
@@ -82,7 +108,7 @@ switch ($action) {
         }
 
         // Sanitize the name
-        $sanitizedName = filter_var($name, FILTER_SANITIZE_STRING);
+        $sanitizedName = sanitizeName($name);
 
         // Create request data
         $requestData = json_encode([
