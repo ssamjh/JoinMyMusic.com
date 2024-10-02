@@ -28,12 +28,10 @@ function getActiveListeners($redis)
 // Function to fetch metadata from Spotify API
 function fetchMetadata($uri)
 {
-    $url = LIBRESPOT_API_URL . "/metadata/" . urlencode($uri);
+    $url = LIBRESPOT_API_URL . "/trackinfo?trackid=" . urlencode($uri);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, "");  // Empty POST body
     $output = curl_exec($ch);
     curl_close($ch);
     return json_decode($output, true);
@@ -63,18 +61,15 @@ function getMetadata($uri)
 // Function to approve a request
 function approveRequest($uri)
 {
-    global $redis;
-    $url = LIBRESPOT_API_URL . "/player/addToQueue";
-    $data = ['uri' => $uri];
+    $url = LIBRESPOT_API_URL . "/add?trackid=" . urlencode($uri);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $response = curl_exec($ch);
     curl_close($ch);
 
     if ($response !== false) {
+        global $redis;
         // Move the request from 'requests' to 'approved_requests'
         $requestJson = $redis->lPop('requests');
         if ($requestJson) {
@@ -134,23 +129,12 @@ function generateRequestsHtml($requests, $isApproved = false)
         $uri = $requestData['uri'];
         $metadata = getMetadata($uri);
 
-
-        // Try to get the largest available image
-        $imageUrl = '';
-        if (isset($metadata['album']['coverGroup']['image'])) {
-            foreach ($metadata['album']['coverGroup']['image'] as $image) {
-                if ($image['size'] === 'LARGE') {
-                    $imageUrl = $image['fileId'];
-                    break;
-                }
-            }
-            if (empty($imageUrl) && !empty($metadata['album']['coverGroup']['image'])) {
-                $imageUrl = $metadata['album']['coverGroup']['image'][0]['fileId'];
-            }
+        if (!$metadata) {
+            continue; // Skip this request if metadata couldn't be fetched
         }
 
-        // Convert the image URL to lowercase
-        $imageUrl = strtolower($imageUrl);
+        // Get the cover image URL
+        $imageUrl = $metadata['cover'] ?? '';
 
         // Generate artist string
         $artists = isset($metadata['artist']) ? array_map(function ($artist) {
@@ -162,11 +146,11 @@ function generateRequestsHtml($requests, $isApproved = false)
         <div class="request-item ' . ($isApproved ? 'approved' : '') . '">
             <div class="row align-items-center">
                 <div class="col-3 col-sm-2">
-                    ' . ($imageUrl ? '<img src="https://i.scdn.co/image/' . htmlspecialchars($imageUrl) . '" alt="Album Art" class="album-art">' : '<div class="album-art bg-secondary d-flex align-items-center justify-content-center text-white">No Image</div>') . '
+                    ' . ($imageUrl ? '<img src="' . htmlspecialchars($imageUrl) . '" alt="Album Art" class="album-art">' : '<div class="album-art bg-secondary d-flex align-items-center justify-content-center text-white">No Image</div>') . '
                 </div>
                 <div class="col-9 col-sm-10 song-info">
-                    <h4>' . htmlspecialchars($metadata['name'] ?? 'Unknown') . '</h4>
-                    <p>' . $artistString . ' (' . htmlspecialchars($metadata['album']['name'] ?? 'Unknown') . ')</p>
+                    <h4>' . htmlspecialchars($metadata['song'] ?? 'Unknown') . '</h4>
+                    <p>' . $artistString . ' (' . htmlspecialchars($metadata['album'] ?? 'Unknown') . ')</p>
                     <p>From: ' . htmlspecialchars($requestData['name'] ?? 'Anonymous') . ' - ' . htmlspecialchars($requestData['ip'] ?? 'Unknown') . '</p>
                     <p><em>' . (isset($requestData['timestamp']) ? date('Y-m-d H:i:s', $requestData['timestamp']) : 'Unknown') . '</em></p>
                     ' . (!$isApproved ? '
@@ -184,6 +168,7 @@ function generateRequestsHtml($requests, $isApproved = false)
     }
     return $html;
 }
+
 
 function generateActiveListenersHtml($listeners)
 {
