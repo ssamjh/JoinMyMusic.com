@@ -9,12 +9,12 @@ $redis = getRedisInstance();
 $action = $_POST['action'] ?? '';
 $clientIP = $_SERVER['REMOTE_ADDR'];
 
-function makeRequest($url, $method = 'POST', $data = null)
+function makeRequest($url, $method = 'GET', $data = null)
 {
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-    if ($data) {
+    if ($data && $method === 'POST') {
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
     }
     $response = curl_exec($ch);
@@ -41,34 +41,19 @@ function checkRateLimit($key, $limit, $period)
 
 function approveRequest($uri)
 {
-    $url = LIBRESPOT_API_URL . "/player/addToQueue";
-    $data = ['uri' => $uri];
-    return makeRequest($url, 'POST', $data);
+    $url = LIBRESPOT_API_URL . "/add?trackid=" . urlencode($uri);
+    return makeRequest($url, 'GET');
 }
 
 function sanitizeName($name)
 {
-    // Remove all HTML tags
     $name = strip_tags($name);
-
-    // Remove all non-printable characters
     $name = preg_replace('/[\x00-\x1F\x7F-\xFF]/', '', $name);
-
-    // Remove potential JavaScript events
     $name = preg_replace('/on\w+\s*=\s*(?:(?:"|\')[^"\']*(?:"|\')|[^\s>])+/i', '', $name);
-
-    // Remove excessive whitespace
     $name = preg_replace('/\s+/', ' ', $name);
-
-    // Trim whitespace from the beginning and end
     $name = trim($name);
-
-    // Convert special characters to HTML entities
     $name = htmlspecialchars($name, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-    // Limit the length of the name
     $name = substr($name, 0, 50);
-
     return $name;
 }
 
@@ -85,8 +70,18 @@ switch ($action) {
             echo json_encode(['error' => 'No search text provided.']);
             exit;
         }
-        $url = LIBRESPOT_API_URL . "/search/" . urlencode($query);
-        echo makeRequest($url);
+        $url = LIBRESPOT_API_URL . "/search?q=" . urlencode($query);
+        $response = makeRequest($url);
+
+        // Decode the JSON response
+        $searchResults = json_decode($response, true);
+
+        // Check if the response is valid and contains results
+        if (isset($searchResults['results']) && is_array($searchResults['results'])) {
+            echo json_encode($searchResults);
+        } else {
+            echo json_encode(['error' => 'Invalid search results']);
+        }
         break;
 
     case 'addToQueue':
@@ -107,10 +102,8 @@ switch ($action) {
             exit;
         }
 
-        // Sanitize the name
         $sanitizedName = sanitizeName($name);
 
-        // Create request data
         $requestData = json_encode([
             'uri' => $uri,
             'ip' => $clientIP,
@@ -118,21 +111,17 @@ switch ($action) {
             'name' => $sanitizedName
         ]);
 
-        // Check if auto-approve is enabled
         $autoApprove = $redis->get('auto_approve') ?: '0';
 
         if ($autoApprove === '1') {
-            // Automatically approve the request
             $result = approveRequest($uri);
             if ($result === false) {
                 echo json_encode(['error' => 'Failed to add to queue']);
                 exit;
             }
-            // Store the approved request in the approved_requests list
             $redis->rPush('approved_requests', $requestData);
             echo json_encode(['success' => true, 'message' => 'Your request has been automatically approved and added to the queue!']);
         } else {
-            // Store the request in Redis for manual approval
             $redis->rPush('requests', $requestData);
             echo json_encode(['success' => true, 'message' => 'Thanks, your request has been added to the queue for approval!']);
         }

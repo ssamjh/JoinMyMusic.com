@@ -530,7 +530,7 @@
             return;
           }
 
-          const tracks = data.results.tracks.hits;
+          const tracks = data.results;
 
           if (tracks.length === 0) {
             displayMessage("No songs found.");
@@ -542,17 +542,15 @@
             resultItem.href = "#";
             resultItem.className = "song-result-item";
             resultItem.innerHTML = `
-<img src="${track.image}" alt="${track.name}" class="song-result-image">
-<div class="song-result-info">
-<div class="song-result-title">${track.name}</div>
-<div class="song-result-artist">${track.artists
-              .map((artist) => artist.name)
-              .join(", ")}</div>
-</div>
-`;
+      <img src="${track.cover}" alt="${track.name}" class="song-result-image">
+      <div class="song-result-info">
+        <div class="song-result-title">${track.name}</div>
+        <div class="song-result-artist">${track.artist}</div>
+      </div>
+    `;
             resultItem.addEventListener("click", (e) => {
               e.preventDefault();
-              requestSong(track.uri);
+              requestSong(track.id);
             });
             searchResults.appendChild(resultItem);
           });

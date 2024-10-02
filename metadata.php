@@ -1,10 +1,9 @@
 <?php
 require_once 'config.php';
-
 // Redis connection setup
 $redis = getRedisInstance();
 
-function fetchData($url, $method = 'POST')
+function fetchData($url, $method = 'GET')
 {
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -17,58 +16,6 @@ function fetchData($url, $method = 'POST')
     return $response;
 }
 
-function getSpotifyData($trackId)
-{
-    $webApiUrl = LIBRESPOT_API_URL . "/web-api/v1/tracks/" . $trackId;
-    return json_decode(fetchData($webApiUrl, 'GET'), true);
-}
-
-function transformData($data)
-{
-    $original = json_decode($data, true);
-
-    // Check if nothing is playing
-    if (!isset($original['track']) || empty($original['track'])) {
-        return [
-            'current' => [
-                'album' => '',
-                'albumid' => '',
-                'artist' => [['id' => '', 'name' => '']],
-                'cover' => '',
-                'song' => '',
-                'songid' => ''
-            ]
-        ];
-    }
-
-    $track = $original['track'];
-    $trackUri = $original['current'];
-    $trackId = explode(':', $trackUri)[2];
-    // Fetch Spotify data
-    $spotifyData = getSpotifyData($trackId);
-    $spotifyAlbumId = $spotifyData['album']['id'] ?? '';
-    $spotifyArtistId = $spotifyData['artists'][0]['id'] ?? '';
-
-    $transformed = [
-        'current' => [
-            'album' => $track['album']['name'] ?? '',
-            'albumid' => $spotifyAlbumId,
-            'artist' => array_map(function ($artist) use ($spotifyArtistId) {
-                return [
-                    'id' => $spotifyArtistId,
-                    'name' => $artist['name'] ?? ''
-                ];
-            }, $track['artist'] ?? []),
-            'cover' => isset($track['album']['coverGroup']['image'][0]['fileId'])
-                ? "https://i.scdn.co/image/" . strtolower($track['album']['coverGroup']['image'][0]['fileId'])
-                : '',
-            'song' => $track['name'] ?? '',
-            'songid' => $trackId
-        ]
-    ];
-    return $transformed;
-}
-
 // Ensure that no content has been output before this point
 if (ob_get_level())
     ob_end_clean();
@@ -77,18 +24,17 @@ if (ob_get_level())
 header('Content-Type: application/json');
 
 try {
-    $playerUrl = LIBRESPOT_API_URL . "/player/current";
-
+    $metadataUrl = LIBRESPOT_API_URL . "/metadata";
     // Generate a unique cache key based on the URL
-    $cacheKey = 'spotify_data_' . md5($playerUrl);
+    $cacheKey = 'spotify_metadata_' . md5($metadataUrl);
 
     // Try to get data from Redis cache
     $cachedData = $redis->get($cacheKey);
 
     if ($cachedData === false) {
-        // If not in cache, fetch and transform the data
-        $rawData = fetchData($playerUrl);
-        $formattedData = transformData($rawData);
+        // If not in cache, fetch the data
+        $rawData = fetchData($metadataUrl);
+        $formattedData = json_decode($rawData, true);
 
         // Cache the formatted data for 10 seconds
         $redis->setex($cacheKey, 10, json_encode($formattedData));

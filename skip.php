@@ -74,8 +74,8 @@ function fetchData($url, $method = 'GET')
 
 function fetchCurrentSongId($redis)
 {
-    $playerUrl = LIBRESPOT_API_URL . "/player/current";
-    $cacheKey = 'spotify_data_' . md5($playerUrl);
+    $metadataUrl = LIBRESPOT_API_URL . "/metadata";
+    $cacheKey = 'spotify_metadata_' . md5($metadataUrl);
 
     $cachedData = $redis->get($cacheKey);
 
@@ -86,9 +86,8 @@ function fetchCurrentSongId($redis)
         }
     }
 
-    // If we couldn't get the song ID from Redis, fall back to the metadata.php method
+    // If we couldn't get the song ID from Redis, fetch from the API
     try {
-        $metadataUrl = "https://joinmymusic.com/metadata.php";
         $rawData = fetchData($metadataUrl);
         $metadata = json_decode($rawData, true);
 
@@ -96,7 +95,12 @@ function fetchCurrentSongId($redis)
             throw new Exception("No current song ID in metadata");
         }
 
-        return $metadata['current']['songid'];
+        $songId = $metadata['current']['songid'];
+
+        // Cache the metadata
+        $redis->setex($cacheKey, 10, $rawData);
+
+        return $songId;
     } catch (Exception $e) {
         throw new Exception('Failed to fetch or process metadata: ' . $e->getMessage());
     }
@@ -137,9 +141,9 @@ $skipConditionsMet = ($voteCount >= 2) && ($voteCount >= ceil($totalListeners / 
 
 if ($skipConditionsMet) {
     // Perform the skip action
-    $skipUrl = LIBRESPOT_API_URL . "/player/next";
+    $skipUrl = LIBRESPOT_API_URL . "/skip";
     try {
-        $response = fetchData($skipUrl, 'POST');
+        $response = fetchData($skipUrl, 'GET');
         // Clear the votes for this song
         $redis->del($voteKey);
 
