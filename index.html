@@ -113,6 +113,9 @@
       <button id="voteSkipBtn" class="btn btn-danger btn-sm mb-2 ms-2" disabled>
         Vote Skip
       </button>
+      <button id="muteSongBtn" class="btn btn-warning btn-sm mb-2 ms-2">
+        Mute Song
+      </button>
       <div id="div-volume" class="mb-2">
         <div class="d-flex justify-content-center align-items-center mb-1">
           <strong>Volume:</strong>
@@ -173,6 +176,8 @@
       let isPlaying = false;
       let pollInterval = null;
       let lastVotedSongId = null;
+      let mutedSongId = null;
+      let songId = null;
 
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
@@ -202,12 +207,18 @@
         return localStorage.getItem(key);
       }
 
-      function updateVoteSkipButton() {
+      function updateButtons() {
         const voteSkipBtn = document.getElementById("voteSkipBtn");
-        if (isPlaying && songId && songId !== lastVotedSongId) {
-          voteSkipBtn.disabled = false;
+        const muteSongBtn = document.getElementById("muteSongBtn");
+
+        if (isPlaying) {
+          voteSkipBtn.disabled = songId === lastVotedSongId;
+          muteSongBtn.disabled = false;
+          muteSongBtn.textContent = audioStream.muted ? "Unmute song" : "Mute song";
         } else {
           voteSkipBtn.disabled = true;
+          muteSongBtn.disabled = true;
+          muteSongBtn.textContent = "Mute";
         }
       }
 
@@ -283,6 +294,7 @@
         buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
         isPlaying = true;
         startPolling();
+        updateButtons();
       }
 
       function buttonStop() {
@@ -292,6 +304,7 @@
         buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
         isPlaying = false;
         stopPolling();
+        updateButtons();
       }
 
       function volumeSet(val) {
@@ -328,6 +341,17 @@
           .catch((error) => console.error("Error fetching vote stats:", error));
       }
 
+      function updateSongId(newSongId) {
+        if (newSongId !== songId) {
+          if (mutedSongId !== null) {
+            audioStream.muted = false;
+            mutedSongId = null;
+          }
+          songId = newSongId;
+        }
+        updateButtons();
+      }
+
       function trackMeta() {
         $.getJSON("./metadata.php?rand=" + Math.random(), function (data) {
           const currentData = data.current;
@@ -342,13 +366,11 @@
                 "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
             }
             playingLink.setAttribute("href", "javascript:void(0)");
-            songId = null;
-            updateVoteSkipButton();
+            updateSongId(null);
             return;
           }
 
-          // Update songId
-          songId = currentData.songid;
+          updateSongId(currentData.songid);
 
           const createLink = (url, id, name) =>
             `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
@@ -403,9 +425,6 @@
                 .join(", ")
             );
           }
-
-          // Update vote skip button
-          updateVoteSkipButton();
         });
       }
 
@@ -643,6 +662,21 @@
               }
             })
             .catch((error) => console.error("Error:", error));
+        });
+
+      document
+        .getElementById("muteSongBtn")
+        .addEventListener("click", function () {
+          if (!isPlaying || !songId) return;
+
+          if (audioStream.muted) {
+            audioStream.muted = false;
+            mutedSongId = null;
+          } else {
+            audioStream.muted = true;
+            mutedSongId = songId;
+          }
+          updateButtons();
         });
     </script>
     <!-- Song Request Modal -->
