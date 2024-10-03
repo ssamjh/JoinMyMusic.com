@@ -18,6 +18,9 @@ $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
 $uuid = $_POST['uuid'] ?? null;
 $songId = $_POST['songid'] ?? null;
 
+// Get client IP
+$clientIP = $_SERVER['REMOTE_ADDR'];
+
 // Check Redis connection
 if (!$redis) {
     http_response_code(500);
@@ -128,12 +131,23 @@ if ($totalListeners === 0) {
     exit(json_encode(['error' => 'No active listeners']));
 }
 
-// Record the vote
+// Implement rate limiting for votes
+$rateLimitKey = "rate_limit:vote:{$clientIP}";
+$voteAttempts = $redis->incr($rateLimitKey);
+$redis->expire($rateLimitKey, 60); // Reset after 1 minute
+
+if ($voteAttempts > 5) { // Allow 5 votes per minute
+    http_response_code(429);
+    exit(json_encode(['error' => 'Too many vote attempts. Please wait before trying again.']));
+}
+
+// Record the vote using both UUID and IP
 $voteKey = "vote_skip:{$songId}";
-$redis->sAdd($voteKey, $uuid);
+$combinedIdentifier = "{$uuid}:{$clientIP}";
+$redis->sAdd($voteKey, $combinedIdentifier);
 $redis->expire($voteKey, 300); // Expire votes after 5 minutes
 
-// Count votes
+// Count unique votes
 $voteCount = $redis->sCard($voteKey);
 
 // Calculate if skip conditions are met
