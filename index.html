@@ -214,7 +214,9 @@
         if (isPlaying) {
           voteSkipBtn.disabled = songId === lastVotedSongId;
           muteSongBtn.disabled = false;
-          muteSongBtn.textContent = audioStream.muted ? "Unmute Song" : "Mute Song";
+          muteSongBtn.textContent = audioStream.muted
+            ? "Unmute Song"
+            : "Mute Song";
         } else {
           voteSkipBtn.disabled = true;
           muteSongBtn.disabled = true;
@@ -742,5 +744,13 @@
         </div>
       </div>
     </div>
+
+    <noscript>
+      <img
+        src="https://stats.sjh.at/ingress/f843459e-231c-4d54-902d-5618ed0cb73d/pixel.gif" />
+    </noscript>
+    <script
+      defer
+      src="https://stats.sjh.at/ingress/f843459e-231c-4d54-902d-5618ed0cb73d/script.js"></script>
   </body>
 </html>
