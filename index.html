@@ -162,7 +162,7 @@
           <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
             <i class="fab fa-github fa-lg"></i>
           </a>
-          <div>&copy; 2024 <span>ssamjh</span></div>
+          <div>&copy; 2025 <span>ssamjh</span></div>
         </div>
       </footer>
     </div>
@@ -401,6 +401,22 @@
                   )
                   .join(", ")
               );
+
+              if ("mediaSession" in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: currentData.song,
+                  artist: currentData.artist.map((a) => a.name).join(", "),
+                  album: currentData.albumid,
+                  artwork: [
+                    {
+                      src: currentData.cover,
+                      sizes: "250x250",
+                      type: "image/jpeg",
+                    },
+                  ],
+                });
+              }
+
               playingLink.setAttribute(
                 "href",
                 `https://open.spotify.com/album/${currentData.albumid}`
@@ -436,6 +452,12 @@
       } else {
         buttonToggle.textContent = "Play";
         buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+      }
+
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.setActionHandler("play", () => togglePlay());
+        navigator.mediaSession.setActionHandler("pause", () => buttonStop());
+        navigator.mediaSession.setActionHandler("stop", () => buttonStop());
       }
 
       trackMeta();
