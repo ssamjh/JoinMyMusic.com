@@ -403,18 +403,24 @@
               );
 
               if ("mediaSession" in navigator) {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                  title: currentData.song,
-                  artist: currentData.artist.map((a) => a.name).join(", "),
-                  album: currentData.albumid,
-                  artwork: [
-                    {
-                      src: currentData.cover,
-                      sizes: "250x250",
-                      type: "image/jpeg",
-                    },
-                  ],
-                });
+                if (currentData && currentData.song) {
+                  // Only update if we have valid data
+                  navigator.mediaSession.metadata = new MediaMetadata({
+                    title: currentData.song,
+                    artist: currentData.artist.map((a) => a.name).join(", "),
+                    album: currentData.albumid,
+                    artwork: [
+                      {
+                        src: currentData.cover,
+                        sizes: "250x250",
+                        type: "image/jpeg",
+                      },
+                    ],
+                  });
+                } else {
+                  // Clear the metadata if there's no current song
+                  navigator.mediaSession.metadata = null;
+                }
               }
 
               playingLink.setAttribute(
