@@ -66,7 +66,7 @@
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        min-width: 0; /* This allows flex items to shrink below their minimum content size */
+        min-width: 0;
       }
       .song-result-title {
         font-weight: bold;
@@ -76,7 +76,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
         flex: 1;
-        margin-right: 10px; /* Add some space between title and artist */
+        margin-right: 10px;
       }
       .song-result-artist {
         margin: 0;
@@ -85,6 +85,44 @@
         text-align: right;
         white-space: nowrap;
         flex-shrink: 0;
+      }
+      #spotify-preview {
+        border: none;
+        border-radius: 8px;
+        width: 100%;
+        max-width: 300px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .spotify-preview-container {
+        margin: 15px auto;
+        display: flex;
+        justify-content: center;
+      }
+
+      #spotify-preview {
+        border: none;
+        border-radius: 12px;
+        width: 100%;
+        max-width: 300px;
+        background-color: transparent;
+      }
+
+      .spotify-preview-container {
+        margin: 15px auto;
+        display: flex;
+        justify-content: center;
+        background-color: transparent;
+        padding: 0;
+      }
+
+      #spotify-preview-wrapper {
+        border-radius: 12px;
+        overflow: hidden;
+        width: 100%;
+        max-width: 300px;
+        background-color: transparent;
+        position: relative;
       }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
@@ -178,6 +216,8 @@
       let lastVotedSongId = null;
       let mutedSongId = null;
       let songId = null;
+      let selectedSongData = null;
+      let songConfirmModal;
 
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
@@ -478,6 +518,9 @@
         const searchResults = document.getElementById("searchResults");
         const requesterNameInput = document.getElementById("requesterName");
         const changeNameBtn = document.getElementById("changeNameBtn");
+        songConfirmModal = new bootstrap.Modal(
+          document.getElementById("songConfirmModal")
+        );
 
         if (!audioStream.paused) {
           isPlaying = true;
@@ -599,14 +642,69 @@
     `;
             resultItem.addEventListener("click", (e) => {
               e.preventDefault();
-              requestSong(track.id);
+              showConfirmation(track);
             });
             searchResults.appendChild(resultItem);
           });
         }
 
+        function showConfirmation(track) {
+          // Store the selected song data
+          selectedSongData = track;
+
+          // Update the confirmation modal with song details
+          document.getElementById("confirm-song-image").src = track.cover;
+          document.getElementById("confirm-song-title").textContent =
+            track.name;
+          document.getElementById("confirm-song-artist").textContent =
+            track.artist;
+
+          // Update Spotify preview widget
+          const spotifyPreview = document.getElementById("spotify-preview");
+          spotifyPreview.src = `https://open.spotify.com/embed/track/${track.id}`;
+
+          // Close the search modal and show the confirmation modal
+          $("#songRequestModal").modal("hide");
+          songConfirmModal.show();
+        }
+
+        // Add event listener for the confirm button
+        document
+          .getElementById("confirmRequestBtn")
+          .addEventListener("click", function () {
+            if (!selectedSongData) return;
+
+            const requesterName = document
+              .getElementById("requesterName")
+              .value.trim();
+            if (!requesterName) {
+              alert("Please enter your name before requesting a song.");
+              songConfirmModal.hide();
+              $("#songRequestModal").modal("show");
+              return;
+            }
+
+            // Stop the Spotify preview before sending the request
+            stopSpotifyPreview();
+            requestSong(selectedSongData.id);
+          });
+
+        // Add an event listener for when the confirmation modal is hidden
+        document
+          .getElementById("songConfirmModal")
+          .addEventListener("hidden.bs.modal", function () {
+            stopSpotifyPreview();
+          });
+
+        function stopSpotifyPreview() {
+          const spotifyPreview = document.getElementById("spotify-preview");
+          spotifyPreview.src = "about:blank";
+        }
+
         function requestSong(uri) {
-          const requesterName = requesterNameInput.value.trim();
+          const requesterName = document
+            .getElementById("requesterName")
+            .value.trim();
           if (!requesterName) {
             displayMessage(
               "Please enter your name before requesting a song.",
@@ -627,23 +725,32 @@
             .then((response) => response.json())
             .then((data) => {
               if (data.success) {
+                songConfirmModal.hide();
+                $("#songRequestModal").modal("show");
                 displayMessage(data.message);
                 setTimeout(() => $("#songRequestModal").modal("hide"), 2000);
 
                 // Save the name in localStorage if it's not already saved
                 if (!storageGet("requesterName")) {
                   storageSet("requesterName", requesterName);
-                  requesterNameInput.disabled = true;
-                  changeNameBtn.textContent = "Change Name";
+                  document.getElementById("requesterName").disabled = true;
+                  document.getElementById("changeNameBtn").textContent =
+                    "Change Name";
                 }
               } else if (data.error) {
+                songConfirmModal.hide();
+                $("#songRequestModal").modal("show");
                 displayMessage(data.error, true);
               } else {
+                songConfirmModal.hide();
+                $("#songRequestModal").modal("show");
                 displayMessage("Failed to send song request.", true);
               }
             })
             .catch((error) => {
               console.error("Error:", error);
+              songConfirmModal.hide();
+              $("#songRequestModal").modal("show");
               displayMessage(
                 "An error occurred while sending the song request.",
                 true
@@ -767,6 +874,71 @@
               class="btn btn-secondary"
               data-bs-dismiss="modal">
               Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal fade"
+      id="songConfirmModal"
+      tabindex="-1"
+      aria-labelledby="songConfirmModalLabel"
+      aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="songConfirmModalLabel">
+              Confirm Song Request
+            </h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="text-center mb-3">
+              <img
+                id="confirm-song-image"
+                src=""
+                alt="Album Cover"
+                class="img-fluid rounded mb-3"
+                style="max-width: 200px" />
+              <h5 id="confirm-song-title" class="mb-1"></h5>
+              <p id="confirm-song-artist" class="text-muted"></p>
+
+              <!-- Spotify Preview Widget -->
+              <div
+                id="spotify-preview-container"
+                class="spotify-preview-container mt-3">
+                <div id="spotify-preview-wrapper">
+                  <iframe
+                    id="spotify-preview"
+                    src="about:blank"
+                    height="80"
+                    frameborder="0"
+                    allowtransparency="true"
+                    allow="encrypted-media">
+                  </iframe>
+                </div>
+              </div>
+            </div>
+            <p class="text-center">Do you want to request this song?</p>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="confirmRequestBtn">
+              Confirm Request
             </button>
           </div>
         </div>
