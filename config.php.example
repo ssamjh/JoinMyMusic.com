@@ -2,6 +2,8 @@
 // Redis Configuration
 define('REDIS_HOST', '127.0.0.1');
 define('REDIS_PORT', 6379);
+define('TURNSTILE_SITE_KEY', 'your_cloudflare_turnstile_site_key');
+define('TURNSTILE_SECRET_KEY', 'your_cloudflare_turnstile_secret_key');
 
 // Librespot API Configuration
 define('LIBRESPOT_API_URL', 'http://127.0.0.1:24879');

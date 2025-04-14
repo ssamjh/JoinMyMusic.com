@@ -57,6 +57,25 @@ function sanitizeName($name)
     return $name;
 }
 
+function verifyTurnstile($token)
+{
+    $secret = TURNSTILE_SECRET_KEY;
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, "https://challenges.cloudflare.com/turnstile/v0/siteverify");
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+        'secret' => $secret,
+        'response' => $token,
+        'remoteip' => $_SERVER['REMOTE_ADDR']
+    ]));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    $result = json_decode($response, true);
+    return $result['success'] ?? false;
+}
+
 switch ($action) {
     case 'search':
         $searchKey = "search_limit:{$clientIP}";
@@ -93,6 +112,9 @@ switch ($action) {
 
         $uri = $_POST['uri'] ?? '';
         $name = $_POST['name'] ?? '';
+        $submissionId = $_POST['submission_id'] ?? '';
+        $token = $_POST['turnstile'] ?? '';
+
         if (empty($uri)) {
             echo json_encode(['error' => 'No URI provided']);
             exit;
@@ -100,6 +122,23 @@ switch ($action) {
         if (empty($name)) {
             echo json_encode(['error' => 'Please provide your name']);
             exit;
+        }
+
+        // Verify Turnstile token
+        if (empty($token) || !verifyTurnstile($token)) {
+            echo json_encode(['error' => 'Challenge verification failed']);
+            exit;
+        }
+
+        // Check for duplicate submission
+        if (!empty($submissionId)) {
+            $dupeKey = "submission:{$submissionId}";
+            if ($redis->exists($dupeKey)) {
+                echo json_encode(['success' => true, 'message' => 'Your request was already received!']);
+                exit;
+            }
+            // Mark this submission as processed (expire after 10 minutes)
+            $redis->setex($dupeKey, 600, '1');
         }
 
         $sanitizedName = sanitizeName($name);

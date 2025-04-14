@@ -18,6 +18,15 @@ $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
 $uuid = $_POST['uuid'] ?? null;
 $songId = $_POST['songid'] ?? null;
 
+// Get Turnstile token from POST data
+$turnstileToken = $_POST['turnstile'] ?? null;
+
+// Verify Turnstile token first
+if (!$turnstileToken) {
+    http_response_code(400);
+    exit(json_encode(['error' => 'Turnstile verification required']));
+}
+
 // Get client IP
 $clientIP = $_SERVER['REMOTE_ADDR'];
 
@@ -109,6 +118,31 @@ function fetchCurrentSongId($redis)
     }
 }
 
+function verifyTurnstile($token)
+{
+    $secret = TURNSTILE_SECRET_KEY;
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, "https://challenges.cloudflare.com/turnstile/v0/siteverify");
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+        'secret' => $secret,
+        'response' => $token,
+        'remoteip' => $_SERVER['REMOTE_ADDR']
+    ]));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    $result = json_decode($response, true);
+    return $result['success'] ?? false;
+}
+
+// Verify the Turnstile token
+if (!verifyTurnstile($turnstileToken)) {
+    http_response_code(400);
+    exit(json_encode(['error' => 'Turnstile verification failed']));
+}
+
 // Fetch current song ID
 try {
     $currentSongId = fetchCurrentSongId($redis);
@@ -130,6 +164,15 @@ if ($totalListeners === 0) {
     http_response_code(400);
     exit(json_encode(['error' => 'No active listeners']));
 }
+
+// Check for duplicate submission
+$dupeKey = "voteskip_submission:{$uuid}:{$songId}";
+if ($redis->exists($dupeKey)) {
+    http_response_code(400);
+    exit(json_encode(['error' => 'You have already voted to skip this song']));
+}
+// Mark this vote as processed (expire after 5 minutes)
+$redis->setex($dupeKey, 300, '1');
 
 // Implement rate limiting for votes
 $rateLimitKey = "rate_limit:vote:{$clientIP}";

@@ -13,6 +13,10 @@
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
       crossorigin="anonymous" />
     <script src="js/bootstrap-auto-colour.js"></script>
+    <script
+      src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+      async
+      defer></script>
     <script src="js/DOMContentLoaded.js"></script>
     <style>
       .volume-wrapper {
@@ -261,6 +265,24 @@
           voteSkipBtn.disabled = true;
           muteSongBtn.disabled = true;
           muteSongBtn.textContent = "Mute Song";
+        }
+      }
+
+      function enableConfirmButton(token) {
+        document.getElementById("confirmRequestBtn").disabled = false;
+        document.getElementById("confirmRequestBtn").dataset.turnstileToken =
+          token;
+      }
+
+      function enableVoteSkipButton(token) {
+        console.log("Vote skip Turnstile callback executed with token:", token);
+        const button = document.getElementById("confirmVoteSkipBtn");
+        if (button) {
+          button.disabled = false;
+          button.dataset.turnstileToken = token;
+          console.log("Vote skip button enabled:", button.disabled);
+        } else {
+          console.error("Could not find confirmVoteSkipBtn element");
         }
       }
 
@@ -674,6 +696,11 @@
           .addEventListener("click", function () {
             if (!selectedSongData) return;
 
+            // Disable button to prevent multiple submissions
+            this.disabled = true;
+            this.innerHTML =
+              '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Sending...';
+
             const requesterName = document
               .getElementById("requesterName")
               .value.trim();
@@ -681,12 +708,19 @@
               alert("Please enter your name before requesting a song.");
               songConfirmModal.hide();
               $("#songRequestModal").modal("show");
+              // Re-enable button if validation fails
+              this.disabled = false;
+              this.innerHTML = "Confirm Request";
               return;
             }
 
             // Stop the Spotify preview before sending the request
             stopSpotifyPreview();
-            requestSong(selectedSongData.id);
+
+            // Add a submission ID to detect duplicates
+            const submissionId =
+              Date.now() + "-" + Math.random().toString(36).substr(2, 9);
+            requestSong(selectedSongData.id, submissionId);
           });
 
         // Add an event listener for when the confirmation modal is hidden
@@ -701,22 +735,24 @@
           spotifyPreview.src = "about:blank";
         }
 
-        function requestSong(uri) {
+        function requestSong(uri, submissionId) {
+          const turnstileToken =
+            document.getElementById("confirmRequestBtn").dataset.turnstileToken;
+          if (!turnstileToken) {
+            alert("Please complete the challenge");
+            return;
+          }
           const requesterName = document
             .getElementById("requesterName")
             .value.trim();
-          if (!requesterName) {
-            displayMessage(
-              "Please enter your name before requesting a song.",
-              true
-            );
-            return;
-          }
+          const confirmBtn = document.getElementById("confirmRequestBtn");
 
           const formData = new FormData();
           formData.append("action", "addToQueue");
           formData.append("uri", uri);
           formData.append("name", requesterName);
+          formData.append("submission_id", submissionId);
+          formData.append("turnstile", turnstileToken);
 
           fetch("requests.php", {
             method: "POST",
@@ -724,6 +760,10 @@
           })
             .then((response) => response.json())
             .then((data) => {
+              // Re-enable button regardless of response
+              confirmBtn.disabled = false;
+              confirmBtn.innerHTML = "Confirm Request";
+
               if (data.success) {
                 songConfirmModal.hide();
                 $("#songRequestModal").modal("show");
@@ -746,15 +786,23 @@
                 $("#songRequestModal").modal("show");
                 displayMessage("Failed to send song request.", true);
               }
+
+              // Reset the turnstile widget
+              window.turnstile.reset();
             })
             .catch((error) => {
               console.error("Error:", error);
+              confirmBtn.disabled = false;
+              confirmBtn.innerHTML = "Confirm Request";
+
               songConfirmModal.hide();
               $("#songRequestModal").modal("show");
               displayMessage(
                 "An error occurred while sending the song request.",
                 true
               );
+
+              window.turnstile.reset();
             });
         }
 
@@ -767,6 +815,66 @@
           searchResults.innerHTML = "";
           searchResults.appendChild(messageDiv);
         }
+
+        document
+          .getElementById("confirmVoteSkipBtn")
+          .addEventListener("click", function () {
+            const turnstileToken = this.dataset.turnstileToken;
+            if (!turnstileToken) {
+              alert("Please complete the challenge");
+              return;
+            }
+
+            // Disable button to prevent multiple submissions
+            this.disabled = true;
+            this.innerHTML =
+              '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Submitting...';
+
+            const userUUID = getOrCreateUUID();
+
+            fetch("skip.php", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: `uuid=${encodeURIComponent(
+                userUUID
+              )}&songid=${encodeURIComponent(
+                songId
+              )}&turnstile=${encodeURIComponent(turnstileToken)}`,
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.success) {
+                  lastVotedSongId = songId;
+                  updateButtons();
+                  updateStats();
+                  bootstrap.Modal.getInstance(
+                    document.getElementById("voteSkipModal")
+                  ).hide();
+                } else {
+                  alert(data.error || "Failed to submit vote");
+                }
+                this.disabled = false;
+                this.innerHTML = "Vote to Skip";
+                try {
+                  if (window.turnstile) window.turnstile.reset();
+                } catch (e) {
+                  console.error("Error resetting turnstile:", e);
+                }
+              })
+              .catch((error) => {
+                console.error("Error:", error);
+                alert("An error occurred while submitting your vote");
+                this.disabled = false;
+                this.innerHTML = "Vote to Skip";
+                try {
+                  if (window.turnstile) window.turnstile.reset();
+                } catch (e) {
+                  console.error("Error resetting turnstile:", e);
+                }
+              });
+          });
       });
 
       audioStream.addEventListener("ended", function () {
@@ -779,26 +887,11 @@
         .addEventListener("click", function () {
           if (!isPlaying || !songId || songId === lastVotedSongId) return;
 
-          const userUUID = getOrCreateUUID();
-
-          fetch("skip.php", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: `uuid=${encodeURIComponent(
-              userUUID
-            )}&songid=${encodeURIComponent(songId)}`,
-          })
-            .then((response) => response.json())
-            .then((data) => {
-              if (data.success) {
-                lastVotedSongId = songId;
-                updateButtons();
-                updateStats();
-              }
-            })
-            .catch((error) => console.error("Error:", error));
+          // Show vote skip modal instead of immediately submitting
+          const voteSkipModal = new bootstrap.Modal(
+            document.getElementById("voteSkipModal")
+          );
+          voteSkipModal.show();
         });
 
       document
@@ -925,6 +1018,10 @@
                 </div>
               </div>
             </div>
+            <div
+              class="cf-turnstile mb-3"
+              data-sitekey="0x4AAAAAAAeaz0KAvdHl7LvY"
+              data-callback="enableConfirmButton"></div>
             <p class="text-center">Do you want to request this song?</p>
           </div>
           <div class="modal-footer">
@@ -939,6 +1036,50 @@
               class="btn btn-primary"
               id="confirmRequestBtn">
               Confirm Request
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal fade"
+      id="voteSkipModal"
+      tabindex="-1"
+      aria-labelledby="voteSkipModalLabel"
+      aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="voteSkipModalLabel">
+              Confirm Vote to Skip
+            </h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p>Are you sure you want to vote to skip the current song?</p>
+            <div
+              class="cf-turnstile"
+              data-sitekey="0x4AAAAAAAeaz0KAvdHl7LvY"
+              data-callback="enableVoteSkipButton"></div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger"
+              id="confirmVoteSkipBtn"
+              disabled>
+              Vote to Skip
             </button>
           </div>
         </div>
