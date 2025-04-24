@@ -12,6 +12,9 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
       crossorigin="anonymous" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
     <script src="js/bootstrap-auto-colour.js"></script>
     <script
       src="https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -19,196 +22,626 @@
       defer></script>
     <script src="js/DOMContentLoaded.js"></script>
     <style>
+      :root {
+        --primary-color: #1db954;
+        --secondary-color: #191414;
+        --accent-color: #ff4d4d;
+        --text-color: #ffffff;
+        --bg-gradient: linear-gradient(135deg, #121212 0%, #1e1e1e 100%);
+      }
+      
+      body {
+        background: var(--bg-gradient);
+        color: var(--text-color);
+        font-family: 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+      
+      .container {
+        max-width: 800px;
+        position: relative;
+        z-index: 2;
+      }
+      
+      .bg-particles {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        pointer-events: none;
+      }
+      
+      h2, h5 {
+        font-weight: 700;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      }
+      
+      h2 {
+        color: var(--primary-color);
+        margin-bottom: 0.5rem;
+      }
+      
+      h5 {
+        margin-bottom: 2rem !important;
+      }
+      
+      .player-container {
+        background: rgba(25, 20, 20, 0.8);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        padding: 2rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.3s ease;
+      }
+      
+      .player-container:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+      }
+      
+      .btn-primary {
+        background-color: var(--primary-color);
+        border-color: var(--primary-color);
+        color: white;
+        font-weight: 600;
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(29, 185, 84, 0.3);
+      }
+      
+      .btn-primary:hover {
+        background-color: #1ed760;
+        border-color: #1ed760;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(29, 185, 84, 0.4);
+      }
+      
+      .btn-secondary {
+        background-color: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.2);
+        color: white;
+        font-weight: 600;
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        transition: all 0.3s ease;
+      }
+      
+      .btn-secondary:hover {
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: translateY(-2px);
+      }
+      
+      .btn-danger {
+        background-color: var(--accent-color);
+        border-color: var(--accent-color);
+        font-weight: 600;
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(255, 77, 77, 0.3);
+      }
+      
+      .btn-danger:hover {
+        background-color: #ff6666;
+        border-color: #ff6666;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(255, 77, 77, 0.4);
+      }
+      
+      .btn-warning {
+        font-weight: 600;
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        transition: all 0.3s ease;
+      }
+      
+      .btn-warning:hover {
+        transform: translateY(-2px);
+      }
+      
+      .now-playing {
+        margin: 2rem 0;
+        text-align: center;
+      }
+      
+      .now-playing-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .now-playing-artist {
+        font-size: 1.1rem;
+        color: rgba(255, 255, 255, 0.7);
+        margin-bottom: 1.5rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .album-art {
+        width: 250px;
+        height: 250px;
+        border-radius: 12px;
+        object-fit: cover;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        transition: all 0.5s ease;
+        border: 3px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .album-art:hover {
+        transform: scale(1.03);
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
+      }
+      
+      .album-art-container {
+        position: relative;
+        display: inline-block;
+        margin-bottom: 1.5rem;
+      }
+      
+      .album-art-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: radial-gradient(circle at center, transparent 0%, rgba(0, 0, 0, 0.5) 100%);
+        border-radius: 10px;
+        pointer-events: none;
+      }
+      
+      .stats-container {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 15px;
+        padding: 1rem;
+        margin: 1.5rem 0;
+        display: flex;
+        justify-content: space-around;
+        flex-wrap: wrap;
+      }
+      
+      .stats-item {
+        text-align: center;
+        padding: 0.5rem 1rem;
+      }
+      
+      .stats-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--primary-color);
+      }
+      
+      .stats-label {
+        font-size: 0.9rem;
+        color: rgba(255, 255, 255, 0.7);
+      }
+      
       .volume-wrapper {
         display: flex;
         flex-direction: column;
         align-items: center;
+        margin: 1.5rem 0;
+        width: 100%;
       }
+      
       .volume-label {
-        margin-top: 15px;
-        margin-bottom: 5px;
+        margin-bottom: 0.5rem;
         display: flex;
         align-items: center;
         justify-content: center;
+        font-weight: 600;
       }
+      
       #input-volume {
-        max-width: 500px;
+        width: 100%;
+        max-width: 300px;
+        height: 8px;
+        -webkit-appearance: none;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 10px;
+        outline: none;
       }
-      #div-volume {
-        display: none;
-        flex-direction: column;
-        align-items: center;
+      
+      #input-volume::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 20px;
+        height: 20px;
+        background: var(--primary-color);
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
       }
-      .div-playing-title {
-        min-height: 17px;
+      
+      .controls {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin: 1.5rem 0;
       }
-      .div-playing-artist {
-        min-height: 13px;
+      
+      footer {
+        margin-top: 3rem;
+        padding: 2rem 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
       }
+      
+      footer a {
+        color: rgba(255, 255, 255, 0.7);
+        text-decoration: none;
+        transition: color 0.3s ease;
+      }
+      
+      footer a:hover {
+        color: var(--primary-color);
+      }
+      
+      /* Animated equalizer */
+      .equalizer {
+        display: flex;
+        align-items: flex-end;
+        height: 30px;
+        gap: 3px;
+        margin: 0 auto;
+        width: fit-content;
+      }
+      
+      .equalizer-bar {
+        width: 4px;
+        background: var(--primary-color);
+        border-radius: 3px;
+        animation: equalize 1.5s infinite ease-in-out;
+      }
+      
+      .equalizer-bar:nth-child(1) { height: 60%; animation-delay: 0.1s; }
+      .equalizer-bar:nth-child(2) { height: 30%; animation-delay: 0.4s; }
+      .equalizer-bar:nth-child(3) { height: 75%; animation-delay: 0.2s; }
+      .equalizer-bar:nth-child(4) { height: 45%; animation-delay: 0.3s; }
+      .equalizer-bar:nth-child(5) { height: 60%; animation-delay: 0.5s; }
+      
+      @keyframes equalize {
+        0%, 100% { transform: scaleY(1); }
+        50% { transform: scaleY(1.8); }
+      }
+      
       /* Song Request Modal Styles */
       .song-result-item {
         display: flex;
         align-items: center;
-        padding: 10px;
+        padding: 12px 15px;
         text-decoration: none;
         color: inherit;
-        transition: background-color 0.2s;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.3s ease;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
       }
+      
       .song-result-item:hover {
-        background-color: rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.1);
+        transform: translateX(5px);
       }
+      
       .song-result-image {
-        width: 40px;
-        height: 40px;
+        width: 50px;
+        height: 50px;
         margin-right: 15px;
-        border-radius: 4px;
+        border-radius: 6px;
         flex-shrink: 0;
+        object-fit: cover;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
       }
+      
       .song-result-info {
         flex-grow: 1;
         display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
+        flex-direction: column;
         min-width: 0;
       }
+      
       .song-result-title {
-        font-weight: bold;
+        font-weight: 600;
         margin: 0;
         text-align: left;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        flex: 1;
-        margin-right: 10px;
       }
+      
       .song-result-artist {
-        margin: 0;
-        font-size: 0.9em;
-        color: #8c8c8c;
-        text-align: right;
+        margin: 3px 0 0;
+        font-size: 0.85em;
+        color: rgba(255, 255, 255, 0.7);
+        text-align: left;
         white-space: nowrap;
-        flex-shrink: 0;
-      }
-      #spotify-preview {
-        border: none;
-        border-radius: 8px;
-        width: 100%;
-        max-width: 300px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-      }
-
-      .spotify-preview-container {
-        margin: 15px auto;
-        display: flex;
-        justify-content: center;
-      }
-
-      #spotify-preview {
-        border: none;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 300px;
-        background-color: transparent;
-      }
-
-      .spotify-preview-container {
-        margin: 15px auto;
-        display: flex;
-        justify-content: center;
-        background-color: transparent;
-        padding: 0;
-      }
-
-      #spotify-preview-wrapper {
-        border-radius: 12px;
         overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .modal-content {
+        background: rgba(25, 20, 20, 0.95);
+        backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        color: white;
+      }
+      
+      .modal-header {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .modal-footer {
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .form-control {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: white;
+      }
+      
+      .form-control:focus {
+        background: rgba(255, 255, 255, 0.15);
+        border-color: var(--primary-color);
+        color: white;
+        box-shadow: 0 0 0 0.25rem rgba(29, 185, 84, 0.25);
+      }
+      
+      /* Spotify preview styles */
+      .spotify-preview-container {
+        margin: 20px auto;
+        display: flex;
+        justify-content: center;
+      }
+      
+      #spotify-preview {
+        border: none;
+        border-radius: 12px;
         width: 100%;
         max-width: 300px;
-        background-color: transparent;
-        position: relative;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+      }
+      
+      /* Floating music notes animation */
+      .music-note {
+        position: absolute;
+        opacity: 0.6;
+        z-index: 1;
+        animation: floatNote linear infinite;
+      }
+      
+      @keyframes floatNote {
+        0% {
+          transform: translateY(0) rotate(0deg);
+          opacity: 0.6;
+        }
+        100% {
+          transform: translateY(-100vh) rotate(360deg);
+          opacity: 0;
+        }
+      }
+      
+      /* Responsive adjustments */
+      @media (max-width: 768px) {
+        .player-container {
+          padding: 1.5rem;
+        }
+        
+        .album-art {
+          width: 200px;
+          height: 200px;
+        }
+        
+        .controls {
+          gap: 0.5rem;
+        }
+        
+        .btn {
+          padding: 0.5rem 1rem;
+          font-size: 0.9rem;
+        }
+      }
+      
+      @media (max-width: 576px) {
+        .album-art {
+          width: 180px;
+          height: 180px;
+        }
+        
+        .now-playing-title {
+          font-size: 1.3rem;
+        }
+        
+        .now-playing-artist {
+          font-size: 1rem;
+        }
+        
+        .stats-container {
+          flex-direction: column;
+          gap: 0.5rem;
+        }
       }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
-    <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
-      crossorigin="anonymous"></script>
   </head>
-  <body class="bg">
-    <div class="container text-center py-3">
-      <h2>ssamjh's Music Sync</h2>
-      <h5 class="mb-4">JoinMyMusic.com</h5>
-      <audio id="audio-stream" preload="none"></audio>
-      <button
-        class="btn btn-primary btn-sm mb-2"
-        id="button-toggle"
-        onclick="buttonPlay();">
-        Play
-      </button>
-      <button
-        class="btn btn-secondary btn-sm mb-2 ms-2"
-        data-bs-toggle="modal"
-        data-bs-target="#songRequestModal">
-        Request Song
-      </button>
-      <button id="voteSkipBtn" class="btn btn-danger btn-sm mb-2 ms-2" disabled>
-        Vote Skip
-      </button>
-      <button id="muteSongBtn" class="btn btn-warning btn-sm mb-2 ms-2">
-        Mute Song
-      </button>
-      <div id="div-volume" class="mb-2">
-        <div class="d-flex justify-content-center align-items-center mb-1">
-          <strong>Volume:</strong>
+  <body>
+    <!-- Floating music notes background -->
+    <div class="bg-particles" id="musicNotes"></div>
+    
+    <div class="container py-4">
+      <div class="player-container animate__animated animate__fadeIn">
+        <h2 class="animate__animated animate__fadeInDown">ssamjh's Music Sync</h2>
+        <h5 class="mb-4 animate__animated animate__fadeInDown animate__delay-1s">JoinMyMusic.com</h5>
+        
+        <audio id="audio-stream" preload="none"></audio>
+        
+        <div class="controls">
+          <button
+            class="btn btn-primary btn-lg animate__animated animate__fadeIn animate__delay-2s"
+            id="button-toggle"
+            onclick="buttonPlay();">
+            <i class="fas fa-play"></i> Play
+          </button>
+          <button
+            class="btn btn-secondary btn-lg animate__animated animate__fadeIn animate__delay-2s"
+            data-bs-toggle="modal"
+            data-bs-target="#songRequestModal">
+            <i class="fas fa-music"></i> Request
+          </button>
+          <button 
+            id="voteSkipBtn" 
+            class="btn btn-danger btn-lg animate__animated animate__fadeIn animate__delay-2s" 
+            disabled>
+            <i class="fas fa-forward"></i> Skip
+          </button>
+          <button 
+            id="muteSongBtn" 
+            class="btn btn-warning btn-lg animate__animated animate__fadeIn animate__delay-2s">
+            <i class="fas fa-volume-up"></i> Mute
+          </button>
         </div>
-        <input
-          id="input-volume"
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value="0"
-          class="form-range"
-          oninput="volumeSet(this.value);"
-          onchange="volumeSet(this.value);" />
+        
+        <div id="div-volume" class="volume-wrapper animate__animated animate__fadeIn animate__delay-3s">
+          <div class="volume-label">
+            <i class="fas fa-volume-up me-2"></i>
+            <span>Volume</span>
+          </div>
+          <input
+            id="input-volume"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="0"
+            class="form-range"
+            oninput="volumeSet(this.value);"
+            onchange="volumeSet(this.value);" />
+        </div>
+        
+        <div class="now-playing animate__animated animate__fadeIn animate__delay-3s">
+          <div class="equalizer mb-3" id="equalizer" style="display: none;">
+            <div class="equalizer-bar"></div>
+            <div class="equalizer-bar"></div>
+            <div class="equalizer-bar"></div>
+            <div class="equalizer-bar"></div>
+            <div class="equalizer-bar"></div>
+          </div>
+          
+          <strong class="d-block mb-2">Now Playing:</strong>
+          <h4 class="now-playing-title mb-1">
+            <div class="div-playing-title"></div>
+          </h4>
+          <h4 class="now-playing-artist mb-3">
+            <div class="div-playing-artist"></div>
+          </h4>
+          
+          <div class="album-art-container">
+            <a id="playing-link" target="_blank">
+              <img
+                id="playing-image"
+                class="album-art"
+                src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+                alt="Album Art" />
+            </a>
+          </div>
+        </div>
+        
+        <div id="stats-container" class="stats-container animate__animated animate__fadeIn animate__delay-4s">
+          <div class="stats-item">
+            <div class="stats-value" id="listener-count">0</div>
+            <div class="stats-label">Listeners</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-value">
+              <span id="vote-count">0</span>/<span id="votes-needed">0</span>
+            </div>
+            <div class="stats-label">Skip Votes</div>
+          </div>
+        </div>
       </div>
-      <strong class="d-block mb-1">Now Playing:</strong>
-      <h4 class="mb-1" style="font-size: 17px">
-        <div class="div-playing-title"></div>
-      </h4>
-      <h4 class="mb-2" style="font-size: 13px">
-        <div class="div-playing-artist"></div>
-      </h4>
-      <div class="mb-3">
-        <a id="playing-link" target="_blank">
-          <img
-            id="playing-image"
-            class="rounded"
-            src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
-            alt=""
-            width="250"
-            height="250" />
-        </a>
-      </div>
-      <div id="stats-container" class="mb-3">
-        <p>Listeners: <span id="listener-count">0</span></p>
-        <p>
-          Skip Votes: <span id="vote-count">0</span> /
-          <span id="votes-needed">0</span>
-        </p>
-      </div>
-      <footer class="py-5">
-        <div class="container d-flex justify-content-between">
+      
+      <footer class="text-center animate__animated animate__fadeIn animate__delay-4s">
+        <div class="container d-flex justify-content-center gap-4">
           <a href="https://ssamjh.nz/" class="text">Primary Website</a>
           <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
-            <i class="fab fa-github fa-lg"></i>
+            <i class="fab fa-github fa-lg"></i> GitHub
           </a>
           <div>&copy; 2025 <span>ssamjh</span></div>
         </div>
       </footer>
     </div>
+
+    <!-- Scripts (same as before) -->
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+      crossorigin="anonymous"></script>
+      
     <script>
+      // Create floating music notes
+      function createMusicNotes() {
+        const notesContainer = document.getElementById('musicNotes');
+        const notes = ['♪', '♫', '♩', '♬', '♭', '♮'];
+        const colors = ['#1db954', '#ffffff', '#ff4d4d', '#1ed760', '#b3b3b3'];
+        
+        for (let i = 0; i < 15; i++) {
+          const note = document.createElement('div');
+          note.className = 'music-note';
+          note.textContent = notes[Math.floor(Math.random() * notes.length)];
+          note.style.color = colors[Math.floor(Math.random() * colors.length)];
+          note.style.fontSize = `${Math.random() * 20 + 10}px`;
+          note.style.left = `${Math.random() * 100}vw`;
+          note.style.top = `${Math.random() * 100 + 100}vh`;
+          note.style.animationDuration = `${Math.random() * 10 + 10}s`;
+          note.style.animationDelay = `${Math.random() * 5}s`;
+          notesContainer.appendChild(note);
+        }
+      }
+      
+      // Toggle equalizer animation
+      function toggleEqualizer(show) {
+        const equalizer = document.getElementById('equalizer');
+        equalizer.style.display = show ? 'flex' : 'none';
+      }
+      
+      // Initialize music notes when DOM is loaded
+      document.addEventListener('DOMContentLoaded', function() {
+        createMusicNotes();
+        
+        // Add animation to album art on load
+        const albumArt = document.getElementById('playing-image');
+        albumArt.classList.add('animate__animated', 'animate__fadeIn');
+        
+        // Rest of your existing JavaScript code...
+        // (Keep all your existing JavaScript functionality)
+        
+        // Add equalizer toggle to play/stop functions
+        const originalTogglePlay = togglePlay;
+        togglePlay = function() {
+          originalTogglePlay();
+          toggleEqualizer(true);
+        };
+        
+        const originalButtonStop = buttonStop;
+        buttonStop = function() {
+          originalButtonStop();
+          toggleEqualizer(false);
+        };
+      });
+      
+      // Your existing JavaScript code goes here
+      // (Keep all the original functionality from your script)
       const audioStream = document.getElementById("audio-stream");
       const buttonToggle = document.getElementById("button-toggle");
       const playingImage = document.getElementById("playing-image");
@@ -258,13 +691,13 @@
         if (isPlaying) {
           voteSkipBtn.disabled = songId === lastVotedSongId;
           muteSongBtn.disabled = false;
-          muteSongBtn.textContent = audioStream.muted
-            ? "Unmute Song"
-            : "Mute Song";
+          muteSongBtn.innerHTML = audioStream.muted
+            ? '<i class="fas fa-volume-mute"></i> Unmute'
+            : '<i class="fas fa-volume-up"></i> Mute';
         } else {
           voteSkipBtn.disabled = true;
           muteSongBtn.disabled = true;
-          muteSongBtn.textContent = "Mute Song";
+          muteSongBtn.innerHTML = '<i class="fas fa-volume-up"></i> Mute';
         }
       }
 
@@ -354,7 +787,7 @@
       function togglePlay() {
         qualityUpdate();
         audioStream.play();
-        buttonToggle.textContent = "Stop";
+        buttonToggle.innerHTML = '<i class="fas fa-stop"></i> Stop';
         buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
         isPlaying = true;
         startPolling();
@@ -364,7 +797,7 @@
       function buttonStop() {
         audioStream.pause();
         audioStream.currentTime = 0;
-        buttonToggle.textContent = "Play";
+        buttonToggle.innerHTML = '<i class="fas fa-play"></i> Play';
         buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
         isPlaying = false;
         stopPolling();
@@ -443,6 +876,10 @@
           if (playingImage.src !== currentData.cover) {
             preloadImage(currentData.cover, function () {
               playingImage.src = currentData.cover;
+              playingImage.classList.add('animate__animated', 'animate__fadeIn');
+              setTimeout(() => {
+                playingImage.classList.remove('animate__animated', 'animate__fadeIn');
+              }, 1000);
 
               // Update text after image has loaded
               $(".div-playing-title").html(
@@ -515,11 +952,13 @@
       }
 
       if (!audioStream.paused) {
-        buttonToggle.textContent = "Stop";
+        buttonToggle.innerHTML = '<i class="fas fa-stop"></i> Stop';
         buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+        toggleEqualizer(true);
       } else {
-        buttonToggle.textContent = "Play";
+        buttonToggle.innerHTML = '<i class="fas fa-play"></i> Play';
         buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+        toggleEqualizer(false);
       }
 
       if ("mediaSession" in navigator) {
@@ -880,6 +1319,7 @@
       audioStream.addEventListener("ended", function () {
         isPlaying = false;
         stopPolling();
+        toggleEqualizer(false);
       });
 
       document
@@ -909,6 +1349,7 @@
           updateButtons();
         });
     </script>
+    
     <!-- Song Request Modal -->
     <div
       class="modal fade"
@@ -954,7 +1395,7 @@
                 class="btn btn-primary"
                 type="button"
                 id="songSearchButton">
-                Search
+                <i class="fas fa-search"></i> Search
               </button>
             </div>
             <div id="searchResults" class="list-group">
