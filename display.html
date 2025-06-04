@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Now Playing</title>
+    <style>
+      body {
+        background: black;
+        color: white;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        margin: 0;
+        height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+        position: relative;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* Animated background layers */
+      .background-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: -2;
+      }
+
+      .background-set {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        transition: opacity 3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      .background-set.active {
+        opacity: 1;
+      }
+
+      .background-set.inactive {
+        opacity: 0;
+      }
+
+      .background-layer {
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        opacity: 0.3;
+      }
+
+      .bg-layer-1 {
+        animation: float1 20s ease-in-out infinite;
+      }
+
+      .bg-layer-2 {
+        animation: float2 25s ease-in-out infinite;
+        opacity: 0.2;
+      }
+
+      .bg-layer-3 {
+        animation: float3 30s ease-in-out infinite;
+        opacity: 0.15;
+      }
+
+      /* Smokey floating animations */
+      @keyframes float1 {
+        0%,
+        100% {
+          transform: translate(0, 0) rotate(0deg) scale(1);
+        }
+        33% {
+          transform: translate(100px, -100px) rotate(120deg) scale(1.2);
+        }
+        66% {
+          transform: translate(-100px, 100px) rotate(240deg) scale(0.8);
+        }
+      }
+
+      @keyframes float2 {
+        0%,
+        100% {
+          transform: translate(0, 0) rotate(0deg) scale(1.2);
+        }
+        33% {
+          transform: translate(-150px, -50px) rotate(-120deg) scale(1);
+        }
+        66% {
+          transform: translate(150px, 50px) rotate(120deg) scale(1.3);
+        }
+      }
+
+      @keyframes float3 {
+        0%,
+        100% {
+          transform: translate(0, 0) rotate(0deg) scale(0.9);
+        }
+        33% {
+          transform: translate(50px, 150px) rotate(180deg) scale(1.1);
+        }
+        66% {
+          transform: translate(-50px, -150px) rotate(-180deg) scale(1);
+        }
+      }
+
+      /* Vignette overlay */
+      .vignette {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(
+          ellipse at center,
+          transparent 0%,
+          rgba(0, 0, 0, 0.6) 100%
+        );
+        z-index: -1;
+        pointer-events: none;
+      }
+
+      .header {
+        text-align: center;
+        padding: 1.5vh;
+        position: relative;
+        z-index: 10;
+      }
+      .header h1 {
+        font-size: 4vh;
+        margin: 0 0 0.5vh 0;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+      }
+      .header p {
+        font-size: 2.5vh;
+        margin: 0;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+      }
+      .header a {
+        color: #4a9eff;
+        text-decoration: none;
+      }
+      .header a:hover {
+        text-decoration: underline;
+      }
+      .metadata {
+        display: flex;
+        gap: 4vw;
+        align-items: center;
+        justify-content: center;
+        padding: 2vh 4vw;
+        position: relative;
+        overflow: hidden;
+        z-index: 10;
+      }
+
+      /* Album art container for animation */
+      .album-container {
+        position: relative;
+        height: 65vh;
+        width: 65vh;
+        overflow: hidden;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 80px rgba(0, 0, 0, 0.3);
+      }
+
+      .album-art {
+        position: absolute;
+        height: 100%;
+        width: 100%;
+        object-fit: cover;
+        transition: none;
+      }
+
+      .album-art.current {
+        transform: translateX(0);
+      }
+
+      .album-art.next {
+        transform: translateX(100%);
+      }
+
+      /* Sliding animation with easing */
+      @keyframes slideOut {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(-100%);
+        }
+      }
+
+      @keyframes slideIn {
+        0% {
+          transform: translateX(100%);
+        }
+        100% {
+          transform: translateX(0);
+        }
+      }
+
+      .album-art.sliding-out {
+        animation: slideOut 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+
+      .album-art.sliding-in {
+        animation: slideIn 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+
+      .text-content {
+        flex: 1;
+        max-width: 50vw;
+        position: relative;
+      }
+
+      /* Text animation */
+      .text-wrapper {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .text-content-inner {
+        transition: opacity 0.4s ease-out,
+          transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      .text-content-inner.fade-out {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+
+      .text-content-inner.fade-in {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+
+      #song-title {
+        font-size: 5vh;
+        font-weight: bold;
+        margin-bottom: 2vh;
+        line-height: 1.2;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        transform: translateZ(0);
+        will-change: transform;
+      }
+      #artist-name {
+        font-size: 4vh;
+        color: #ccc;
+        line-height: 1.2;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        will-change: transform;
+      }
+
+      /* Hidden canvas for color extraction */
+      #color-canvas {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Animated background layers -->
+    <div class="background-container">
+      <div class="background-set active" id="bg-set-1">
+        <div
+          class="background-layer bg-layer-1"
+          style="
+            background: radial-gradient(
+              ellipse at center,
+              #1a1a1a 0%,
+              transparent 40%
+            );
+          "></div>
+        <div
+          class="background-layer bg-layer-2"
+          style="
+            background: radial-gradient(
+              ellipse at center,
+              #2a2a2a 0%,
+              transparent 50%
+            );
+          "></div>
+        <div
+          class="background-layer bg-layer-3"
+          style="
+            background: radial-gradient(
+              ellipse at center,
+              #3a3a3a 0%,
+              transparent 45%
+            );
+          "></div>
+      </div>
+      <div class="background-set inactive" id="bg-set-2">
+        <div
+          class="background-layer bg-layer-1"
+          style="
+            background: radial-gradient(
+              ellipse at center,
+              #1a1a1a 0%,
+              transparent 40%
+            );
+          "></div>
+        <div
+          class="background-layer bg-layer-2"
+          style="
+            background: radial-gradient(
+              ellipse at center,
+              #2a2a2a 0%,
+              transparent 50%
+            );
+          "></div>
+        <div
+          class="background-layer bg-layer-3"
+          style="
+            background: radial-gradient(
+              ellipse at center,
+              #3a3a3a 0%,
+              transparent 45%
+            );
+          "></div>
+      </div>
+    </div>
+    <div class="vignette"></div>
+
+    <div class="header">
+      <h1>JoinMyMusic.com</h1>
+      <p>Request now at <a href="#">joinmymusic.com</a></p>
+    </div>
+    <div class="metadata">
+      <div class="album-container">
+        <img
+          class="album-art current"
+          id="album-art-1"
+          src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+          alt="Album Art" />
+        <img
+          class="album-art next"
+          id="album-art-2"
+          src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+          alt="Album Art" />
+      </div>
+      <div class="text-content">
+        <div class="text-wrapper">
+          <div class="text-content-inner">
+            <div id="song-title"></div>
+            <div id="artist-name"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="color-canvas"></canvas>
+
+    <script>
+      let currentSongId = null;
+      let currentAlbumSlot = 1;
+      let currentBgSet = 1;
+      let isAnimating = false;
+
+      // Color extraction function
+      function extractColors(imgElement) {
+        return new Promise((resolve) => {
+          const canvas = document.getElementById("color-canvas");
+          const ctx = canvas.getContext("2d");
+          const img = new Image();
+          img.crossOrigin = "Anonymous";
+
+          img.onload = function () {
+            canvas.width = 50; // Small size for performance
+            canvas.height = 50;
+            ctx.drawImage(img, 0, 0, 50, 50);
+
+            const imageData = ctx.getImageData(0, 0, 50, 50);
+            const data = imageData.data;
+
+            let r = 0,
+              g = 0,
+              b = 0;
+            let count = 0;
+
+            // Sample every 4th pixel for performance
+            for (let i = 0; i < data.length; i += 16) {
+              r += data[i];
+              g += data[i + 1];
+              b += data[i + 2];
+              count++;
+            }
+
+            // Calculate average
+            r = Math.floor(r / count);
+            g = Math.floor(g / count);
+            b = Math.floor(b / count);
+
+            // Create color variations
+            const primary = `rgb(${r}, ${g}, ${b})`;
+            const secondary = `rgb(${Math.min(255, r + 30)}, ${Math.min(
+              255,
+              g + 30
+            )}, ${Math.min(255, b + 30)})`;
+            const tertiary = `rgb(${Math.max(0, r - 30)}, ${Math.max(
+              0,
+              g - 30
+            )}, ${Math.max(0, b - 30)})`;
+
+            resolve({ primary, secondary, tertiary });
+          };
+
+          img.onerror = function () {
+            // Fallback colors
+            resolve({
+              primary: "#1a1a1a",
+              secondary: "#2a2a2a",
+              tertiary: "#3a3a3a",
+            });
+          };
+
+          img.src = imgElement.src;
+        });
+      }
+
+      // Update background colors with crossfade
+      function updateBackgroundColors(colors) {
+        const nextBgSet = currentBgSet === 1 ? 2 : 1;
+        const currentSet = document.getElementById(`bg-set-${currentBgSet}`);
+        const nextSet = document.getElementById(`bg-set-${nextBgSet}`);
+
+        // Update colors on the inactive set
+        const layers = nextSet.querySelectorAll(".background-layer");
+        layers[0].style.background = `radial-gradient(ellipse at center, ${colors.primary} 0%, transparent 40%)`;
+        layers[1].style.background = `radial-gradient(ellipse at center, ${colors.secondary} 0%, transparent 50%)`;
+        layers[2].style.background = `radial-gradient(ellipse at center, ${colors.tertiary} 0%, transparent 45%)`;
+
+        // Crossfade
+        currentSet.classList.remove("active");
+        currentSet.classList.add("inactive");
+        nextSet.classList.remove("inactive");
+        nextSet.classList.add("active");
+
+        currentBgSet = nextBgSet;
+      }
+
+      function preloadImage(url) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(url);
+          img.onerror = () => reject();
+          img.src = url;
+        });
+      }
+
+      function animateSongChange(newData) {
+        if (isAnimating) return;
+        isAnimating = true;
+
+        const currentAlbum = document.getElementById(
+          `album-art-${currentAlbumSlot}`
+        );
+        const nextAlbumSlot = currentAlbumSlot === 1 ? 2 : 1;
+        const nextAlbum = document.getElementById(`album-art-${nextAlbumSlot}`);
+        const textContent = document.querySelector(".text-content-inner");
+
+        // Preload new image
+        preloadImage(newData.cover)
+          .then(() => {
+            // Set up next image
+            nextAlbum.src = newData.cover;
+
+            // Extract colors from new album art
+            extractColors(nextAlbum).then((colors) => {
+              updateBackgroundColors(colors);
+            });
+
+            // Start text fade out
+            textContent.classList.add("fade-out");
+
+            // Start image slide animation
+            setTimeout(() => {
+              currentAlbum.classList.add("sliding-out");
+              currentAlbum.classList.remove("current");
+              nextAlbum.classList.add("sliding-in");
+              nextAlbum.classList.remove("next");
+
+              // Update text during animation
+              setTimeout(() => {
+                document.getElementById("song-title").textContent =
+                  newData.song;
+                document.getElementById("artist-name").textContent =
+                  newData.artist.map((a) => a.name).join(", ");
+                textContent.classList.remove("fade-out");
+                textContent.style.opacity = "1";
+                textContent.style.transform = "translateY(0)";
+              }, 300);
+            }, 200);
+
+            // Clean up after animation
+            setTimeout(() => {
+              currentAlbum.classList.remove("sliding-out");
+              currentAlbum.classList.add("next");
+              nextAlbum.classList.remove("sliding-in");
+              nextAlbum.classList.add("current");
+              currentAlbumSlot = nextAlbumSlot;
+              isAnimating = false;
+            }, 1000);
+          })
+          .catch(() => {
+            // Fallback if image fails to load
+            isAnimating = false;
+          });
+      }
+
+      function updateMetadata() {
+        fetch("./metadata.php?rand=" + Math.random())
+          .then((response) => response.json())
+          .then((data) => {
+            const currentData = data.current;
+
+            if (!currentData || !currentData.song) {
+              document.getElementById("song-title").textContent = "";
+              document.getElementById("artist-name").textContent = "";
+              document.getElementById("album-art-1").src =
+                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+              document.getElementById("album-art-2").src =
+                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+              currentSongId = null;
+              return;
+            }
+
+            // Create a unique identifier for the current song
+            const newSongId = `${currentData.song}-${currentData.artist
+              .map((a) => a.name)
+              .join(",")}`;
+
+            // Check if song has changed
+            if (currentSongId === null) {
+              // First load - no animation
+              const img = document.getElementById("album-art-1");
+              img.src = currentData.cover;
+              document.getElementById("song-title").textContent =
+                currentData.song;
+              document.getElementById("artist-name").textContent =
+                currentData.artist.map((a) => a.name).join(", ");
+              currentSongId = newSongId;
+
+              // Extract initial colors
+              setTimeout(() => {
+                extractColors(img).then((colors) => {
+                  // Set initial colors on the active background set
+                  const activeSet = document.getElementById("bg-set-1");
+                  const layers =
+                    activeSet.querySelectorAll(".background-layer");
+                  layers[0].style.background = `radial-gradient(ellipse at center, ${colors.primary} 0%, transparent 40%)`;
+                  layers[1].style.background = `radial-gradient(ellipse at center, ${colors.secondary} 0%, transparent 50%)`;
+                  layers[2].style.background = `radial-gradient(ellipse at center, ${colors.tertiary} 0%, transparent 45%)`;
+                });
+              }, 100);
+            } else if (currentSongId !== newSongId) {
+              // Song changed - animate transition
+              animateSongChange(currentData);
+              currentSongId = newSongId;
+            }
+          });
+      }
+
+      updateMetadata();
+      setInterval(updateMetadata, 5000);
+    </script>
+  </body>
+</html>
