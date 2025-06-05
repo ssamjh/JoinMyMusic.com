@@ -160,7 +160,7 @@
         z-index: 10;
       }
 
-      /* Optimized album art container */
+      /* Album art container for animation */
       .album-container {
         position: relative;
         height: 65vh;
@@ -168,10 +168,6 @@
         overflow: hidden;
         border-radius: 12px;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 80px rgba(0, 0, 0, 0.3);
-        /* Force GPU acceleration */
-        transform: translateZ(0);
-        backface-visibility: hidden;
-        perspective: 1000px;
       }
 
       .album-art {
@@ -179,29 +175,42 @@
         height: 100%;
         width: 100%;
         object-fit: cover;
-        /* Optimize for animations */
-        will-change: transform;
-        transform: translate3d(0, 0, 0);
-        backface-visibility: hidden;
-        /* Use CSS transitions instead of keyframes */
-        transition: transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        transition: none;
       }
 
       .album-art.current {
-        transform: translate3d(0, 0, 0);
+        transform: translateX(0);
       }
 
       .album-art.next {
-        transform: translate3d(100%, 0, 0);
+        transform: translateX(100%);
       }
 
-      /* Simplified animation classes */
+      /* Sliding animation with easing */
+      @keyframes slideOut {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(-100%);
+        }
+      }
+
+      @keyframes slideIn {
+        0% {
+          transform: translateX(100%);
+        }
+        100% {
+          transform: translateX(0);
+        }
+      }
+
       .album-art.sliding-out {
-        transform: translate3d(-100%, 0, 0) !important;
+        animation: slideOut 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
       }
 
       .album-art.sliding-in {
-        transform: translate3d(0, 0, 0) !important;
+        animation: slideIn 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
       }
 
       .text-content {
@@ -469,13 +478,12 @@
             // Start text fade out
             textContent.classList.add("fade-out");
 
-            // Force a reflow to ensure the transition starts from the correct position
-            nextAlbum.offsetHeight;
-
-            // Start image slide animation with slight delay
-            requestAnimationFrame(() => {
+            // Start image slide animation
+            setTimeout(() => {
               currentAlbum.classList.add("sliding-out");
+              currentAlbum.classList.remove("current");
               nextAlbum.classList.add("sliding-in");
+              nextAlbum.classList.remove("next");
 
               // Update text during animation
               setTimeout(() => {
@@ -484,18 +492,20 @@
                 document.getElementById("artist-name").textContent =
                   newData.artist.map((a) => a.name).join(", ");
                 textContent.classList.remove("fade-out");
-              }, 250);
-            });
+                textContent.style.opacity = "1";
+                textContent.style.transform = "translateY(0)";
+              }, 300);
+            }, 200);
 
             // Clean up after animation
             setTimeout(() => {
-              currentAlbum.classList.remove("sliding-out", "current");
+              currentAlbum.classList.remove("sliding-out");
               currentAlbum.classList.add("next");
-              nextAlbum.classList.remove("sliding-in", "next");
+              nextAlbum.classList.remove("sliding-in");
               nextAlbum.classList.add("current");
               currentAlbumSlot = nextAlbumSlot;
               isAnimating = false;
-            }, 550);
+            }, 1000);
           })
           .catch(() => {
             // Fallback if image fails to load
