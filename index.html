@@ -320,6 +320,16 @@
         box-shadow: 0 0 40px rgba(0, 0, 0, 0.4);
       }
 
+      /* Disable background animations */
+      .no-bg-animation .background-container,
+      .no-bg-animation .vignette {
+        display: none;
+      }
+
+      #bgToggleBtn {
+        font-size: 0.75rem;
+      }
+
       /* Hide the color extraction canvas */
       #color-canvas {
         display: none;
@@ -510,6 +520,9 @@
           <a href="https://github.com/ssamjh/JoinMyMusic.com" class="text">
             <i class="fab fa-github fa-lg"></i>
           </a>
+          <button class="btn btn-sm btn-outline-secondary" id="bgToggleBtn" onclick="toggleBgAnimation()" title="Toggle background effects">
+            <i class="fas fa-wand-magic-sparkles"></i> Effects
+          </button>
           <div>&copy; 2025 <span>ssamjh</span></div>
         </div>
       </footer>
@@ -529,6 +542,8 @@
       let selectedSongData = null;
       let songConfirmModal;
       let currentBgSet = 1;
+      let hlsFailed = false;
+      let hlsInstance = null;
 
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
@@ -624,14 +639,16 @@
         }
       }
 
-      function initHls(source) {
-        if (Hls.isSupported()) {
-          let hls = new Hls();
-          hls.loadSource(source);
-          hls.attachMedia(audioStream);
-        } else if (audioStream.canPlayType("application/vnd.apple.mpegurl")) {
-          audioStream.src = source;
-        }
+      function fallbackToIcecast() {
+        console.log("Using Icecast fallback stream");
+        audioStream.src = "https://icecast.sjh.at/spotifynet";
+        audioStream.play();
+      }
+
+      function icecastFallbackHandler() {
+        console.warn("Native HLS error, falling back to Icecast");
+        hlsFailed = true;
+        fallbackToIcecast();
       }
 
       function scaleVolume(inputValue) {
@@ -641,16 +658,33 @@
       }
 
       function qualityUpdate() {
-        let source;
         let wasPlaying = !audioStream.paused;
 
-        if (Hls.isSupported()) {
-          source = "https://hls.sjh.at/spotifynet/stream.m3u8";
-          initHls(source);
+        // Clean up previous HLS instance
+        if (hlsInstance) {
+          hlsInstance.destroy();
+          hlsInstance = null;
+        }
+
+        if (!hlsFailed && Hls.isSupported()) {
+          hlsInstance = new Hls();
+          hlsInstance.loadSource("https://hls.sjh.at/spotifynet/stream.m3u8");
+          hlsInstance.attachMedia(audioStream);
+
+          hlsInstance.on(Hls.Events.ERROR, function (event, data) {
+            if (data.fatal) {
+              console.warn("HLS fatal error, falling back to Icecast", data);
+              hlsFailed = true;
+              hlsInstance.destroy();
+              hlsInstance = null;
+              fallbackToIcecast();
+            }
+          });
+        } else if (!hlsFailed && audioStream.canPlayType("application/vnd.apple.mpegurl")) {
+          audioStream.src = "https://hls.sjh.at/spotifynet/stream.m3u8";
+          audioStream.addEventListener("error", icecastFallbackHandler, { once: true });
         } else {
-          source = "https://icecast.sjh.at/spotifynet";
-          audioStream.setAttribute("src", source);
-          console.log("Set source to: " + source);
+          fallbackToIcecast();
         }
 
         if (wasPlaying) {
@@ -952,6 +986,86 @@
           }
         });
       }
+
+      // Cookie helpers
+      function getCookie(name) {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        return match ? match[2] : null;
+      }
+
+      function setCookie(name, value, days) {
+        const d = new Date();
+        d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
+        document.cookie = name + "=" + value + ";expires=" + d.toUTCString() + ";path=/";
+      }
+
+      // Background animation toggle
+      // Default: OFF. Only auto-enable on capable desktop devices.
+      function shouldEnableAnimations() {
+        // Always disable if user prefers reduced motion
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+
+        // Detect mobile/tablet — always disable
+        var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (isMobile) return false;
+        if ('ontouchstart' in window || navigator.maxTouchPoints > 1) return false;
+
+        // Low core count — disable
+        if (!navigator.hardwareConcurrency || navigator.hardwareConcurrency <= 4) return false;
+
+        // Small screens are likely low-power or mobile-like
+        if (window.screen.width < 1024 || window.screen.height < 768) return false;
+
+        // Check for a real GPU via WebGL renderer string
+        try {
+          var canvas = document.createElement('canvas');
+          var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+          if (gl) {
+            var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+            if (debugInfo) {
+              var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL).toLowerCase();
+              // Software renderers or known weak GPUs
+              if (renderer.includes('swiftshader') || renderer.includes('llvmpipe') ||
+                  renderer.includes('software') || renderer.includes('microsoft basic')) {
+                return false;
+              }
+            }
+          } else {
+            // No WebGL at all — likely very weak
+            return false;
+          }
+        } catch (e) {
+          return false;
+        }
+
+        // Passed all checks — capable desktop
+        return true;
+      }
+
+      function updateToggleButton() {
+        const btn = document.getElementById('bgToggleBtn');
+        if (!btn) return;
+        const isOff = document.body.classList.contains('no-bg-animation');
+        btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Effects: ' + (isOff ? 'Off' : 'On');
+      }
+
+      function toggleBgAnimation() {
+        const isOff = document.body.classList.toggle('no-bg-animation');
+        setCookie('bgAnimation', isOff ? 'off' : 'on', 365);
+        updateToggleButton();
+      }
+
+      // Initialize background animation preference
+      // Cookie always wins. No cookie → default OFF unless device passes all checks.
+      (function initBgAnimationToggle() {
+        const pref = getCookie('bgAnimation');
+        if (pref === 'on') {
+          // User explicitly wants effects — respect it
+        } else if (pref === 'off' || !shouldEnableAnimations()) {
+          document.body.classList.add('no-bg-animation');
+        }
+        updateToggleButton();
+      })();
 
       if (!audioStream.paused) {
         buttonToggle.textContent = "Stop";
