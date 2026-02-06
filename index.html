@@ -171,12 +171,12 @@
         height: 100%;
         opacity: 0.7;
         filter: blur(60px);
-        border-radius: 50%;
       }
 
       .bg-layer-1 {
         animation: float1 20s ease-in-out infinite,
-          pulse1 8s ease-in-out infinite;
+          pulse1 8s ease-in-out infinite,
+          morph1 15s ease-in-out infinite;
         opacity: 0.8;
         width: 80%;
         height: 80%;
@@ -184,7 +184,8 @@
 
       .bg-layer-2 {
         animation: float2 25s ease-in-out infinite,
-          pulse2 12s ease-in-out infinite;
+          pulse2 12s ease-in-out infinite,
+          morph2 18s ease-in-out infinite;
         opacity: 0.6;
         width: 90%;
         height: 90%;
@@ -192,7 +193,8 @@
 
       .bg-layer-3 {
         animation: float3 30s ease-in-out infinite,
-          pulse3 10s ease-in-out infinite;
+          pulse3 10s ease-in-out infinite,
+          morph3 22s ease-in-out infinite;
         opacity: 0.4;
         width: 100%;
         height: 100%;
@@ -200,7 +202,8 @@
 
       .bg-layer-4 {
         animation: float4 35s ease-in-out infinite,
-          pulse4 15s ease-in-out infinite;
+          pulse4 15s ease-in-out infinite,
+          morph4 25s ease-in-out infinite;
         opacity: 0.3;
         filter: blur(80px);
         width: 110%;
@@ -209,7 +212,8 @@
 
       .bg-layer-5 {
         animation: float5 40s ease-in-out infinite,
-          pulse5 18s ease-in-out infinite;
+          pulse5 18s ease-in-out infinite,
+          morph5 30s ease-in-out infinite;
         opacity: 0.2;
         filter: blur(100px);
         width: 120%;
@@ -320,9 +324,55 @@
         box-shadow: 0 0 40px rgba(0, 0, 0, 0.4);
       }
 
+      /* Morphing blob keyframes */
+      @keyframes morph1 {
+        0%, 100% { border-radius: 40% 60% 60% 40% / 60% 30% 70% 40%; }
+        25%      { border-radius: 60% 40% 30% 70% / 40% 60% 70% 30%; }
+        50%      { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; }
+        75%      { border-radius: 70% 30% 50% 60% / 30% 50% 70% 40%; }
+      }
+      @keyframes morph2 {
+        0%, 100% { border-radius: 50% 50% 40% 60% / 40% 60% 50% 50%; }
+        25%      { border-radius: 35% 65% 55% 45% / 55% 45% 35% 65%; }
+        50%      { border-radius: 65% 35% 45% 55% / 60% 40% 55% 45%; }
+        75%      { border-radius: 45% 55% 65% 35% / 35% 65% 45% 55%; }
+      }
+      @keyframes morph3 {
+        0%, 100% { border-radius: 55% 45% 50% 50% / 45% 55% 40% 60%; }
+        25%      { border-radius: 40% 60% 65% 35% / 60% 40% 55% 45%; }
+        50%      { border-radius: 60% 40% 35% 65% / 35% 65% 60% 40%; }
+        75%      { border-radius: 35% 65% 50% 50% / 55% 45% 35% 65%; }
+      }
+      @keyframes morph4 {
+        0%, 100% { border-radius: 45% 55% 55% 45% / 50% 50% 45% 55%; }
+        25%      { border-radius: 65% 35% 40% 60% / 35% 65% 55% 45%; }
+        50%      { border-radius: 35% 65% 60% 40% / 65% 35% 40% 60%; }
+        75%      { border-radius: 55% 45% 35% 65% / 40% 60% 65% 35%; }
+      }
+      @keyframes morph5 {
+        0%, 100% { border-radius: 50% 50% 45% 55% / 55% 45% 50% 50%; }
+        25%      { border-radius: 70% 30% 55% 45% / 30% 70% 45% 55%; }
+        50%      { border-radius: 30% 70% 50% 50% / 70% 30% 55% 45%; }
+        75%      { border-radius: 50% 50% 70% 30% / 45% 55% 30% 70%; }
+      }
+
+      /* Film grain overlay */
+      .grain-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.04;
+        background-repeat: repeat;
+      }
+
       /* Disable background animations */
       .no-bg-animation .background-container,
-      .no-bg-animation .vignette {
+      .no-bg-animation .vignette,
+      .no-bg-animation .grain-overlay {
         display: none;
       }
 
@@ -448,6 +498,7 @@
       </div>
     </div>
     <div class="vignette"></div>
+    <div class="grain-overlay"></div>
 
     <!-- Also add the canvas element before the closing body tag -->
     <canvas id="color-canvas"></canvas>
@@ -455,7 +506,7 @@
     <div class="container text-center py-3">
       <h2>ssamjh's Music Sync</h2>
       <h5 class="mb-4">JoinMyMusic.com</h5>
-      <audio id="audio-stream" preload="none"></audio>
+      <audio id="audio-stream" preload="none" crossorigin="anonymous"></audio>
       <button
         class="btn btn-primary btn-sm mb-2"
         id="button-toggle"
@@ -544,6 +595,14 @@
       let currentBgSet = 1;
       let hlsFailed = false;
       let hlsInstance = null;
+
+      // Enhanced background effects globals
+      let audioContext = null;
+      let analyser = null;
+      let audioSource = null;
+      let grainFrames = [];
+      let grainIntervalId = null;
+      let grainFrameIndex = 0;
 
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
@@ -692,6 +751,70 @@
         }
       }
 
+      // --- Enhanced Background Effects ---
+
+      function initAudioContext() {
+        if (audioContext) return;
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.6;
+      }
+
+      function connectAudioSource() {
+        if (!audioContext || audioSource) return;
+        try {
+          audioSource = audioContext.createMediaElementSource(audioStream);
+          audioSource.connect(analyser);
+          analyser.connect(audioContext.destination);
+          console.log('[DEBUG] Audio source connected, audioContext state:', audioContext.state);
+        } catch (e) {
+          console.warn('Audio source connection failed:', e);
+        }
+      }
+
+      function initGrain() {
+        grainFrames = [];
+        for (let f = 0; f < 3; f++) {
+          const offscreen = document.createElement('canvas');
+          offscreen.width = 128;
+          offscreen.height = 128;
+          const ctx = offscreen.getContext('2d');
+          const imageData = ctx.createImageData(128, 128);
+          for (let i = 0; i < imageData.data.length; i += 4) {
+            const v = Math.random() * 255;
+            imageData.data[i] = v;
+            imageData.data[i + 1] = v;
+            imageData.data[i + 2] = v;
+            imageData.data[i + 3] = 255;
+          }
+          ctx.putImageData(imageData, 0, 0);
+          grainFrames.push(offscreen.toDataURL('image/png'));
+        }
+        startGrainAnimation();
+      }
+
+      function startGrainAnimation() {
+        if (grainIntervalId) return;
+        const grainEl = document.querySelector('.grain-overlay');
+        if (!grainEl || document.body.classList.contains('no-bg-animation')) return;
+        grainIntervalId = setInterval(function () {
+          grainFrameIndex = (grainFrameIndex + 1) % grainFrames.length;
+          grainEl.style.backgroundImage = 'url(' + grainFrames[grainFrameIndex] + ')';
+        }, 100);
+      }
+
+      function stopGrainAnimation() {
+        if (grainIntervalId) {
+          clearInterval(grainIntervalId);
+          grainIntervalId = null;
+        }
+      }
+
+      initGrain();
+
+      // --- End Enhanced Background Effects ---
+
       function togglePlay() {
         qualityUpdate();
         audioStream.play();
@@ -700,6 +823,10 @@
         isPlaying = true;
         startPolling();
         updateButtons();
+
+        initAudioContext();
+        connectAudioSource();
+        if (audioContext.state === 'suspended') audioContext.resume();
       }
 
       function buttonStop() {
@@ -842,6 +969,7 @@
 
       // Enhanced background color updates
       function updateBackgroundColors(colors) {
+
         const nextBgSet = currentBgSet === 1 ? 2 : 1;
         const currentSet = document.getElementById(`bg-set-${currentBgSet}`);
         const nextSet = document.getElementById(`bg-set-${nextBgSet}`);
@@ -1053,6 +1181,11 @@
         const isOff = document.body.classList.toggle('no-bg-animation');
         setCookie('bgAnimation', isOff ? 'off' : 'on', 365);
         updateToggleButton();
+        if (isOff) {
+            stopGrainAnimation();
+        } else {
+          startGrainAnimation();
+        }
       }
 
       // Initialize background animation preference
