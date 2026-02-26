@@ -15,7 +15,6 @@ import os
 
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
-REQUEST_LIMIT = int(os.environ.get("REQUEST_LIMIT", "10"))  # max song requests per 30 min per IP
 from spotify import SpotifyClient
 from sse import broadcaster, cleanup_listeners, cleanup_old_requests, poll_spotify, refresh_token_loop
 from storage import (
@@ -64,20 +63,6 @@ async def verify_turnstile(token: str, ip: str) -> bool:
             data={"secret": TURNSTILE_SECRET, "response": token, "remoteip": ip},
         )
         return resp.json().get("success", False)
-
-
-async def verify_spotify_token(token: str) -> str:
-    """Verify a Spotify access token and return the user's display name.
-    Raises HTTPException if the token is invalid."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://api.spotify.com/v1/me",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid or expired Spotify token. Please sign in again.")
-    data = resp.json()
-    return data.get("display_name") or data.get("id") or "Unknown"
 
 # ─── SSE ─────────────────────────────────────────────────────────────────────
 
@@ -165,11 +150,29 @@ async def register_listener(payload: ListenerPayload, request: Request):
 async def listener_stats():
     return {"count": len(listeners)}
 
+# ─── Search ──────────────────────────────────────────────────────────────────
+
+class SearchPayload(BaseModel):
+    query: str
+
+
+@app.post("/api/search")
+async def search_songs(payload: SearchPayload, request: Request):
+    if not check_rate_limit("search", request.client.host, 100, 3600):
+        raise HTTPException(status_code=429, detail="Too many searches. Wait a bit and try again.")
+    if len(payload.query) < 2:
+        raise HTTPException(status_code=400, detail="No search text provided.")
+    try:
+        results = await spotify_client.search(payload.query)
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ─── Request ─────────────────────────────────────────────────────────────────
 
 class RequestPayload(BaseModel):
     uri: str
-    spotify_token: str
+    name: str
     submission_id: str
     turnstile: str
 
@@ -178,12 +181,12 @@ class RequestPayload(BaseModel):
 async def add_request(payload: RequestPayload, request: Request):
     ip = request.client.host
 
-    if not check_rate_limit("add", ip, REQUEST_LIMIT, 1800):
+    if not check_rate_limit("add", ip, 10, 1800):
         raise HTTPException(status_code=429, detail="Slow down on the requests there bud. Try again soon.")
     if not payload.uri:
         raise HTTPException(status_code=400, detail="No URI provided")
-
-    name = await verify_spotify_token(payload.spotify_token)
+    if not payload.name:
+        raise HTTPException(status_code=400, detail="Please provide your name")
 
     if not await verify_turnstile(payload.turnstile, ip):
         raise HTTPException(status_code=400, detail="Challenge verification failed")
@@ -191,7 +194,7 @@ async def add_request(payload: RequestPayload, request: Request):
     if not check_submission_id(payload.submission_id):
         return {"success": True, "message": "Your request was already received!"}
 
-    name = sanitize_name(name)
+    name = sanitize_name(payload.name)
 
     # Fetch track info (best-effort; don't fail the request if unavailable)
     track_info: dict = {}
@@ -241,14 +244,11 @@ class SkipPayload(BaseModel):
     uuid: str
     songid: str
     turnstile: str
-    spotify_token: str
 
 
 @app.post("/api/skip")
 async def vote_skip(payload: SkipPayload, request: Request):
     ip = request.client.host
-
-    await verify_spotify_token(payload.spotify_token)
 
     if not await verify_turnstile(payload.turnstile, ip):
         raise HTTPException(status_code=400, detail="Turnstile verification failed")
