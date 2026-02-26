@@ -158,7 +158,7 @@ class SearchPayload(BaseModel):
 
 @app.post("/api/search")
 async def search_songs(payload: SearchPayload, request: Request):
-    if not check_rate_limit("search", request.client.host, 100, 3600):
+    if not check_rate_limit("search", request.client.host, 500, 3600):
         raise HTTPException(status_code=429, detail="Too many searches. Wait a bit and try again.")
     if len(payload.query) < 2:
         raise HTTPException(status_code=400, detail="No search text provided.")
