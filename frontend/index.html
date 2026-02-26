@@ -798,7 +798,9 @@
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.6;
+        analyser.smoothingTimeConstant = 0.4;
+        analyser.minDecibels = -60;  // raise floor — cuts dead silence, spreads compressed signal
+        analyser.maxDecibels = -5;   // near 0dBFS peak for compressed/loudness-war tracks
         gainNode = audioContext.createGain();
         gainNode.gain.value = currentGain;
       }
@@ -989,14 +991,14 @@
         const bassEnd = Math.max(4, Math.floor(bufferLength * 0.06));
         let bass = 0;
         for (let i = 2; i < bassEnd; i++) bass += dataArray[i];
-        bass = bass / (bassEnd - 2) / 255;
+        bass = Math.pow(bass / (bassEnd - 2) / 255, 0.6); // power curve expands compressed signal
         smoothedBass += (bass - smoothedBass) * 0.18;
 
         // Mid frequency energy
         const midEnd = Math.floor(bufferLength * 0.35);
         let mid = 0;
         for (let i = bassEnd; i < midEnd; i++) mid += dataArray[i];
-        mid = mid / (midEnd - bassEnd) / 255;
+        mid = Math.pow(mid / (midEnd - bassEnd) / 255, 0.6);
         smoothedMid += (mid - smoothedMid) * 0.14;
 
         // Pulse the background blob container with bass
