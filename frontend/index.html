@@ -1443,7 +1443,6 @@
             alert("Please complete the challenge");
             return;
           }
-          const requesterName = spotifyDisplayName();
           const confirmBtn = document.getElementById("confirmRequestBtn");
 
           fetch("/api/request", {
@@ -1451,7 +1450,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               uri,
-              name: requesterName,
+              spotify_token: sessionStorage.getItem("spotifyToken"),
               submission_id: submissionId,
               turnstile: turnstileToken,
             }),
@@ -1517,6 +1516,12 @@
               return;
             }
 
+            const spotifyToken = sessionStorage.getItem("spotifyToken");
+            if (!spotifyToken) {
+              alert("Please sign in with Spotify to vote skip.");
+              return;
+            }
+
             // Disable button to prevent multiple submissions
             this.disabled = true;
             this.innerHTML =
@@ -1527,7 +1532,7 @@
             fetch("/api/skip", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ uuid: userUUID, songid: songId, turnstile: turnstileToken }),
+              body: JSON.stringify({ uuid: userUUID, songid: songId, turnstile: turnstileToken, spotify_token: spotifyToken }),
             })
               .then((response) => response.json())
               .then((data) => {
@@ -1571,6 +1576,11 @@
         .getElementById("voteSkipBtn")
         .addEventListener("click", function () {
           if (!isPlaying || !songId || songId === lastVotedSongId) return;
+
+          if (!spotifyDisplayName()) {
+            alert("Please sign in with Spotify to vote skip.");
+            return;
+          }
 
           // Show vote skip modal instead of immediately submitting
           const voteSkipModal = new bootstrap.Modal(

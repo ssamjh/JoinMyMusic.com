@@ -13,6 +13,7 @@ services:
       AUTH_KEY: "change_me"
       TURNSTILE_SECRET: ""
       TURNSTILE_SITE_KEY: ""
+      REQUEST_LIMIT: "10"  # max song requests per IP per 30 minutes
       TOKEN_CACHE_FILE: "/data/token_cache.json"
       DB_FILE: "/data/music_sync.db"
       PORT: "8080"

@@ -15,6 +15,7 @@ import os
 
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
+REQUEST_LIMIT = int(os.environ.get("REQUEST_LIMIT", "10"))  # max song requests per 30 min per IP
 from spotify import SpotifyClient
 from sse import broadcaster, cleanup_listeners, cleanup_old_requests, poll_spotify, refresh_token_loop
 from storage import (
@@ -168,7 +169,7 @@ async def listener_stats():
 
 class RequestPayload(BaseModel):
     uri: str
-    name: str
+    spotify_token: str
     submission_id: str
     turnstile: str
 
@@ -177,12 +178,12 @@ class RequestPayload(BaseModel):
 async def add_request(payload: RequestPayload, request: Request):
     ip = request.client.host
 
-    if not check_rate_limit("add", ip, 10, 1800):
+    if not check_rate_limit("add", ip, REQUEST_LIMIT, 1800):
         raise HTTPException(status_code=429, detail="Slow down on the requests there bud. Try again soon.")
     if not payload.uri:
         raise HTTPException(status_code=400, detail="No URI provided")
-    if not payload.name:
-        raise HTTPException(status_code=400, detail="Please provide your name")
+
+    name = await verify_spotify_token(payload.spotify_token)
 
     if not await verify_turnstile(payload.turnstile, ip):
         raise HTTPException(status_code=400, detail="Challenge verification failed")
@@ -190,7 +191,7 @@ async def add_request(payload: RequestPayload, request: Request):
     if not check_submission_id(payload.submission_id):
         return {"success": True, "message": "Your request was already received!"}
 
-    name = sanitize_name(payload.name)
+    name = sanitize_name(name)
 
     # Fetch track info (best-effort; don't fail the request if unavailable)
     track_info: dict = {}
@@ -240,11 +241,14 @@ class SkipPayload(BaseModel):
     uuid: str
     songid: str
     turnstile: str
+    spotify_token: str
 
 
 @app.post("/api/skip")
 async def vote_skip(payload: SkipPayload, request: Request):
     ip = request.client.host
+
+    await verify_spotify_token(payload.spotify_token)
 
     if not await verify_turnstile(payload.turnstile, ip):
         raise HTTPException(status_code=400, detail="Turnstile verification failed")
