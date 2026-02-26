@@ -695,63 +695,60 @@
           });
       }
 
-      function updateMetadata() {
-        fetch("./metadata.php?rand=" + Math.random())
-          .then((response) => response.json())
-          .then((data) => {
-            const currentData = data.current;
+      function handleMetadata(currentData) {
+        if (!currentData || !currentData.song) {
+          document.getElementById("song-title").textContent = "";
+          document.getElementById("artist-name").textContent = "";
+          document.getElementById("album-art-1").src =
+            "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+          document.getElementById("album-art-2").src =
+            "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+          currentSongId = null;
+          return;
+        }
 
-            if (!currentData || !currentData.song) {
-              document.getElementById("song-title").textContent = "";
-              document.getElementById("artist-name").textContent = "";
-              document.getElementById("album-art-1").src =
-                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-              document.getElementById("album-art-2").src =
-                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-              currentSongId = null;
-              return;
-            }
+        const newSongId = `${currentData.song}-${currentData.artist
+          .map((a) => a.name)
+          .join(",")}`;
 
-            // Create a unique identifier for the current song
-            const newSongId = `${currentData.song}-${currentData.artist
-              .map((a) => a.name)
-              .join(",")}`;
+        if (currentSongId === null) {
+          // First load - no animation
+          const img = document.getElementById("album-art-1");
+          img.src = currentData.cover;
+          document.getElementById("song-title").textContent = currentData.song;
+          document.getElementById("artist-name").textContent =
+            currentData.artist.map((a) => a.name).join(", ");
+          currentSongId = newSongId;
 
-            // Check if song has changed
-            if (currentSongId === null) {
-              // First load - no animation
-              const img = document.getElementById("album-art-1");
-              img.src = currentData.cover;
-              document.getElementById("song-title").textContent =
-                currentData.song;
-              document.getElementById("artist-name").textContent =
-                currentData.artist.map((a) => a.name).join(", ");
-              currentSongId = newSongId;
-
-              // Extract initial colors with enhanced gradients
-              setTimeout(() => {
-                extractColors(img).then((colors) => {
-                  // Set initial colors on the active background set
-                  const activeSet = document.getElementById("bg-set-1");
-                  const layers =
-                    activeSet.querySelectorAll(".background-layer");
-                  layers[0].style.background = `conic-gradient(from 45deg, ${colors.primary} 0%, ${colors.quaternary} 25%, ${colors.secondary} 50%, ${colors.quinary} 75%, ${colors.primary} 100%)`;
-                  layers[1].style.background = `radial-gradient(ellipse 120% 80% at 30% 70%, ${colors.secondary} 0%, transparent 70%)`;
-                  layers[2].style.background = `radial-gradient(ellipse 80% 120% at 70% 30%, ${colors.tertiary} 0%, transparent 60%)`;
-                  layers[3].style.background = `linear-gradient(45deg, ${colors.quaternary} 0%, transparent 50%, ${colors.quinary} 100%)`;
-                  layers[4].style.background = `radial-gradient(circle at 50% 50%, ${colors.primary} 0%, transparent 40%)`;
-                });
-              }, 100);
-            } else if (currentSongId !== newSongId) {
-              // Song changed - animate transition
-              animateSongChange(currentData);
-              currentSongId = newSongId;
-            }
-          });
+          setTimeout(() => {
+            extractColors(img).then((colors) => {
+              const activeSet = document.getElementById("bg-set-1");
+              const layers = activeSet.querySelectorAll(".background-layer");
+              layers[0].style.background = `conic-gradient(from 45deg, ${colors.primary} 0%, ${colors.quaternary} 25%, ${colors.secondary} 50%, ${colors.quinary} 75%, ${colors.primary} 100%)`;
+              layers[1].style.background = `radial-gradient(ellipse 120% 80% at 30% 70%, ${colors.secondary} 0%, transparent 70%)`;
+              layers[2].style.background = `radial-gradient(ellipse 80% 120% at 70% 30%, ${colors.tertiary} 0%, transparent 60%)`;
+              layers[3].style.background = `linear-gradient(45deg, ${colors.quaternary} 0%, transparent 50%, ${colors.quinary} 100%)`;
+              layers[4].style.background = `radial-gradient(circle at 50% 50%, ${colors.primary} 0%, transparent 40%)`;
+            });
+          }, 100);
+        } else if (currentSongId !== newSongId) {
+          animateSongChange(currentData);
+          currentSongId = newSongId;
+        }
       }
 
-      updateMetadata();
-      setInterval(updateMetadata, 5000);
+      function connectSSE() {
+        const evtSource = new EventSource("/api/events");
+        evtSource.addEventListener("metadata", (e) => {
+          handleMetadata(JSON.parse(e.data));
+        });
+        evtSource.onerror = () => {
+          evtSource.close();
+          setTimeout(connectSSE, 5000);
+        };
+      }
+
+      connectSSE();
     </script>
   </body>
 </html>

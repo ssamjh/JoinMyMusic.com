@@ -1,0 +1,19 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data  # SQLite DB + Spotify token cache
+    environment:
+      SPOTIFY_CLIENT_ID: ""
+      SPOTIFY_CLIENT_SECRET: ""
+      SPOTIFY_DEVICE_NAME: ""
+      SPOTIFY_REDIRECT_URI: "http://localhost:8080/api/callback"
+      AUTH_KEY: "change_me"
+      TURNSTILE_SECRET: ""
+      TURNSTILE_SITE_KEY: ""
+      TOKEN_CACHE_FILE: "/data/token_cache.json"
+      DB_FILE: "/data/music_sync.db"
+      PORT: "8080"
+    restart: unless-stopped

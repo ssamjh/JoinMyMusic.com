@@ -673,14 +673,11 @@
         const listenerName = storageGet("requesterName") || "";
         const userUUID = getOrCreateUUID();
 
-        fetch("listeners.php", {
+        const volume = parseInt(storageGet("volume") ?? "50", 10);
+        fetch("/api/listener", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: `name=${encodeURIComponent(
-            listenerName
-          )}&uuid=${encodeURIComponent(userUUID)}`,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uuid: userUUID, name: listenerName, volume }),
         }).catch((error) => console.error("Error polling server:", error));
       }
 
@@ -851,26 +848,109 @@
         img.onload = callback;
       }
 
-      function updateStats() {
-        // Fetch listener stats
-        fetch("https://joinmymusic.com/listeners.php?stats")
-          .then((response) => response.json())
-          .then((data) => {
-            document.getElementById("listener-count").textContent =
-              data.listeners;
-          })
-          .catch((error) =>
-            console.error("Error fetching listener stats:", error)
-          );
+      function handleMetadata(currentData) {
+        if (!currentData || !currentData.song) {
+          $(".div-playing-title, .div-playing-artist").text("");
+          if (
+            playingImage.src !==
+            "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+          ) {
+            playingImage.src =
+              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+          }
+          playingLink.setAttribute("href", "javascript:void(0)");
+          updateSongId(null);
+          return;
+        }
 
-        // Fetch vote stats
-        fetch("https://joinmymusic.com/skip.php?stats")
-          .then((response) => response.json())
-          .then((data) => {
-            document.getElementById("vote-count").textContent = data.count;
-            document.getElementById("votes-needed").textContent = data.needed;
-          })
-          .catch((error) => console.error("Error fetching vote stats:", error));
+        updateSongId(currentData.songid);
+
+        const createLink = (url, id, name) =>
+          `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+
+        if (playingImage.src !== currentData.cover) {
+          preloadImage(currentData.cover, function () {
+            playingImage.src = currentData.cover;
+            extractColors(playingImage).then((colors) => {
+              updateBackgroundColors(colors);
+            });
+            $(".div-playing-title").html(
+              createLink("https://open.spotify.com/track/", currentData.songid, currentData.song)
+            );
+            $(".div-playing-artist").html(
+              currentData.artist
+                .map((artist) =>
+                  createLink("https://open.spotify.com/artist/", artist.id, artist.name)
+                )
+                .join(", ")
+            );
+            if ("mediaSession" in navigator) {
+              if (currentData && currentData.song) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: currentData.song,
+                  artist: currentData.artist.map((a) => a.name).join(", "),
+                  album: currentData.albumid,
+                  artwork: [{ src: currentData.cover, sizes: "250x250", type: "image/jpeg" }],
+                });
+              } else {
+                navigator.mediaSession.metadata = null;
+              }
+            }
+            if (
+              playingImage.src ===
+                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" &&
+              currentData.cover
+            ) {
+              setTimeout(() => {
+                extractColors(playingImage).then((colors) => {
+                  const activeSet = document.getElementById("bg-set-1");
+                  const layers = activeSet.querySelectorAll(".background-layer");
+                  layers[0].style.background = `conic-gradient(from 45deg, ${colors.primary} 0%, ${colors.quaternary} 25%, ${colors.secondary} 50%, ${colors.quinary} 75%, ${colors.primary} 100%)`;
+                  layers[1].style.background = `radial-gradient(ellipse 120% 80% at 30% 70%, ${colors.secondary} 0%, transparent 70%)`;
+                  layers[2].style.background = `radial-gradient(ellipse 80% 120% at 70% 30%, ${colors.tertiary} 0%, transparent 60%)`;
+                  layers[3].style.background = `linear-gradient(45deg, ${colors.quaternary} 0%, transparent 50%, ${colors.quinary} 100%)`;
+                  layers[4].style.background = `radial-gradient(circle at 50% 50%, ${colors.primary} 0%, transparent 40%)`;
+                });
+              }, 100);
+            }
+            playingLink.setAttribute("href", `https://open.spotify.com/album/${currentData.albumid}`);
+          });
+        } else {
+          $(".div-playing-title").html(
+            createLink("https://open.spotify.com/track/", currentData.songid, currentData.song)
+          );
+          $(".div-playing-artist").html(
+            currentData.artist
+              .map((artist) =>
+                createLink("https://open.spotify.com/artist/", artist.id, artist.name)
+              )
+              .join(", ")
+          );
+        }
+      }
+
+      function connectSSE() {
+        const evtSource = new EventSource("/api/events");
+
+        evtSource.addEventListener("metadata", (e) => {
+          handleMetadata(JSON.parse(e.data));
+        });
+
+        evtSource.addEventListener("listeners", (e) => {
+          const data = JSON.parse(e.data);
+          document.getElementById("listener-count").textContent = data.count;
+        });
+
+        evtSource.addEventListener("skipvotes", (e) => {
+          const data = JSON.parse(e.data);
+          document.getElementById("vote-count").textContent = data.count;
+          document.getElementById("votes-needed").textContent = data.needed;
+        });
+
+        evtSource.onerror = () => {
+          evtSource.close();
+          setTimeout(connectSSE, 5000);
+        };
       }
 
       function updateSongId(newSongId) {
@@ -991,129 +1071,6 @@
         currentBgSet = nextBgSet;
       }
 
-      function trackMeta() {
-        $.getJSON("./metadata.php?rand=" + Math.random(), function (data) {
-          const currentData = data.current;
-
-          if (!currentData || !currentData.song) {
-            $(".div-playing-title, .div-playing-artist").text("");
-            if (
-              playingImage.src !==
-              "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
-            ) {
-              playingImage.src =
-                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-            }
-            playingLink.setAttribute("href", "javascript:void(0)");
-            updateSongId(null);
-            return;
-          }
-
-          updateSongId(currentData.songid);
-
-          const createLink = (url, id, name) =>
-            `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
-
-          // Preload current playing image and then update
-          if (playingImage.src !== currentData.cover) {
-            preloadImage(currentData.cover, function () {
-              playingImage.src = currentData.cover;
-
-              // Extract colors and update background
-              extractColors(playingImage).then((colors) => {
-                updateBackgroundColors(colors);
-              });
-
-              // Update text after image has loaded
-              $(".div-playing-title").html(
-                createLink(
-                  "https://open.spotify.com/track/",
-                  currentData.songid,
-                  currentData.song
-                )
-              );
-              $(".div-playing-artist").html(
-                currentData.artist
-                  .map((artist) =>
-                    createLink(
-                      "https://open.spotify.com/artist/",
-                      artist.id,
-                      artist.name
-                    )
-                  )
-                  .join(", ")
-              );
-
-              if ("mediaSession" in navigator) {
-                if (currentData && currentData.song) {
-                  // Only update if we have valid data
-                  navigator.mediaSession.metadata = new MediaMetadata({
-                    title: currentData.song,
-                    artist: currentData.artist.map((a) => a.name).join(", "),
-                    album: currentData.albumid,
-                    artwork: [
-                      {
-                        src: currentData.cover,
-                        sizes: "250x250",
-                        type: "image/jpeg",
-                      },
-                    ],
-                  });
-                } else {
-                  // Clear the metadata if there's no current song
-                  navigator.mediaSession.metadata = null;
-                }
-              }
-
-              // If this is the first load and we have an image, extract initial colors
-              if (
-                playingImage.src ===
-                  "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" &&
-                currentData.cover
-              ) {
-                setTimeout(() => {
-                  extractColors(playingImage).then((colors) => {
-                    // Set initial colors on the active background set
-                    const activeSet = document.getElementById("bg-set-1");
-                    const layers =
-                      activeSet.querySelectorAll(".background-layer");
-                    layers[0].style.background = `conic-gradient(from 45deg, ${colors.primary} 0%, ${colors.quaternary} 25%, ${colors.secondary} 50%, ${colors.quinary} 75%, ${colors.primary} 100%)`;
-                    layers[1].style.background = `radial-gradient(ellipse 120% 80% at 30% 70%, ${colors.secondary} 0%, transparent 70%)`;
-                    layers[2].style.background = `radial-gradient(ellipse 80% 120% at 70% 30%, ${colors.tertiary} 0%, transparent 60%)`;
-                    layers[3].style.background = `linear-gradient(45deg, ${colors.quaternary} 0%, transparent 50%, ${colors.quinary} 100%)`;
-                    layers[4].style.background = `radial-gradient(circle at 50% 50%, ${colors.primary} 0%, transparent 40%)`;
-                  });
-                }, 100);
-              }
-
-              playingLink.setAttribute(
-                "href",
-                `https://open.spotify.com/album/${currentData.albumid}`
-              );
-            });
-          } else {
-            // If image doesn't need updating, still update text
-            $(".div-playing-title").html(
-              createLink(
-                "https://open.spotify.com/track/",
-                currentData.songid,
-                currentData.song
-              )
-            );
-            $(".div-playing-artist").html(
-              currentData.artist
-                .map((artist) =>
-                  createLink(
-                    "https://open.spotify.com/artist/",
-                    artist.id,
-                    artist.name
-                  )
-                )
-                .join(", ")
-            );
-          }
-        });
-      }
 
       // Cookie helpers
       function getCookie(name) {
@@ -1214,10 +1171,7 @@
         navigator.mediaSession.setActionHandler("stop", () => buttonStop());
       }
 
-      trackMeta();
-      updateStats();
-      setInterval(trackMeta, 10000);
-      setInterval(updateStats, 10000);
+      connectSSE();
 
       // Song Request Modal functionality
       document.addEventListener("DOMContentLoaded", function () {
@@ -1301,13 +1255,10 @@
             return;
           }
 
-          const formData = new FormData();
-          formData.append("action", "search");
-          formData.append("query", query);
-
-          fetch("requests.php", {
+          fetch("/api/search", {
             method: "POST",
-            body: formData,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query }),
           })
             .then((response) => response.json())
             .then((data) => {
@@ -1433,16 +1384,15 @@
             .value.trim();
           const confirmBtn = document.getElementById("confirmRequestBtn");
 
-          const formData = new FormData();
-          formData.append("action", "addToQueue");
-          formData.append("uri", uri);
-          formData.append("name", requesterName);
-          formData.append("submission_id", submissionId);
-          formData.append("turnstile", turnstileToken);
-
-          fetch("requests.php", {
+          fetch("/api/request", {
             method: "POST",
-            body: formData,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              uri,
+              name: requesterName,
+              submission_id: submissionId,
+              turnstile: turnstileToken,
+            }),
           })
             .then((response) => response.json())
             .then((data) => {
@@ -1518,23 +1468,16 @@
 
             const userUUID = getOrCreateUUID();
 
-            fetch("skip.php", {
+            fetch("/api/skip", {
               method: "POST",
-              headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: `uuid=${encodeURIComponent(
-                userUUID
-              )}&songid=${encodeURIComponent(
-                songId
-              )}&turnstile=${encodeURIComponent(turnstileToken)}`,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ uuid: userUUID, songid: songId, turnstile: turnstileToken }),
             })
               .then((response) => response.json())
               .then((data) => {
                 if (data.success) {
                   lastVotedSongId = songId;
                   updateButtons();
-                  updateStats();
                   bootstrap.Modal.getInstance(
                     document.getElementById("voteSkipModal")
                   ).hide();
