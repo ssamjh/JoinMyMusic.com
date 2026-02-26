@@ -131,18 +131,18 @@
 
       /* Enhanced animated background layers */
       .background-container {
+        display: none; /* replaced by #bg-canvas */
+      }
+
+      #bg-canvas {
         position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 50vw; /* 50% of viewport width */
-        height: 50vh; /* 50% of viewport height */
-        min-width: 400px;
-        min-height: 400px;
-        max-width: 600px;
-        max-height: 600px;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
         z-index: -2;
         pointer-events: none;
+        filter: blur(20px);
       }
 
       .background-set {
@@ -372,7 +372,9 @@
       /* Disable background animations */
       .no-bg-animation .background-container,
       .no-bg-animation .vignette,
-      .no-bg-animation .grain-overlay {
+      .no-bg-animation .grain-overlay,
+      .no-bg-animation #bg-canvas,
+      .no-bg-animation #viz-canvas {
         display: none;
       }
 
@@ -380,9 +382,36 @@
         font-size: 0.75rem;
       }
 
+      /* Text readability against reactive background */
+      body.bg h2,
+      body.bg h4,
+      body.bg h5,
+      body.bg p,
+      body.bg strong,
+      body.bg .div-playing-title,
+      body.bg .div-playing-title a,
+      body.bg .div-playing-artist,
+      body.bg .div-playing-artist a,
+      body.bg footer a,
+      body.bg footer div {
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9), 0 0 20px rgba(0, 0, 0, 0.7);
+      }
+
       /* Hide the color extraction canvas */
       #color-canvas {
         display: none;
+      }
+
+      #viz-canvas {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 1.5s ease;
       }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
@@ -500,8 +529,9 @@
     <div class="vignette"></div>
     <div class="grain-overlay"></div>
 
-    <!-- Also add the canvas element before the closing body tag -->
     <canvas id="color-canvas"></canvas>
+    <canvas id="bg-canvas"></canvas>
+    <canvas id="viz-canvas"></canvas>
 
     <div class="container text-center py-3">
       <h2>ssamjh's Music Sync</h2>
@@ -592,7 +622,7 @@
       let songId = null;
       let selectedSongData = null;
       let songConfirmModal;
-      let currentBgSet = 1;
+      // currentBgSet removed — background handled by #bg-canvas
       let hlsFailed = false;
       let hlsInstance = null;
 
@@ -603,6 +633,19 @@
       let grainFrames = [];
       let grainIntervalId = null;
       let grainFrameIndex = 0;
+
+      // Visualizer globals
+      let vizCanvas, vizCtx, vizRafId;
+      let currentRgbColors = { r: 80, g: 80, b: 80 };
+      let smoothedBass = 0;
+      let smoothedMid = 0;
+      let gainNode = null;
+      let currentGain = 1.0;
+
+      // Background canvas globals
+      let bgCanvas, bgCtx, bgRafId, bgLastTime = 0;
+      let bgColorCurr = { r: 20, g: 20, b: 20 };
+      let bgColorTarget = { r: 20, g: 20, b: 20 };
 
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
@@ -756,14 +799,19 @@
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.6;
+        gainNode = audioContext.createGain();
+        gainNode.gain.value = currentGain;
       }
 
       function connectAudioSource() {
         if (!audioContext || audioSource) return;
         try {
           audioSource = audioContext.createMediaElementSource(audioStream);
+          // analyser taps the full-amplitude signal; gainNode controls output volume
           audioSource.connect(analyser);
-          analyser.connect(audioContext.destination);
+          analyser.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          audioStream.volume = 1.0;
           console.log('[DEBUG] Audio source connected, audioContext state:', audioContext.state);
         } catch (e) {
           console.warn('Audio source connection failed:', e);
@@ -808,7 +856,195 @@
         }
       }
 
+      // --- Background Canvas ---
+
+      function initBgCanvas() {
+        bgCanvas = document.getElementById('bg-canvas');
+        bgCtx = bgCanvas.getContext('2d');
+        resizeBgCanvas();
+        window.addEventListener('resize', resizeBgCanvas);
+      }
+
+      function resizeBgCanvas() {
+        if (!bgCanvas) return;
+        bgCanvas.width = Math.max(1, Math.floor(window.innerWidth / 8));
+        bgCanvas.height = Math.max(1, Math.floor(window.innerHeight / 8));
+      }
+
+      function startBg() {
+        if (bgRafId || document.body.classList.contains('no-bg-animation')) return;
+        drawBgLoop();
+      }
+
+      function stopBg() {
+        if (bgRafId) {
+          cancelAnimationFrame(bgRafId);
+          bgRafId = null;
+        }
+        if (bgCtx) bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+      }
+
+      function drawBgLoop(timestamp) {
+        bgRafId = requestAnimationFrame(drawBgLoop);
+        if (timestamp - bgLastTime < VIZ_INTERVAL) return;
+        bgLastTime = timestamp;
+
+        // Lerp toward target color (~2 second transition at 15fps)
+        bgColorCurr.r += (bgColorTarget.r - bgColorCurr.r) * 0.06;
+        bgColorCurr.g += (bgColorTarget.g - bgColorCurr.g) * 0.06;
+        bgColorCurr.b += (bgColorTarget.b - bgColorCurr.b) * 0.06;
+
+        const W = bgCanvas.width, H = bgCanvas.height;
+        const cx = W / 2, cy = H / 2;
+        const { r, g, b } = bgColorCurr;
+        const scale = 1 + smoothedBass * 0.4;
+
+        bgCtx.clearRect(0, 0, W, H);
+
+        // Main centered glow
+        const maxR = Math.max(W, H) * 0.55 * scale;
+        const grd = bgCtx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+        grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.9)`);
+        grd.addColorStop(0.45, `rgba(${r}, ${g}, ${b}, 0.45)`);
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        bgCtx.fillStyle = grd;
+        bgCtx.fillRect(0, 0, W, H);
+
+        // Offset secondary glow for depth
+        const grd2 = bgCtx.createRadialGradient(W * 0.25, H * 0.25, 0, W * 0.25, H * 0.25, maxR * 0.7);
+        grd2.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.25)`);
+        grd2.addColorStop(1, 'rgba(0,0,0,0)');
+        bgCtx.fillStyle = grd2;
+        bgCtx.fillRect(0, 0, W, H);
+
+        const grd3 = bgCtx.createRadialGradient(W * 0.75, H * 0.75, 0, W * 0.75, H * 0.75, maxR * 0.7);
+        grd3.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.2)`);
+        grd3.addColorStop(1, 'rgba(0,0,0,0)');
+        bgCtx.fillStyle = grd3;
+        bgCtx.fillRect(0, 0, W, H);
+      }
+
+      // --- End Background Canvas ---
+
+      // --- Audio Visualizer ---
+
+      function initVizCanvas() {
+        vizCanvas = document.getElementById('viz-canvas');
+        vizCtx = vizCanvas.getContext('2d');
+        resizeVizCanvas();
+        window.addEventListener('resize', resizeVizCanvas);
+      }
+
+      function resizeVizCanvas() {
+        if (!vizCanvas) return;
+        // Render at 1/5 resolution — soft glows are indistinguishable, massive GPU savings
+        vizCanvas.width = Math.floor(window.innerWidth / 5);
+        vizCanvas.height = Math.floor(window.innerHeight / 5);
+      }
+
+      function startViz() {
+        if (vizRafId || document.body.classList.contains('no-bg-animation')) return;
+        vizCanvas.style.opacity = '1';
+        drawViz();
+      }
+
+      function stopViz() {
+        if (vizRafId) {
+          cancelAnimationFrame(vizRafId);
+          vizRafId = null;
+        }
+        if (vizCanvas) {
+          vizCanvas.style.opacity = '0';
+          setTimeout(() => {
+            if (vizCtx && !vizRafId) vizCtx.clearRect(0, 0, vizCanvas.width, vizCanvas.height);
+          }, 1500);
+        }
+        const bgContainer = document.querySelector('.background-container');
+        if (bgContainer) bgContainer.style.transform = 'translate(-50%, -50%) scale(1)';
+        smoothedBass = 0;
+        smoothedMid = 0;
+        vizLastTime = 0;
+      }
+
+      const VIZ_FPS = 60;
+      const VIZ_INTERVAL = 1000 / VIZ_FPS;
+      let vizLastTime = 0;
+
+      function drawViz(timestamp) {
+        vizRafId = requestAnimationFrame(drawViz);
+        if (!analyser) return;
+        if (timestamp - vizLastTime < VIZ_INTERVAL) return;
+        vizLastTime = timestamp;
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteFrequencyData(dataArray);
+
+        const W = vizCanvas.width;
+        const H = vizCanvas.height;
+        const cx = W / 2;
+        const cy = H / 2;
+
+        // Bass energy (skip DC offset bins 0-1, sample ~first 6%)
+        const bassEnd = Math.max(4, Math.floor(bufferLength * 0.06));
+        let bass = 0;
+        for (let i = 2; i < bassEnd; i++) bass += dataArray[i];
+        bass = bass / (bassEnd - 2) / 255;
+        smoothedBass += (bass - smoothedBass) * 0.18;
+
+        // Mid frequency energy
+        const midEnd = Math.floor(bufferLength * 0.35);
+        let mid = 0;
+        for (let i = bassEnd; i < midEnd; i++) mid += dataArray[i];
+        mid = mid / (midEnd - bassEnd) / 255;
+        smoothedMid += (mid - smoothedMid) * 0.14;
+
+        // Pulse the background blob container with bass
+        const bgContainer = document.querySelector('.background-container');
+        if (bgContainer) {
+          bgContainer.style.transform = `translate(-50%, -50%) scale(${1 + smoothedBass * 0.6})`;
+        }
+
+        vizCtx.clearRect(0, 0, W, H);
+
+        const { r, g, b } = currentRgbColors;
+        const minDim = Math.min(W, H);
+
+        // Center bass glow — large and punchy
+        if (smoothedBass > 0.02) {
+          const glowR = minDim * 0.25 + smoothedBass * minDim * 0.55;
+          const grd = vizCtx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+          grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${smoothedBass * 0.35})`);
+          grd.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${smoothedBass * 0.1})`);
+          grd.addColorStop(1, 'rgba(0,0,0,0)');
+          vizCtx.beginPath();
+          vizCtx.arc(cx, cy, glowR, 0, Math.PI * 2);
+          vizCtx.fillStyle = grd;
+          vizCtx.fill();
+        }
+
+        // Corner glows driven by mids
+        if (smoothedMid > 0.02) {
+          const cornerR = minDim * 0.5 + smoothedMid * minDim * 0.4;
+          const cornerAlpha = smoothedMid * 0.18;
+          const corners = [[0, 0], [W, 0], [0, H], [W, H]];
+          corners.forEach(([x, y]) => {
+            const grd = vizCtx.createRadialGradient(x, y, 0, x, y, cornerR);
+            grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${cornerAlpha})`);
+            grd.addColorStop(1, 'rgba(0,0,0,0)');
+            vizCtx.beginPath();
+            vizCtx.arc(x, y, cornerR, 0, Math.PI * 2);
+            vizCtx.fillStyle = grd;
+            vizCtx.fill();
+          });
+        }
+      }
+
+      // --- End Audio Visualizer ---
+
       initGrain();
+      initBgCanvas();
+      initVizCanvas();
 
       // --- End Enhanced Background Effects ---
 
@@ -824,6 +1060,7 @@
         initAudioContext();
         connectAudioSource();
         if (audioContext.state === 'suspended') audioContext.resume();
+        startViz();
       }
 
       function buttonStop() {
@@ -834,11 +1071,17 @@
         isPlaying = false;
         stopPolling();
         updateButtons();
+        stopViz();
       }
 
       function volumeSet(val) {
         const scaledVolume = scaleVolume(val);
-        audioStream.volume = scaledVolume / 100;
+        currentGain = scaledVolume / 100;
+        if (gainNode) {
+          gainNode.gain.value = currentGain;
+        } else {
+          audioStream.volume = currentGain;
+        }
         storageSet("volume", val);
       }
 
@@ -895,23 +1138,6 @@
               } else {
                 navigator.mediaSession.metadata = null;
               }
-            }
-            if (
-              playingImage.src ===
-                "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" &&
-              currentData.cover
-            ) {
-              setTimeout(() => {
-                extractColors(playingImage).then((colors) => {
-                  const activeSet = document.getElementById("bg-set-1");
-                  const layers = activeSet.querySelectorAll(".background-layer");
-                  layers[0].style.background = `conic-gradient(from 45deg, ${colors.primary} 0%, ${colors.quaternary} 25%, ${colors.secondary} 50%, ${colors.quinary} 75%, ${colors.primary} 100%)`;
-                  layers[1].style.background = `radial-gradient(ellipse 120% 80% at 30% 70%, ${colors.secondary} 0%, transparent 70%)`;
-                  layers[2].style.background = `radial-gradient(ellipse 80% 120% at 70% 30%, ${colors.tertiary} 0%, transparent 60%)`;
-                  layers[3].style.background = `linear-gradient(45deg, ${colors.quaternary} 0%, transparent 50%, ${colors.quinary} 100%)`;
-                  layers[4].style.background = `radial-gradient(circle at 50% 50%, ${colors.primary} 0%, transparent 40%)`;
-                });
-              }, 100);
             }
             playingLink.setAttribute("href", `https://open.spotify.com/album/${currentData.albumid}`);
           });
@@ -1047,28 +1273,15 @@
         });
       }
 
-      // Enhanced background color updates
+      function parseRgb(str) {
+        const m = str.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        return m ? { r: +m[1], g: +m[2], b: +m[3] } : { r: 80, g: 80, b: 80 };
+      }
+
+      // Update background canvas target colors on song change
       function updateBackgroundColors(colors) {
-
-        const nextBgSet = currentBgSet === 1 ? 2 : 1;
-        const currentSet = document.getElementById(`bg-set-${currentBgSet}`);
-        const nextSet = document.getElementById(`bg-set-${nextBgSet}`);
-
-        // Update with more complex gradients on the inactive set
-        const layers = nextSet.querySelectorAll(".background-layer");
-        layers[0].style.background = `conic-gradient(from 45deg, ${colors.primary} 0%, ${colors.quaternary} 25%, ${colors.secondary} 50%, ${colors.quinary} 75%, ${colors.primary} 100%)`;
-        layers[1].style.background = `radial-gradient(ellipse 120% 80% at 30% 70%, ${colors.secondary} 0%, transparent 70%)`;
-        layers[2].style.background = `radial-gradient(ellipse 80% 120% at 70% 30%, ${colors.tertiary} 0%, transparent 60%)`;
-        layers[3].style.background = `linear-gradient(45deg, ${colors.quaternary} 0%, transparent 50%, ${colors.quinary} 100%)`;
-        layers[4].style.background = `radial-gradient(circle at 50% 50%, ${colors.primary} 0%, transparent 40%)`;
-
-        // Crossfade
-        currentSet.classList.remove("active");
-        currentSet.classList.add("inactive");
-        nextSet.classList.remove("inactive");
-        nextSet.classList.add("active");
-
-        currentBgSet = nextBgSet;
+        currentRgbColors = parseRgb(colors.primary);
+        bgColorTarget = { ...currentRgbColors };
       }
 
 
@@ -1139,9 +1352,13 @@
         setCookie('bgAnimation', isOff ? 'off' : 'on', 365);
         updateToggleButton();
         if (isOff) {
-            stopGrainAnimation();
+          stopGrainAnimation();
+          stopBg();
+          stopViz();
         } else {
           startGrainAnimation();
+          startBg();
+          if (isPlaying && analyser) startViz();
         }
       }
 
@@ -1155,6 +1372,9 @@
           document.body.classList.add('no-bg-animation');
         }
         updateToggleButton();
+        if (!document.body.classList.contains('no-bg-animation')) {
+          startBg();
+        }
       })();
 
       if (!audioStream.paused) {
