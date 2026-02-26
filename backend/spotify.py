@@ -82,20 +82,6 @@ class SpotifyClient:
             logger.error(f"Error parsing playback data: {e}")
             return _EMPTY_METADATA
 
-    async def search(self, query: str) -> list:
-        results = await asyncio.to_thread(self.sp.search, q=query, type="track", limit=10)
-        tracks = results["tracks"]["items"]
-        return [
-            {
-                "id": t["id"],
-                "name": t["name"],
-                "artist": t["artists"][0]["name"],
-                "album": t["album"]["name"],
-                "cover": t["album"]["images"][0]["url"] if t["album"]["images"] else None,
-            }
-            for t in tracks
-        ]
-
     async def add_to_queue(self, track_id: str) -> None:
         try:
             playback = await asyncio.to_thread(self.sp.current_playback)

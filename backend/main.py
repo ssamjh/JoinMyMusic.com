@@ -64,6 +64,20 @@ async def verify_turnstile(token: str, ip: str) -> bool:
         )
         return resp.json().get("success", False)
 
+
+async def verify_spotify_token(token: str) -> str:
+    """Verify a Spotify access token and return the user's display name.
+    Raises HTTPException if the token is invalid."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://api.spotify.com/v1/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid or expired Spotify token. Please sign in again.")
+    data = resp.json()
+    return data.get("display_name") or data.get("id") or "Unknown"
+
 # ─── SSE ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/events")
@@ -149,24 +163,6 @@ async def register_listener(payload: ListenerPayload, request: Request):
 @app.get("/api/listener/stats")
 async def listener_stats():
     return {"count": len(listeners)}
-
-# ─── Search ──────────────────────────────────────────────────────────────────
-
-class SearchPayload(BaseModel):
-    query: str
-
-
-@app.post("/api/search")
-async def search_songs(payload: SearchPayload, request: Request):
-    if not check_rate_limit("search", request.client.host, 10, 180):
-        raise HTTPException(status_code=429, detail="Too many searches. Wait a bit and try again.")
-    if len(payload.query) < 2:
-        raise HTTPException(status_code=400, detail="No search text provided.")
-    try:
-        results = await spotify_client.search(payload.query)
-        return {"results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # ─── Request ─────────────────────────────────────────────────────────────────
 
