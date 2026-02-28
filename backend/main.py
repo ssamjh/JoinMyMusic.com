@@ -43,7 +43,10 @@ async def lifespan(app: FastAPI):
     yield
 
 
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
