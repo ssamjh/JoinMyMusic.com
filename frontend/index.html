@@ -657,6 +657,7 @@
       // Visualizer globals
       let vizCanvas, vizCtx, vizRafId;
       let currentRgbColors = { r: 80, g: 80, b: 80 };
+      let presenceRgbColors = { r: 80, g: 80, b: 80 };
       let smoothedBass = 0;
       let smoothedMid = 0;
       let gainNode = null;
@@ -666,6 +667,8 @@
       let bgCanvas, bgCtx, bgRafId, bgLastTime = 0;
       let bgColorCurr = { r: 20, g: 20, b: 20 };
       let bgColorTarget = { r: 20, g: 20, b: 20 };
+      let presenceColorCurr = { r: 20, g: 20, b: 20 };
+      let presenceColorTarget = { r: 20, g: 20, b: 20 };
 
       // Background transition globals
       let bgTransActive = false;
@@ -828,7 +831,7 @@
         if (audioContext) return;
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
-        analyser.fftSize = 512;
+        analyser.fftSize = 2048;
         analyser.smoothingTimeConstant = 0.4;
         analyser.minDecibels = -60;  // raise floor — cuts dead silence, spreads compressed signal
         analyser.maxDecibels = -5;   // near 0dBFS peak for compressed/loudness-war tracks
@@ -928,36 +931,40 @@
         if (timestamp - bgLastTime < VIZ_INTERVAL) return;
         bgLastTime = timestamp;
 
-        // Lerp toward target color (~2 second transition at 15fps)
+        // Lerp toward target colors
         bgColorCurr.r += (bgColorTarget.r - bgColorCurr.r) * 0.06;
         bgColorCurr.g += (bgColorTarget.g - bgColorCurr.g) * 0.06;
         bgColorCurr.b += (bgColorTarget.b - bgColorCurr.b) * 0.06;
+        presenceColorCurr.r += (presenceColorTarget.r - presenceColorCurr.r) * 0.06;
+        presenceColorCurr.g += (presenceColorTarget.g - presenceColorCurr.g) * 0.06;
+        presenceColorCurr.b += (presenceColorTarget.b - presenceColorCurr.b) * 0.06;
 
         const W = bgCanvas.width, H = bgCanvas.height;
         const cx = W / 2, cy = H / 2;
         const { r, g, b } = bgColorCurr;
-        const scale = 1 + smoothedBass * 0.4;
+        const scale = 1 + smoothedBass * 0.65;
 
         bgCtx.clearRect(0, 0, W, H);
 
         // Main centered glow
-        const maxR = Math.max(W, H) * 0.55 * scale;
+        const maxR = Math.max(W, H) * 0.3 * scale;
         const grd = bgCtx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
-        grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.9)`);
-        grd.addColorStop(0.45, `rgba(${r}, ${g}, ${b}, 0.45)`);
+        grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${0.1 + smoothedBass * 0.7})`);
+        grd.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${0.03 + smoothedBass * 0.2})`);
         grd.addColorStop(1, 'rgba(0,0,0,0)');
         bgCtx.fillStyle = grd;
         bgCtx.fillRect(0, 0, W, H);
 
-        // Offset secondary glow for depth
-        const grd2 = bgCtx.createRadialGradient(W * 0.25, H * 0.25, 0, W * 0.25, H * 0.25, maxR * 0.7);
-        grd2.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.25)`);
+        // Offset secondary glows — presence colour for visual separation
+        const { r: pr, g: pg, b: pb } = presenceColorCurr;
+        const grd2 = bgCtx.createRadialGradient(W * 0.25, H * 0.25, 0, W * 0.25, H * 0.25, maxR * 0.5);
+        grd2.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${0.04 + smoothedMid * 0.25})`);
         grd2.addColorStop(1, 'rgba(0,0,0,0)');
         bgCtx.fillStyle = grd2;
         bgCtx.fillRect(0, 0, W, H);
 
-        const grd3 = bgCtx.createRadialGradient(W * 0.75, H * 0.75, 0, W * 0.75, H * 0.75, maxR * 0.7);
-        grd3.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.2)`);
+        const grd3 = bgCtx.createRadialGradient(W * 0.75, H * 0.75, 0, W * 0.75, H * 0.75, maxR * 0.5);
+        grd3.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${0.03 + smoothedMid * 0.2})`);
         grd3.addColorStop(1, 'rgba(0,0,0,0)');
         bgCtx.fillStyle = grd3;
         bgCtx.fillRect(0, 0, W, H);
@@ -1143,24 +1150,30 @@
         const cx = W / 2;
         const cy = H / 2;
 
-        // Bass energy (skip DC offset bins 0-1, sample ~first 6%)
-        const bassEnd = Math.max(4, Math.floor(bufferLength * 0.06));
-        let bass = 0;
-        for (let i = 2; i < bassEnd; i++) bass += dataArray[i];
-        bass = Math.pow(bass / (bassEnd - 2) / 255, 0.6); // power curve expands compressed signal
-        smoothedBass += (bass - smoothedBass) * 0.18;
+        // Hz-accurate bin ranges based on actual sample rate
+        const nyquist = audioContext.sampleRate / 2;
+        const hzPerBin = nyquist / bufferLength;
 
-        // Mid frequency energy
-        const midEnd = Math.floor(bufferLength * 0.35);
+        // Bass 30–400 Hz
+        const bassStart = Math.max(1, Math.round(30 / hzPerBin));
+        const bassEnd = Math.max(bassStart + 1, Math.round(400 / hzPerBin));
+        let bass = 0;
+        for (let i = bassStart; i <= bassEnd; i++) bass += dataArray[i];
+        bass = Math.pow(bass / (bassEnd - bassStart + 1) / 255, 0.55);
+        smoothedBass += (bass - smoothedBass) * 0.2;
+
+        // Vocal presence 1500–3500 Hz
+        const presStart = Math.round(1500 / hzPerBin);
+        const presEnd = Math.min(bufferLength - 1, Math.round(3500 / hzPerBin));
         let mid = 0;
-        for (let i = bassEnd; i < midEnd; i++) mid += dataArray[i];
-        mid = Math.pow(mid / (midEnd - bassEnd) / 255, 0.6);
-        smoothedMid += (mid - smoothedMid) * 0.14;
+        for (let i = presStart; i <= presEnd; i++) mid += dataArray[i];
+        mid = Math.pow(mid / (presEnd - presStart + 1) / 255, 0.55);
+        smoothedMid += (mid - smoothedMid) * 0.16;
 
         // Pulse the background blob container with bass
         const bgContainer = document.querySelector('.background-container');
         if (bgContainer) {
-          bgContainer.style.transform = `translate(-50%, -50%) scale(${1 + smoothedBass * 0.6})`;
+          bgContainer.style.transform = `translate(-50%, -50%) scale(${1 + smoothedBass * 0.9})`;
         }
 
         vizCtx.clearRect(0, 0, W, H);
@@ -1170,10 +1183,10 @@
 
         // Center bass glow — large and punchy
         if (smoothedBass > 0.02) {
-          const glowR = minDim * 0.25 + smoothedBass * minDim * 0.55;
+          const glowR = minDim * 0.06 + smoothedBass * minDim * 0.22;
           const grd = vizCtx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
-          grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${smoothedBass * 0.35})`);
-          grd.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${smoothedBass * 0.1})`);
+          grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${smoothedBass * 0.75})`);
+          grd.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${smoothedBass * 0.25})`);
           grd.addColorStop(1, 'rgba(0,0,0,0)');
           vizCtx.beginPath();
           vizCtx.arc(cx, cy, glowR, 0, Math.PI * 2);
@@ -1181,20 +1194,32 @@
           vizCtx.fill();
         }
 
-        // Corner glows driven by mids
-        if (smoothedMid > 0.02) {
-          const cornerR = minDim * 0.5 + smoothedMid * minDim * 0.4;
-          const cornerAlpha = smoothedMid * 0.18;
-          const corners = [[0, 0], [W, 0], [0, H], [W, H]];
-          corners.forEach(([x, y]) => {
-            const grd = vizCtx.createRadialGradient(x, y, 0, x, y, cornerR);
-            grd.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${cornerAlpha})`);
-            grd.addColorStop(1, 'rgba(0,0,0,0)');
-            vizCtx.beginPath();
-            vizCtx.arc(x, y, cornerR, 0, Math.PI * 2);
-            vizCtx.fillStyle = grd;
-            vizCtx.fill();
-          });
+        // Edge bands driven by presence (1500–3500 Hz) — 1/8th inset on all sides
+        if (smoothedMid > 0.01) {
+          const { r: pr, g: pg, b: pb } = presenceRgbColors;
+          const alpha = smoothedMid * 0.65;
+          const color = `rgba(${pr}, ${pg}, ${pb}, ${alpha})`;
+          const clear = 'rgba(0,0,0,0)';
+
+          vizCtx.save();
+          vizCtx.beginPath();
+          vizCtx.rect(0, 0, W, H);
+          vizCtx.roundRect(W * 0.125, H * 0.125, W * 0.75, H * 0.75, Math.min(W, H) * 0.08);
+          vizCtx.clip('evenodd');
+
+          // Left
+          const gradL = vizCtx.createLinearGradient(0, 0, W * 0.125, 0);
+          gradL.addColorStop(0, color); gradL.addColorStop(1, clear);
+          vizCtx.fillStyle = gradL;
+          vizCtx.fillRect(0, 0, W * 0.125, H);
+
+          // Right
+          const gradR = vizCtx.createLinearGradient(W * 0.875, 0, W, 0);
+          gradR.addColorStop(0, clear); gradR.addColorStop(1, color);
+          vizCtx.fillStyle = gradR;
+          vizCtx.fillRect(W * 0.875, 0, W * 0.125, H);
+
+          vizCtx.restore();
         }
       }
 
@@ -1323,6 +1348,62 @@
         updateButtons();
       }
 
+      function hue2rgb(p, q, t) {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      }
+
+      // Clamp a colour away from near-black and near-white, ensure minimum saturation
+      function sanitizeColor(r, g, b) {
+        const rn = r/255, gn = g/255, bn = b/255;
+        const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+        let h, s, l = (max + min) / 2;
+        if (max === min) { h = 0; s = 0; }
+        else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
+          else if (max === gn) h = ((bn - rn) / d + 2) / 6;
+          else h = ((rn - gn) / d + 4) / 6;
+        }
+        l = Math.max(0.22, Math.min(0.70, l));  // not too dark, not too white
+        s = Math.max(0.30, s);                  // minimum saturation
+        const q2 = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p2 = 2 * l - q2;
+        return {
+          r: Math.round(hue2rgb(p2, q2, h + 1/3) * 255),
+          g: Math.round(hue2rgb(p2, q2, h) * 255),
+          b: Math.round(hue2rgb(p2, q2, h - 1/3) * 255),
+        };
+      }
+
+      // Rotate hue by degrees, keeping sanitized lightness/saturation
+      function shiftHue(rgb, degrees) {
+        const rn = rgb.r/255, gn = rgb.g/255, bn = rgb.b/255;
+        const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+        let h, s, l = (max + min) / 2;
+        if (max === min) { h = 0; s = 0; }
+        else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
+          else if (max === gn) h = ((bn - rn) / d + 2) / 6;
+          else h = ((rn - gn) / d + 4) / 6;
+        }
+        h = (h + degrees / 360 + 1) % 1;
+        const q2 = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p2 = 2 * l - q2;
+        return {
+          r: Math.round(hue2rgb(p2, q2, h + 1/3) * 255),
+          g: Math.round(hue2rgb(p2, q2, h) * 255),
+          b: Math.round(hue2rgb(p2, q2, h - 1/3) * 255),
+        };
+      }
+
       function extractColors(imgElement) {
         return new Promise((resolve) => {
           const canvas = document.getElementById("color-canvas");
@@ -1338,67 +1419,72 @@
             const imageData = ctx.getImageData(0, 0, 50, 50);
             const data = imageData.data;
 
-            let r = 0,
-              g = 0,
-              b = 0;
-            let count = 0;
+            // Quantize into 12 hue sectors (30° each), skip neutrals/very dark pixels
+            const NUM_SECTORS = 12;
+            const buckets = Array.from({length: NUM_SECTORS}, () => ({r:0, g:0, b:0, count:0}));
+            let tr = 0, tg = 0, tb = 0, tc = 0;
 
-            // Sample every 4th pixel for performance
             for (let i = 0; i < data.length; i += 16) {
-              r += data[i];
-              g += data[i + 1];
-              b += data[i + 2];
-              count++;
+              const r = data[i], g = data[i+1], b = data[i+2];
+              tr += r; tg += g; tb += b; tc++;
+              const max = Math.max(r, g, b), min = Math.min(r, g, b);
+              const chroma = max - min;
+              if (chroma < 25 || max < 35) continue; // skip neutrals and near-black
+              let hue;
+              if (max === r) hue = ((g - b) / chroma + 6) % 6;
+              else if (max === g) hue = (b - r) / chroma + 2;
+              else hue = (r - g) / chroma + 4;
+              const sector = Math.floor(hue / 6 * NUM_SECTORS) % NUM_SECTORS;
+              buckets[sector].r += r;
+              buckets[sector].g += g;
+              buckets[sector].b += b;
+              buckets[sector].count++;
             }
 
-            // Calculate average and enhance saturation
-            r = Math.floor(r / count);
-            g = Math.floor(g / count);
-            b = Math.floor(b / count);
+            const chromatic = buckets
+              .map((b, i) => ({...b, i}))
+              .filter(b => b.count > 0)
+              .sort((a, b) => b.count - a.count);
 
-            // Enhance saturation and create more dramatic variations
-            const enhanceFactor = 1.5;
-            const primary = `rgb(${Math.min(
-              255,
-              Math.floor(r * enhanceFactor)
-            )}, ${Math.min(255, Math.floor(g * enhanceFactor))}, ${Math.min(
-              255,
-              Math.floor(b * enhanceFactor)
-            )})`;
-            const secondary = `rgb(${Math.min(255, r + 60)}, ${Math.min(
-              255,
-              g + 60
-            )}, ${Math.min(255, b + 60)})`;
-            const tertiary = `rgb(${Math.max(0, r - 40)}, ${Math.max(
-              0,
-              g - 40
-            )}, ${Math.max(0, b - 40)})`;
-            const quaternary = `rgb(${Math.min(
-              255,
-              Math.floor(r * 0.7)
-            )}, ${Math.min(255, Math.floor(g * 1.3))}, ${Math.min(
-              255,
-              Math.floor(b * 0.9)
-            )})`;
-            const quinary = `rgb(${Math.min(
-              255,
-              Math.floor(r * 1.2)
-            )}, ${Math.min(255, Math.floor(g * 0.8))}, ${Math.min(
-              255,
-              Math.floor(b * 1.4)
-            )})`;
+            function bucketAvg(bucket) {
+              return sanitizeColor(
+                Math.round(bucket.r / bucket.count),
+                Math.round(bucket.g / bucket.count),
+                Math.round(bucket.b / bucket.count)
+              );
+            }
 
-            resolve({ primary, secondary, tertiary, quaternary, quinary });
+            let bass, presence;
+            if (chromatic.length === 0) {
+              // Fully neutral/monochrome — sanitize average and shift hue for presence
+              bass = sanitizeColor(Math.round(tr/tc), Math.round(tg/tc), Math.round(tb/tc));
+              presence = shiftHue(bass, 120);
+            } else if (chromatic.length === 1) {
+              bass = bucketAvg(chromatic[0]);
+              presence = shiftHue(bass, 120);
+            } else {
+              bass = bucketAvg(chromatic[0]);
+              // Find second colour at least 2 sectors (60°) away from dominant
+              const second = chromatic.find(b => {
+                const dist = Math.min(
+                  Math.abs(b.i - chromatic[0].i),
+                  NUM_SECTORS - Math.abs(b.i - chromatic[0].i)
+                );
+                return dist >= 2;
+              }) || chromatic[1];
+              presence = bucketAvg(second);
+            }
+
+            resolve({
+              primary:  `rgb(${bass.r}, ${bass.g}, ${bass.b})`,
+              presence: `rgb(${presence.r}, ${presence.g}, ${presence.b})`,
+            });
           };
 
           img.onerror = function () {
-            // Enhanced fallback colors
             resolve({
-              primary: "#3a1a1a",
-              secondary: "#2a2a4a",
-              tertiary: "#1a3a2a",
-              quaternary: "#4a2a1a",
-              quinary: "#2a1a4a",
+              primary:  'rgb(100, 40, 40)',
+              presence: 'rgb(40, 40, 100)',
             });
           };
 
@@ -1416,9 +1502,12 @@
         triggerBgTransition(); // snapshot old bg before changing colors
         currentRgbColors = parseRgb(colors.primary);
         bgColorTarget = { ...currentRgbColors };
+        presenceRgbColors = parseRgb(colors.presence);
+        presenceColorTarget = { ...presenceRgbColors };
         if (bgTransActive) {
           // Snap so new colour is fully rendered under the overlay before it reveals
           bgColorCurr = { ...bgColorTarget };
+          presenceColorCurr = { ...presenceColorTarget };
         } else {
           // First load — no transition, apply metadata right away
           applyPendingMetadata();
@@ -1834,16 +1923,16 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ uuid: userUUID, songid: songId, turnstile: turnstileToken }),
             })
-              .then((response) => response.json())
-              .then((data) => {
-                if (data.success) {
+              .then((response) => response.json().then((data) => ({ ok: response.ok, data })))
+              .then(({ ok, data }) => {
+                if (ok && data.success) {
                   lastVotedSongId = songId;
                   updateButtons();
                   bootstrap.Modal.getInstance(
                     document.getElementById("voteSkipModal")
                   ).hide();
                 } else {
-                  alert(data.error || "Failed to submit vote");
+                  alert(data.detail || data.error || "Failed to submit vote");
                 }
                 this.disabled = false;
                 this.innerHTML = "Vote to Skip";

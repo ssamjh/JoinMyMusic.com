@@ -48,9 +48,12 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             if metadata != last_metadata:
                 last_metadata = metadata
 
-                # Clear votes when song changes
+                # Clear votes when song changes and notify clients
                 if song_id and song_id != last_song_id and last_song_id:
                     vote_skips_state.pop(last_song_id, None)
+                    total_listeners = len(listeners_state)
+                    needed = max(2, -(-total_listeners // 2))
+                    await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
                 last_song_id = song_id
 
                 await broadcaster.broadcast("metadata", current)
