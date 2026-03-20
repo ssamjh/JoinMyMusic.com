@@ -397,6 +397,26 @@
         text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9), 0 0 20px rgba(0, 0, 0, 0.7);
       }
 
+      /* Song-change suck-in animations */
+      @keyframes suck-in-img {
+        0%   { transform: scale(1);    opacity: 1; }
+        38%  { transform: scale(0.86); opacity: 0.6; }
+        100% { transform: scale(1);    opacity: 1; }
+      }
+      @keyframes suck-in-text {
+        0%   { transform: scaleY(1); opacity: 1; }
+        38%  { transform: scaleY(0); opacity: 0; }
+        100% { transform: scaleY(1); opacity: 1; }
+      }
+      .suck-in-img {
+        animation: suck-in-img 0.42s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .div-playing-title.suck-in-text,
+      .div-playing-artist.suck-in-text {
+        display: block;
+        animation: suck-in-text 0.42s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
       /* Hide the color extraction canvas */
       #color-canvas {
         display: none;
@@ -647,6 +667,17 @@
       let bgColorCurr = { r: 20, g: 20, b: 20 };
       let bgColorTarget = { r: 20, g: 20, b: 20 };
 
+      // Background transition globals
+      let bgTransActive = false;
+      let bgTransStartTime = 0;
+      const BG_TRANS_DURATION = 900;
+      let bgTransOldCanvas = null;
+      let bgHasBeenSet = false;
+      let pendingMetadata = null;       // { data, imgSrc } waiting for reveal point
+      let pendingMetadataApplied = false;
+      const BG_TRANS_REVEAL = 0.04;     // progress at which new colour has just blipped out from centre
+      let bgTransBlobOffsets = [];      // random radii offsets for the organic blob shape
+
       function generateUUID() {
         return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
           /[xy]/g,
@@ -871,6 +902,12 @@
         if (!bgCanvas) return;
         bgCanvas.width = Math.max(1, Math.floor(window.innerWidth / 8));
         bgCanvas.height = Math.max(1, Math.floor(window.innerHeight / 8));
+        // Cancel any in-progress transition — snapshot size is now wrong
+        if (bgTransActive) {
+          bgTransActive = false;
+          bgTransOldCanvas = null;
+          bgCanvas.style.transform = '';
+        }
       }
 
       function startBg() {
@@ -924,6 +961,125 @@
         grd3.addColorStop(1, 'rgba(0,0,0,0)');
         bgCtx.fillStyle = grd3;
         bgCtx.fillRect(0, 0, W, H);
+
+        // Draw transition overlay on top of new background
+        if (bgTransActive && timestamp) {
+          const elapsed = timestamp - bgTransStartTime;
+          const rawProgress = Math.min(1, elapsed / BG_TRANS_DURATION);
+          drawBgTransition(rawProgress);
+          if (rawProgress >= 1) {
+            bgTransActive = false;
+            bgTransOldCanvas = null;
+            bgCanvas.style.transform = '';
+          }
+        }
+      }
+
+      function easeInOut(t) {
+        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      }
+
+      function drawBgTransition(rawProgress) {
+        if (!bgTransOldCanvas) return;
+        const p = easeInOut(rawProgress);
+        const W = bgCanvas.width, H = bgCanvas.height;
+
+        // Organic blob wipe: new colour expands outward from centre as an irregular blob.
+        // Old colour is drawn everywhere EXCEPT inside the growing blob (even-odd clip).
+        const cx = W / 2, cy = H / 2;
+        const cornerR = Math.sqrt(cx * cx + cy * cy);
+        const baseR = cornerR * 1.55;
+        const N = bgTransBlobOffsets.length;
+        const scale = baseR * p; // grows from 0 outward
+
+        // Compute blob vertices (polar, uneven radii)
+        const pts = bgTransBlobOffsets.map((off, i) => {
+          const angle = (2 * Math.PI * i / N) - Math.PI / 2;
+          const r = scale * (1 + off);
+          return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
+        });
+
+        // Even-odd clip: full canvas rect + blob path = old image drawn only OUTSIDE the blob
+        bgCtx.save();
+        bgCtx.beginPath();
+        bgCtx.rect(0, 0, W, H); // outer boundary
+        const startMid = { x: (pts[N - 1].x + pts[0].x) / 2, y: (pts[N - 1].y + pts[0].y) / 2 };
+        bgCtx.moveTo(startMid.x, startMid.y);
+        for (let i = 0; i < N; i++) {
+          const a = pts[i], b = pts[(i + 1) % N];
+          bgCtx.quadraticCurveTo(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        }
+        bgCtx.closePath();
+        bgCtx.clip('evenodd');
+        bgCtx.drawImage(bgTransOldCanvas, 0, 0);
+        bgCtx.restore();
+
+        // When the wipe reaches the centre, trigger the metadata swap
+        if (rawProgress >= BG_TRANS_REVEAL && !pendingMetadataApplied) {
+          pendingMetadataApplied = true;
+          applyPendingMetadata();
+        }
+      }
+
+      function triggerBgTransition() {
+        if (!bgHasBeenSet) {
+          bgHasBeenSet = true;
+          return; // no transition on first load — apply metadata immediately instead
+        }
+        if (document.body.classList.contains('no-bg-animation')) {
+          return; // animation loop isn't running, skip transition so metadata applies immediately
+        }
+        const snap = document.createElement('canvas');
+        snap.width = bgCanvas.width;
+        snap.height = bgCanvas.height;
+        snap.getContext('2d').drawImage(bgCanvas, 0, 0);
+        bgTransOldCanvas = snap;
+        bgTransStartTime = performance.now();
+        bgTransActive = true;
+        pendingMetadataApplied = false;
+        // Generate a fresh random blob shape for this transition (12 points, ±35% radius variation)
+        bgTransBlobOffsets = Array.from({ length: 12 }, () => (Math.random() - 0.5) * 0.7);
+      }
+
+      function applyPendingMetadata() {
+        if (!pendingMetadata) return;
+        const { data, imgSrc } = pendingMetadata;
+        pendingMetadata = null;
+
+        const createLink = (url, id, name) =>
+          `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+
+        const imgEl  = document.getElementById('playing-image');
+        const titleEl  = document.querySelector('.div-playing-title');
+        const artistEl = document.querySelector('.div-playing-artist');
+
+        // Suck-in: compress → swap content → expand
+        imgEl.classList.add('suck-in-img');
+        titleEl.classList.add('suck-in-text');
+        artistEl.classList.add('suck-in-text');
+
+        setTimeout(() => {
+          playingImage.src = imgSrc;
+          titleEl.innerHTML  = createLink('https://open.spotify.com/track/',  data.songid, data.song);
+          artistEl.innerHTML = data.artist
+            .map(a => createLink('https://open.spotify.com/artist/', a.id, a.name))
+            .join(', ');
+          playingLink.setAttribute('href', `https://open.spotify.com/album/${data.albumid}`);
+          if ('mediaSession' in navigator && data.song) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: data.song,
+              artist: data.artist.map(a => a.name).join(', '),
+              album: data.albumid,
+              artwork: [{ src: imgSrc, sizes: '250x250', type: 'image/jpeg' }],
+            });
+          }
+        }, 160); // swap at compressed midpoint
+
+        setTimeout(() => {
+          imgEl.classList.remove('suck-in-img');
+          titleEl.classList.remove('suck-in-text');
+          artistEl.classList.remove('suck-in-text');
+        }, 420);
       }
 
       // --- End Background Canvas ---
@@ -1088,9 +1244,10 @@
       }
 
       function preloadImage(url, callback) {
-        let img = new Image();
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => callback(img);
         img.src = url;
-        img.onload = callback;
       }
 
       function handleMetadata(currentData) {
@@ -1110,50 +1267,24 @@
 
         updateSongId(currentData.songid);
 
-        const createLink = (url, id, name) =>
-          `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
-
         if (playingImage.src !== currentData.cover) {
-          preloadImage(currentData.cover, function () {
-            playingImage.src = currentData.cover;
-            extractColors(playingImage).then((colors) => {
+          // Preload new cover, extract colours, then kick off the wipe transition.
+          // The DOM update (image + text) is deferred until the wipe reaches the centre.
+          preloadImage(currentData.cover, function (img) {
+            extractColors(img).then((colors) => {
+              pendingMetadata = { data: currentData, imgSrc: currentData.cover };
               updateBackgroundColors(colors);
             });
-            $(".div-playing-title").html(
-              createLink("https://open.spotify.com/track/", currentData.songid, currentData.song)
-            );
-            $(".div-playing-artist").html(
-              currentData.artist
-                .map((artist) =>
-                  createLink("https://open.spotify.com/artist/", artist.id, artist.name)
-                )
-                .join(", ")
-            );
-            if ("mediaSession" in navigator) {
-              if (currentData && currentData.song) {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                  title: currentData.song,
-                  artist: currentData.artist.map((a) => a.name).join(", "),
-                  album: currentData.albumid,
-                  artwork: [{ src: currentData.cover, sizes: "250x250", type: "image/jpeg" }],
-                });
-              } else {
-                navigator.mediaSession.metadata = null;
-              }
-            }
-            playingLink.setAttribute("href", `https://open.spotify.com/album/${currentData.albumid}`);
           });
         } else {
-          $(".div-playing-title").html(
-            createLink("https://open.spotify.com/track/", currentData.songid, currentData.song)
-          );
-          $(".div-playing-artist").html(
-            currentData.artist
-              .map((artist) =>
-                createLink("https://open.spotify.com/artist/", artist.id, artist.name)
-              )
-              .join(", ")
-          );
+          // Same cover — queue the text update through the transition too so timing is consistent
+          pendingMetadata = { data: currentData, imgSrc: currentData.cover };
+          if (bgTransActive) {
+            // Let the running transition pick it up at the reveal point
+            pendingMetadataApplied = false;
+          } else {
+            applyPendingMetadata();
+          }
         }
       }
 
@@ -1282,8 +1413,16 @@
 
       // Update background canvas target colors on song change
       function updateBackgroundColors(colors) {
+        triggerBgTransition(); // snapshot old bg before changing colors
         currentRgbColors = parseRgb(colors.primary);
         bgColorTarget = { ...currentRgbColors };
+        if (bgTransActive) {
+          // Snap so new colour is fully rendered under the overlay before it reveals
+          bgColorCurr = { ...bgColorTarget };
+        } else {
+          // First load — no transition, apply metadata right away
+          applyPendingMetadata();
+        }
       }
 
 
