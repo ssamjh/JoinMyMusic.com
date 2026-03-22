@@ -433,6 +433,55 @@
         opacity: 0;
         transition: opacity 1.5s ease;
       }
+
+      /* Google Cast button */
+      google-cast-launcher {
+        --disconnected-color: rgba(255, 255, 255, 0.75);
+        --connected-color: #4fc3f7;
+        width: 22px;
+        height: 22px;
+        display: inline-block;
+        vertical-align: middle;
+        cursor: pointer;
+      }
+      #cast-btn-wrapper { display: none; }
+
+      /* ---- Cast receiver mode (?casting) ---- */
+      body.cast-mode #button-toggle,
+      body.cast-mode [data-bs-target="#songRequestModal"],
+      body.cast-mode #voteSkipBtn,
+      body.cast-mode #muteSongBtn,
+      body.cast-mode #div-volume,
+      body.cast-mode #stats-container,
+      body.cast-mode #cast-btn-wrapper,
+      body.cast-mode #bgToggleBtn,
+      body.cast-mode h5,
+      body.cast-mode footer { display: none !important; }
+
+      body.cast-mode .container {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-height: 100vh !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+      }
+      body.cast-mode h2 { margin-bottom: 4rem !important; }
+      body.cast-mode #playing-image {
+        width: min(380px, 42vmin) !important;
+        height: min(380px, 42vmin) !important;
+      }
+      body.cast-mode h4 { margin-top: 0 !important; margin-bottom: 4px !important; }
+      body.cast-mode .div-playing-title {
+        font-size: clamp(22px, 3.8vw, 54px) !important;
+        margin-top: 0 !important;
+      }
+      body.cast-mode .div-playing-artist {
+        font-size: clamp(15px, 2.4vw, 36px) !important;
+        opacity: 0.8;
+        margin-top: 10px !important;
+      }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
@@ -574,6 +623,9 @@
       </button>
       <button id="muteSongBtn" class="btn btn-warning btn-sm mb-2 ms-2">
         Mute Song
+      </button>
+      <button id="cast-btn-wrapper" class="btn btn-outline-secondary btn-sm mb-2 ms-2" onclick="presentationConn ? stopPresentation() : startPresentation()" title="Cast to TV">
+        Cast
       </button>
       <div id="div-volume" class="mb-2">
         <div class="d-flex justify-content-center align-items-center mb-1">
@@ -1232,6 +1284,11 @@
       // --- End Enhanced Background Effects ---
 
       function togglePlay() {
+        if (castSend({ type: 'play' })) {
+          buttonToggle.textContent = "Stop";
+          buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
+          return;
+        }
         qualityUpdate();
         audioStream.play();
         buttonToggle.textContent = "Stop";
@@ -1247,6 +1304,11 @@
       }
 
       function buttonStop() {
+        if (castSend({ type: 'stop' })) {
+          buttonToggle.textContent = "Play";
+          buttonToggle.setAttribute("onClick", "javascript: togglePlay();");
+          return;
+        }
         audioStream.pause();
         audioStream.currentTime = 0;
         buttonToggle.textContent = "Play";
@@ -1622,6 +1684,125 @@
       }
 
       connectSSE();
+
+      // ---- Presentation API Cast ----
+      // Uses the W3C Presentation API which Chrome routes through its Media Router.
+      // Works on local network IPs — no Cast SDK or app registration needed.
+      (function initPresentationApi() {
+        console.log('[Cast] PresentationRequest available:', !!window.PresentationRequest);
+        console.log('[Cast] navigator.presentation:', !!navigator.presentation);
+        if (!window.PresentationRequest) {
+          console.warn('[Cast] Presentation API not supported');
+          return;
+        }
+        const receiverUrl = window.location.origin + '/?casting';
+        console.log('[Cast] Receiver URL:', receiverUrl);
+        const req = new PresentationRequest([receiverUrl]);
+        navigator.presentation.defaultRequest = req;
+
+        function setCastBtnVisible(visible) {
+          document.getElementById('cast-btn-wrapper').style.display = visible ? 'inline-flex' : 'none';
+        }
+
+        req.getAvailability()
+          .then(function(avail) {
+            console.log('[Cast] Display available:', avail.value);
+            setCastBtnVisible(avail.value);
+            avail.onchange = function() {
+              console.log('[Cast] Display availability changed:', avail.value);
+              setCastBtnVisible(avail.value);
+            };
+          })
+          .catch(function(err) {
+            console.warn('[Cast] getAvailability failed:', err, '— showing button anyway');
+            setCastBtnVisible(true);
+          });
+
+        window._presentationReq = req;
+      })();
+
+      var presentationConn = null;
+
+      function startPresentation() {
+        if (!window._presentationReq) return;
+        window._presentationReq.start()
+          .then(function(conn) {
+            console.log('[Cast] Presentation started:', conn.id);
+            presentationConn = conn;
+            // Pause local audio — receiver plays it (bypass castSend by acting directly)
+            audioStream.pause();
+            audioStream.currentTime = 0;
+            isPlaying = false;
+            stopPolling();
+            updateButtons();
+            stopViz();
+            document.getElementById('cast-btn-wrapper').textContent = 'Stop Casting';
+            // Disable local volume slider while casting
+            var inputVol = document.getElementById('input-volume');
+            var volWasDisabled = inputVol ? inputVol.disabled : true;
+            if (inputVol) inputVol.disabled = true;
+            conn.onclose = function() {
+              console.log('[Cast] Connection closed');
+              presentationConn = null;
+              document.getElementById('cast-btn-wrapper').textContent = 'Cast';
+              if (inputVol) inputVol.disabled = volWasDisabled;
+              togglePlay();
+            };
+            conn.onterminate = conn.onclose;
+          })
+          .catch(function(err) {
+            if (err.name !== 'NotAllowedError') console.error('[Cast] start failed:', err);
+          });
+      }
+
+      function stopPresentation() {
+        if (presentationConn) {
+          presentationConn.terminate();
+        }
+      }
+
+      // When a cast session is active, send a message to the receiver instead of acting locally
+      function castSend(msg) {
+        if (presentationConn && presentationConn.state === 'connected') {
+          presentationConn.send(JSON.stringify(msg));
+          return true;
+        }
+        return false;
+      }
+      // ---- End Presentation API Cast ----
+
+      // ---- Cast receiver mode (?casting) ----
+      var IS_CASTING = new URLSearchParams(window.location.search).has('casting');
+
+      if (IS_CASTING) {
+        document.body.classList.add('cast-mode');
+        // Force animations on — TV is always capable
+        document.body.classList.remove('no-bg-animation');
+        startGrainAnimation();
+        startBg();
+
+        // Auto-play: togglePlay() loads HLS source + plays (presentationConn is null here)
+        togglePlay();
+
+        // Listen for control messages from the sender
+        if (navigator.presentation && navigator.presentation.receiver) {
+          navigator.presentation.receiver.connectionList.then(function(list) {
+            function attachConn(conn) {
+              conn.onmessage = function(evt) {
+                try {
+                  var msg = JSON.parse(evt.data);
+                  if (msg.type === 'play') togglePlay();
+                  else if (msg.type === 'stop') buttonStop();
+                  else if (msg.type === 'volume') volumeSet(msg.value);
+                } catch(e) {}
+              };
+            }
+            list.connections.forEach(attachConn);
+            list.onconnectionavailable = function(evt) { attachConn(evt.connection); };
+          });
+        }
+      }
+      // ---- End Cast receiver mode ----
 
       // Song Request Modal functionality
       document.addEventListener("DOMContentLoaded", function () {
