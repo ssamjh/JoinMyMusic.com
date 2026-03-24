@@ -16,4 +16,5 @@ services:
       TOKEN_CACHE_FILE: "/data/token_cache.json"
       DB_FILE: "/data/music_sync.db"
       PORT: "8080"
+      METADATA_DELAY: "5"
     restart: unless-stopped

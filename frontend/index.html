@@ -378,6 +378,11 @@
         display: none;
       }
 
+      /* Disable grain only */
+      .no-grain .grain-overlay {
+        display: none;
+      }
+
       #bgToggleBtn {
         font-size: 0.75rem;
       }
@@ -676,7 +681,10 @@
           <button class="btn btn-sm btn-outline-secondary" id="bgToggleBtn" onclick="toggleBgAnimation()" title="Toggle background effects">
             <i class="fas fa-wand-magic-sparkles"></i> Effects
           </button>
-          <div>&copy; 2025 <span>ssamjh</span></div>
+          <button class="btn btn-sm btn-outline-secondary" id="grainToggleBtn" onclick="toggleGrain()" title="Toggle film grain">
+            <i class="fas fa-film"></i> Grain
+          </button>
+          <div>&copy; 2026 <span>ssamjh</span></div>
         </div>
       </footer>
     </div>
@@ -930,7 +938,7 @@
       function startGrainAnimation() {
         if (grainIntervalId) return;
         const grainEl = document.querySelector('.grain-overlay');
-        if (!grainEl || document.body.classList.contains('no-bg-animation')) return;
+        if (!grainEl || document.body.classList.contains('no-bg-animation') || document.body.classList.contains('no-grain')) return;
         grainIntervalId = setInterval(function () {
           grainFrameIndex = (grainFrameIndex + 1) % grainFrames.length;
           grainEl.style.backgroundImage = 'url(' + grainFrames[grainFrameIndex] + ')';
@@ -1654,6 +1662,24 @@
         }
       }
 
+      function updateGrainToggleButton() {
+        const btn = document.getElementById('grainToggleBtn');
+        if (!btn) return;
+        const isOff = document.body.classList.contains('no-grain');
+        btn.innerHTML = '<i class="fas fa-film"></i> Grain: ' + (isOff ? 'Off' : 'On');
+      }
+
+      function toggleGrain() {
+        const isOff = document.body.classList.toggle('no-grain');
+        setCookie('grain', isOff ? 'off' : 'on', 365);
+        updateGrainToggleButton();
+        if (isOff) {
+          stopGrainAnimation();
+        } else if (!document.body.classList.contains('no-bg-animation')) {
+          startGrainAnimation();
+        }
+      }
+
       // Initialize background animation preference
       // Cookie always wins. No cookie → default OFF unless device passes all checks.
       (function initBgAnimationToggle() {
@@ -1667,6 +1693,15 @@
         if (!document.body.classList.contains('no-bg-animation')) {
           startBg();
         }
+      })();
+
+      // Initialize grain preference
+      (function initGrainToggle() {
+        const pref = getCookie('grain');
+        if (pref === 'off') {
+          document.body.classList.add('no-grain');
+        }
+        updateGrainToggleButton();
       })();
 
       if (!audioStream.paused) {

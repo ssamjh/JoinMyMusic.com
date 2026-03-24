@@ -1,9 +1,12 @@
 import asyncio
 import json
 import logging
+import os
 import time
 
 logger = logging.getLogger(__name__)
+
+METADATA_DELAY = float(os.environ.get("METADATA_DELAY", "5"))
 
 
 class SSEBroadcaster:
@@ -56,6 +59,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
                     await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
                 last_song_id = song_id
 
+                await asyncio.sleep(METADATA_DELAY)
                 await broadcaster.broadcast("metadata", current)
         except Exception as e:
             logger.error(f"Spotify poll error: {e}")
