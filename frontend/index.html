@@ -834,8 +834,11 @@
 
       function fallbackToIcecast() {
         console.log("Using Icecast fallback stream");
+        audioStream.pause();
+        audioStream.removeAttribute('src');
+        audioStream.load();
         audioStream.src = "https://icecast.sjh.at/spotifynet";
-        audioStream.play();
+        audioStream.play().catch(function(e) { console.warn("Icecast play failed:", e); });
       }
 
       function icecastFallbackHandler() {
@@ -851,8 +854,6 @@
       }
 
       function qualityUpdate() {
-        let wasPlaying = !audioStream.paused;
-
         // Clean up previous HLS instance
         if (hlsInstance) {
           hlsInstance.destroy();
@@ -863,6 +864,10 @@
           hlsInstance = new Hls();
           hlsInstance.loadSource("https://hls.sjh.at/spotifynet/stream.m3u8");
           hlsInstance.attachMedia(audioStream);
+
+          hlsInstance.once(Hls.Events.MANIFEST_PARSED, function() {
+            audioStream.play().catch(function(e) { console.warn("HLS play failed:", e); });
+          });
 
           hlsInstance.on(Hls.Events.ERROR, function (event, data) {
             if (data.fatal) {
@@ -876,12 +881,9 @@
         } else if (!hlsFailed && audioStream.canPlayType("application/vnd.apple.mpegurl")) {
           audioStream.src = "https://hls.sjh.at/spotifynet/stream.m3u8";
           audioStream.addEventListener("error", icecastFallbackHandler, { once: true });
+          audioStream.play().catch(function(e) {});
         } else {
           fallbackToIcecast();
-        }
-
-        if (wasPlaying) {
-          audioStream.play();
         }
       }
 
@@ -1298,7 +1300,6 @@
           return;
         }
         qualityUpdate();
-        audioStream.play();
         buttonToggle.textContent = "Stop";
         buttonToggle.setAttribute("onClick", "javascript: buttonStop();");
         isPlaying = true;
