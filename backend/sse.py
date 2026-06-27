@@ -39,8 +39,11 @@ broadcaster = SSEBroadcaster()
 
 async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: dict):
     """Background task: poll Spotify every 5s, broadcast metadata on change."""
+    from storage import add_to_history, get_history, prune_history
+
     last_metadata: dict | None = None
     last_song_id: str = ""
+    last_current: dict | None = None  # metadata of the currently playing song
 
     while True:
         try:
@@ -48,19 +51,30 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             current = metadata.get("current", {})
             song_id = current.get("songid", "")
 
+            # Expire history entries older than the TTL, even if nothing else changed.
+            history_changed = prune_history()
+
             if metadata != last_metadata:
                 last_metadata = metadata
 
-                # Clear votes when song changes and notify clients
-                if song_id and song_id != last_song_id and last_song_id:
-                    vote_skips_state.pop(last_song_id, None)
-                    total_listeners = len(listeners_state)
-                    needed = max(2, -(-total_listeners // 2))
-                    await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
+                # A new song started: record the previous one and clear its votes.
+                if song_id and song_id != last_song_id:
+                    if last_song_id and last_current:
+                        add_to_history(last_current)
+                        history_changed = True
+                    if last_song_id:
+                        vote_skips_state.pop(last_song_id, None)
+                        total_listeners = len(listeners_state)
+                        needed = max(2, -(-total_listeners // 2))
+                        await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
+                    last_current = current
                 last_song_id = song_id
 
                 await asyncio.sleep(METADATA_DELAY)
                 await broadcaster.broadcast("metadata", current)
+
+            if history_changed:
+                await broadcaster.broadcast("history", {"history": get_history()})
         except Exception as e:
             logger.error(f"Spotify poll error: {e}")
 

@@ -21,6 +21,7 @@ from storage import (
     check_rate_limit,
     check_submission_id,
     get_db,
+    get_history,
     init_db,
     listeners,
     submission_ids,
@@ -79,6 +80,7 @@ async def sse_events(request: Request):
             metadata = await spotify_client.get_current_playback()
             yield f"event: metadata\ndata: {json.dumps(metadata.get('current', {}))}\n\n"
             yield f"event: listeners\ndata: {json.dumps({'count': len(listeners)})}\n\n"
+            yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
 
             while True:
                 try:
@@ -106,6 +108,11 @@ async def sse_events(request: Request):
 @app.get("/api/metadata")
 async def get_metadata():
     return await spotify_client.get_current_playback()
+
+
+@app.get("/api/history")
+async def get_play_history():
+    return {"history": get_history()}
 
 # ─── Auth status ─────────────────────────────────────────────────────────────
 

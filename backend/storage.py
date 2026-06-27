@@ -11,6 +11,36 @@ listeners: Dict[str, dict] = {}          # {uuid: {name, ip, last_seen, user_age
 vote_skips: Dict[str, Set[str]] = {}     # {song_id: {uuid:ip, ...}}
 rate_limits: Dict[str, List[float]] = {} # {action:ip: [timestamp, ...]}
 submission_ids: Dict[str, float] = {}    # {submission_id: created_at}  TTL 5 min
+play_history: List[dict] = []            # [{...song metadata, played_at}, ...] newest first
+
+HISTORY_MAX_ITEMS = 10
+HISTORY_TTL_SECS = 3600  # songs drop off the history 1 hour after they played
+
+
+def prune_history() -> bool:
+    """Drop history entries older than the TTL and trim to the max size.
+
+    Mutates play_history in place. Returns True if anything was removed.
+    """
+    now = time.time()
+    before = len(play_history)
+    play_history[:] = [h for h in play_history if now - h["played_at"] < HISTORY_TTL_SECS]
+    del play_history[HISTORY_MAX_ITEMS:]
+    return len(play_history) != before
+
+
+def add_to_history(song: dict) -> None:
+    """Record a song that just finished playing (newest first), then prune."""
+    entry = {k: v for k, v in song.items() if k != "playing"}
+    entry["played_at"] = time.time()
+    play_history.insert(0, entry)
+    prune_history()
+
+
+def get_history() -> List[dict]:
+    """Return the current, pruned play history (newest first)."""
+    prune_history()
+    return list(play_history)
 
 
 def init_db():
