@@ -1864,7 +1864,11 @@
       function preloadImage(url, callback) {
         const img = new Image();
         img.crossOrigin = 'Anonymous';
-        img.onload = () => callback(img);
+        // Wait for a full decode (not just download) so the bitmap is warm in cache —
+        // setting playingImage.src to the same URL then paints instantly without a flicker.
+        const done = () => callback(img);
+        img.onload = () => (img.decode ? img.decode().then(done, done) : done());
+        img.onerror = done; // don't stall the swap on a broken cover
         img.src = url;
       }
 
