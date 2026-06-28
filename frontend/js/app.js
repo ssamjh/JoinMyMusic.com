@@ -16,29 +16,34 @@ let hlsInstance = null;
 const DISPLAY_MODE = /[?&]display\b/i.test(location.search);
 if (DISPLAY_MODE) document.body.classList.add("display-mode");
 
-// Enhanced background effects globals
+// --- Web Audio graph (built lazily, only when the visualizer needs it) ---
 let audioContext = null;
 let analyser = null;
 let audioSource = null;
-
-// Visualizer globals
-let vizCanvas, vizCtx, vizRafId;
-let currentRgbColors = { r: 80, g: 80, b: 80 };
-let presenceRgbColors = { r: 80, g: 80, b: 80 };
-let smoothedBass = 0;
-let smoothedMid = 0;
 let gainNode = null;
 let currentGain = 1.0;
 
-// Background canvas globals
+// --- Visualizer canvas + state ---
+// Colours are { r, g, b }. "primary" = the dominant/bass colour, "presence" =
+// the secondary/vocal colour. The visualizer paints with these instantly.
+let vizCanvas, vizCtx, vizRafId;
+let vizPrimary = { r: 80, g: 80, b: 80 };
+let vizPresence = { r: 80, g: 80, b: 80 };
+let smoothedBass = 0;      // 0..1 low-frequency energy, eased per frame
+let smoothedPresence = 0;  // 0..1 vocal-presence energy, eased per frame
+
+// --- Background glow canvas + state ---
+// Same primary/presence colours, but each frame the live value eases toward its
+// *Target, so the backdrop drifts to a new palette rather than snapping.
 let bgCanvas, bgCtx, bgRafId, bgLastTime = 0;
-let bgColorCurr = { r: 20, g: 20, b: 20 };
-let bgColorTarget = { r: 20, g: 20, b: 20 };
-// New palette waiting to be applied — held until the record actually swaps to
-// the new cover, so the background / side glow never change colour beforehand.
+let bgPrimary = { r: 20, g: 20, b: 20 };
+let bgPrimaryTarget = { r: 20, g: 20, b: 20 };
+let bgPresence = { r: 20, g: 20, b: 20 };
+let bgPresenceTarget = { r: 20, g: 20, b: 20 };
+
+// Palette extracted from the next cover, staged until the record actually swaps
+// to it — so the backdrop / side glow never change colour ahead of the artwork.
 let pendingColors = null;
-let presenceColorCurr = { r: 20, g: 20, b: 20 };
-let presenceColorTarget = { r: 20, g: 20, b: 20 };
 
 // Tonearm progress globals — drive the arm from the rim to the centre
 const TONEARM_SWEEP_DEG = 29.32; // rim → just before centre (runout, ~15% radius)
@@ -72,7 +77,7 @@ const SPIN_FULL = 360 / 8000; // deg per ms → one revolution every 8s
 const EASE_OUT = (x) => 1 - (1 - x) * (1 - x); // decelerate into a stop
 const EASE_IN = (x) => x * x; // accelerate from a stop
 let spinEls = null;
-let spinAngle = 0, spinSpeed = 0, spinRaf = null, spinPrev = 0;
+let spinAngle = 0, spinSpeed = 0, spinRafId = null, spinPrev = 0;
 let spinRampFrom = 0, spinRampTo = 0, spinRampStart = 0, spinRampDur = 0, spinRampEase = EASE_OUT;
 function fxOn() {
   return !document.body.classList.contains("no-bg-animation");
@@ -85,12 +90,12 @@ function startSpinRamp(to, dur, ease) {
   spinRampEase = ease;
   // Run the loop whenever effects are on, so the record keeps turning as it
   // decelerates to a stop even after playback has been paused.
-  if (!spinRaf && fxOn()) { spinPrev = 0; spinRaf = requestAnimationFrame(spinFrame); }
+  if (!spinRafId && fxOn()) { spinPrev = 0; spinRafId = requestAnimationFrame(spinFrame); }
 }
 function spinFrame(t) {
   if (!fxOn()) {
     // Effects off — square-mode art must sit upright; clear rotation and stop.
-    spinRaf = null; spinSpeed = 0; spinRampDur = 0;
+    spinRafId = null; spinSpeed = 0; spinRampDur = 0;
     if (spinEls) spinEls.forEach((el) => (el.style.transform = ""));
     return;
   }
@@ -106,9 +111,9 @@ function spinFrame(t) {
   // Keep animating while spinning or still ramping. Once fully at rest, stop
   // the loop and leave the record at its current angle — no snap to upright.
   if (spinSpeed > 0 || spinRampDur > 0) {
-    spinRaf = requestAnimationFrame(spinFrame);
+    spinRafId = requestAnimationFrame(spinFrame);
   } else {
-    spinRaf = null;
+    spinRafId = null;
   }
 }
 function ensureSpin() {
@@ -121,12 +126,12 @@ function ensureSpin() {
   if (tonearmChoreography) return; // song-change sequence is driving the spin
   if (!fxOn()) {
     // Effects off — clear to upright (now if idle, else on the next frame).
-    if (spinRaf) spinPrev = 0;
+    if (spinRafId) spinPrev = 0;
     else if (spinEls) spinEls.forEach((el) => (el.style.transform = ""));
   } else if (document.body.classList.contains("is-playing")) {
     // Playing — spin up to full speed from wherever the record is resting.
     if (spinSpeed < SPIN_FULL) startSpinRamp(SPIN_FULL, 700, EASE_IN);
-  } else if (spinSpeed > 0 || spinRaf) {
+  } else if (spinSpeed > 0 || spinRafId) {
     // Paused — ease the record to a stop, leaving it where it lands.
     startSpinRamp(0, 1500, EASE_OUT);
   }
@@ -141,8 +146,8 @@ function generateUUID() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
     /[xy]/g,
     function (c) {
-      var r = (Math.random() * 16) | 0,
-        v = c == "x" ? r : (r & 0x3) | 0x8;
+      const r = (Math.random() * 16) | 0;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     }
   );
@@ -396,12 +401,12 @@ function drawBgLoop(timestamp) {
   bgLastTime = timestamp;
 
   // Lerp toward target colors
-  bgColorCurr.r += (bgColorTarget.r - bgColorCurr.r) * 0.06;
-  bgColorCurr.g += (bgColorTarget.g - bgColorCurr.g) * 0.06;
-  bgColorCurr.b += (bgColorTarget.b - bgColorCurr.b) * 0.06;
-  presenceColorCurr.r += (presenceColorTarget.r - presenceColorCurr.r) * 0.06;
-  presenceColorCurr.g += (presenceColorTarget.g - presenceColorCurr.g) * 0.06;
-  presenceColorCurr.b += (presenceColorTarget.b - presenceColorCurr.b) * 0.06;
+  bgPrimary.r += (bgPrimaryTarget.r - bgPrimary.r) * 0.06;
+  bgPrimary.g += (bgPrimaryTarget.g - bgPrimary.g) * 0.06;
+  bgPrimary.b += (bgPrimaryTarget.b - bgPrimary.b) * 0.06;
+  bgPresence.r += (bgPresenceTarget.r - bgPresence.r) * 0.06;
+  bgPresence.g += (bgPresenceTarget.g - bgPresence.g) * 0.06;
+  bgPresence.b += (bgPresenceTarget.b - bgPresence.b) * 0.06;
 
   const W = bgCanvas.width, H = bgCanvas.height;
   const { cx, cy } = bgGlowCenter();
@@ -411,8 +416,8 @@ function drawBgLoop(timestamp) {
   const light = document.body.classList.contains('theme-light');
   const aMul = light ? 2.0 : 1;
   const deepen = (v) => light ? Math.round(v * 0.55) : v;
-  const r = deepen(bgColorCurr.r), g = deepen(bgColorCurr.g), b = deepen(bgColorCurr.b);
-  const pr = deepen(presenceColorCurr.r), pg = deepen(presenceColorCurr.g), pb = deepen(presenceColorCurr.b);
+  const r = deepen(bgPrimary.r), g = deepen(bgPrimary.g), b = deepen(bgPrimary.b);
+  const pr = deepen(bgPresence.r), pg = deepen(bgPresence.g), pb = deepen(bgPresence.b);
 
   bgCtx.clearRect(0, 0, W, H);
 
@@ -427,13 +432,13 @@ function drawBgLoop(timestamp) {
 
   // Offset secondary glows — presence colour for visual separation
   const grd2 = bgCtx.createRadialGradient(W * 0.25, H * 0.25, 0, W * 0.25, H * 0.25, maxR * 0.5);
-  grd2.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${(0.04 + smoothedMid * 0.25) * aMul})`);
+  grd2.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${(0.04 + smoothedPresence * 0.25) * aMul})`);
   grd2.addColorStop(1, 'rgba(0,0,0,0)');
   bgCtx.fillStyle = grd2;
   bgCtx.fillRect(0, 0, W, H);
 
   const grd3 = bgCtx.createRadialGradient(W * 0.75, H * 0.75, 0, W * 0.75, H * 0.75, maxR * 0.5);
-  grd3.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${(0.03 + smoothedMid * 0.2) * aMul})`);
+  grd3.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${(0.03 + smoothedPresence * 0.2) * aMul})`);
   grd3.addColorStop(1, 'rgba(0,0,0,0)');
   bgCtx.fillStyle = grd3;
   bgCtx.fillRect(0, 0, W, H);
@@ -595,7 +600,7 @@ function stopViz() {
     }, 1500);
   }
   smoothedBass = 0;
-  smoothedMid = 0;
+  smoothedPresence = 0;
   vizLastTime = 0;
 }
 
@@ -636,7 +641,7 @@ function drawViz(timestamp) {
   let mid = 0;
   for (let i = presStart; i <= presEnd; i++) mid += dataArray[i];
   mid = Math.pow(mid / (presEnd - presStart + 1) / 255, 0.55);
-  smoothedMid += (mid - smoothedMid) * 0.16;
+  smoothedPresence += (mid - smoothedPresence) * 0.16;
 
   vizCtx.clearRect(0, 0, W, H);
 
@@ -644,7 +649,7 @@ function drawViz(timestamp) {
   const light = document.body.classList.contains('theme-light');
   const aMul = light ? 2.0 : 1;
   const deepen = (v) => light ? Math.round(v * 0.55) : v;
-  const r = deepen(currentRgbColors.r), g = deepen(currentRgbColors.g), b = deepen(currentRgbColors.b);
+  const r = deepen(vizPrimary.r), g = deepen(vizPrimary.g), b = deepen(vizPrimary.b);
   const minDim = Math.min(W, H);
 
   // Center bass glow — large and punchy
@@ -661,9 +666,9 @@ function drawViz(timestamp) {
   }
 
   // Edge bands driven by presence (1500–3500 Hz) — 1/8th inset on all sides
-  if (smoothedMid > 0.01) {
-    const pr = deepen(presenceRgbColors.r), pg = deepen(presenceRgbColors.g), pb = deepen(presenceRgbColors.b);
-    const alpha = smoothedMid * 0.65 * aMul;
+  if (smoothedPresence > 0.01) {
+    const pr = deepen(vizPresence.r), pg = deepen(vizPresence.g), pb = deepen(vizPresence.b);
+    const alpha = smoothedPresence * 0.65 * aMul;
     const color = `rgba(${pr}, ${pg}, ${pb}, ${alpha})`;
     const clear = 'rgba(0,0,0,0)';
 
@@ -1088,13 +1093,13 @@ function updateBackgroundColors(colors) {
 // applyContent() — i.e. exactly when the cover image is swapped.
 function applyPendingColors() {
   if (!pendingColors) return;
-  currentRgbColors = { ...pendingColors.primary };
-  presenceRgbColors = { ...pendingColors.presence };
-  bgColorTarget = { ...pendingColors.primary };
-  bgColorCurr = { ...pendingColors.primary };
-  presenceColorTarget = { ...pendingColors.presence };
-  presenceColorCurr = { ...pendingColors.presence };
-  applyAccentVars(currentRgbColors, presenceRgbColors);
+  vizPrimary = { ...pendingColors.primary };
+  vizPresence = { ...pendingColors.presence };
+  bgPrimaryTarget = { ...pendingColors.primary };
+  bgPrimary = { ...pendingColors.primary };
+  bgPresenceTarget = { ...pendingColors.presence };
+  bgPresence = { ...pendingColors.presence };
+  applyAccentVars(vizPrimary, vizPresence);
   pendingColors = null;
 }
 
@@ -1133,12 +1138,12 @@ function shouldEnableAnimations() {
   // Software / known-weak GPU via the WebGL renderer string (when the browser
   // still exposes it — many now mask it for privacy, which is fine).
   try {
-    var canvas = document.createElement('canvas');
-    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     if (!gl) return false; // no WebGL at all — likely very weak
-    var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
     if (debugInfo) {
-      var renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)).toLowerCase();
+      const renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)).toLowerCase();
       if (renderer.includes('swiftshader') || renderer.includes('llvmpipe') ||
           renderer.includes('software') || renderer.includes('microsoft basic')) {
         return false;
