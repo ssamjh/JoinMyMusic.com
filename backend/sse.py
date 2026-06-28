@@ -3,10 +3,28 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 METADATA_DELAY = float(os.environ.get("METADATA_DELAY", "5"))
+
+# The wall-clock time (ISO 8601) at which the current song's metadata was sent.
+# This is treated as the song's start time so that every consumer — the SSE
+# stream, new connections, and the REST fallback — reports the same value,
+# rather than each computing one from Spotify's actual playback position.
+current_song_state: dict = {"songid": "", "started_at": None}
+
+
+def enrich_with_timing(current: dict) -> dict:
+    """Attach the stored start time for the current song, if it matches."""
+    songid = current.get("songid", "")
+    started_at = (
+        current_song_state["started_at"]
+        if songid and songid == current_song_state["songid"]
+        else None
+    )
+    return {**current, "started_at": started_at}
 
 
 class SSEBroadcaster:
@@ -71,7 +89,11 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
                 last_song_id = song_id
 
                 await asyncio.sleep(METADATA_DELAY)
-                await broadcaster.broadcast("metadata", current)
+                # Stamp the start time the moment we send a new song's metadata.
+                if song_id and song_id != current_song_state["songid"]:
+                    current_song_state["songid"] = song_id
+                    current_song_state["started_at"] = datetime.now(timezone.utc).isoformat()
+                await broadcaster.broadcast("metadata", enrich_with_timing(current))
 
             if history_changed:
                 await broadcaster.broadcast("history", {"history": get_history()})

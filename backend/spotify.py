@@ -28,6 +28,7 @@ _EMPTY_METADATA = {
         "albumid": "",
         "cover": "",
         "playing": False,
+        "duration_ms": 0,
     }
 }
 
@@ -76,6 +77,7 @@ class SpotifyClient:
                     "albumid": album["id"],
                     "cover": cover,
                     "playing": playback["is_playing"],
+                    "duration_ms": track.get("duration_ms", 0),
                 }
             }
         except (KeyError, TypeError, AttributeError) as e:

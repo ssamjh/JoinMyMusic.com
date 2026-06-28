@@ -245,6 +245,132 @@
           rgba(0, 0, 0, 0.16)
         );
       }
+      /* ---- Spinning vinyl record (while playing) ---- */
+      @keyframes record-spin {
+        to { transform: rotate(360deg); }
+      }
+      .record-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        border-radius: 50%;
+        opacity: 0;
+        transition: opacity 0.5s ease;
+        background:
+          /* darken toward the rim like a record edge */
+          radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.32) 100%),
+          /* fine concentric grooves */
+          repeating-radial-gradient(
+            circle at 50% 50%,
+            rgba(0, 0, 0, 0.14) 0px, rgba(0, 0, 0, 0.14) 1px,
+            rgba(255, 255, 255, 0.045) 1px, rgba(255, 255, 255, 0.045) 3px
+          );
+      }
+      .record-overlay::before {
+        /* centre label ring (the paper disc around the spindle) */
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 30%;
+        height: 30%;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+          0 0 0 1px rgba(0, 0, 0, 0.3);
+      }
+      .record-overlay::after {
+        /* tiny solid black centre (spindle hole) */
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 14px;
+        height: 14px;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        background: #000;
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
+      }
+      body.is-playing:not(.no-bg-animation) #art-card { border-radius: 50%; }
+      body.is-playing:not(.no-bg-animation) #playing-image,
+      body.is-playing:not(.no-bg-animation) .art-placeholder {
+        animation: record-spin 8s linear infinite;
+      }
+      body.is-playing:not(.no-bg-animation) .record-overlay { opacity: 1; }
+
+      /* ---- Tonearm: sweeps from the rim to the centre as the song progresses ---- */
+      /* Pivot sits just off the top-right of the disc at (100%, 2%) of the card.
+         The arm is drawn in its rest pose (stylus on the outer rim); JS rotates the
+         whole assembly about the pivot from 0deg → ~29.3deg as playback progresses
+         (stopping just shy of the centre, like a real record's runout). */
+      #playing-link { position: relative; }
+      .tonearm {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 3;
+        opacity: 0;
+        transform-origin: 100% 2%;
+        transform: rotate(0deg);
+        transition: opacity 0.5s ease, transform 0.5s linear;
+      }
+      body.is-playing:not(.no-bg-animation) .tonearm.ready { opacity: 1; }
+      .tonearm-arm,
+      .tonearm-cw,
+      .tonearm-pivot,
+      .tonearm-head { position: absolute; left: 100%; top: 2%; }
+      .tonearm-arm {
+        width: 65.31%; /* arm length R, as a fraction of the card */
+        height: 5px;
+        transform-origin: 0 50%;
+        transform: translateY(-50%) rotate(94.52deg);
+        background: linear-gradient(180deg, #ededf2, #a6a6ae);
+        border-radius: 3px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+      }
+      .tonearm-cw {
+        width: 16%;
+        height: 9px;
+        transform-origin: 0 50%;
+        transform: translateY(-50%) rotate(274.52deg); /* opposite the arm */
+        background: linear-gradient(180deg, #303036, #131316);
+        border-radius: 5px;
+      }
+      .tonearm-cw::after {
+        content: "";
+        position: absolute;
+        right: -7px;
+        top: 50%;
+        width: 17px;
+        height: 17px;
+        transform: translateY(-50%);
+        border-radius: 50%;
+        background: linear-gradient(145deg, #4a4a52, #18181c);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+      }
+      .tonearm-pivot {
+        width: 9%;
+        height: 9%;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        background: linear-gradient(145deg, #3a3a40, #16161a);
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5),
+          inset 0 1px 1px rgba(255, 255, 255, 0.18);
+      }
+      .tonearm-head {
+        /* rest position = stylus on the outer rim (Q1) */
+        left: 94.85%;
+        top: 67.11%;
+        width: 7%;
+        height: 5%;
+        transform: translate(-50%, -50%) rotate(94.52deg);
+        background: linear-gradient(180deg, #2a2a30, #101014);
+        border-radius: 3px;
+        box-shadow: 0 3px 7px rgba(0, 0, 0, 0.55);
+      }
+
       .eq-badge {
         position: absolute;
         left: 16px;
@@ -258,7 +384,8 @@
         background: rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(8px);
       }
-      body.is-playing .eq-badge { display: flex; }
+      /* The spinning record now signals playback, so the corner EQ badge would
+         only float in the empty space outside the disc — keep it hidden. */
       .eq-badge span {
         width: 3px;
         height: 100%;
@@ -868,8 +995,15 @@
                 alt=""
                 width="400"
                 height="400" />
+              <div class="record-overlay"></div>
               <div class="art-sheen"></div>
               <div class="eq-badge"><span></span><span></span><span></span><span></span></div>
+            </div>
+            <div class="tonearm" id="tonearm" aria-hidden="true">
+              <div class="tonearm-cw"></div>
+              <div class="tonearm-arm"></div>
+              <div class="tonearm-pivot"></div>
+              <div class="tonearm-head"></div>
             </div>
           </a>
           <div class="meta">
@@ -1046,6 +1180,25 @@
       let bgColorTarget = { r: 20, g: 20, b: 20 };
       let presenceColorCurr = { r: 20, g: 20, b: 20 };
       let presenceColorTarget = { r: 20, g: 20, b: 20 };
+
+      // Tonearm progress globals — drive the arm from the rim to the centre
+      const TONEARM_SWEEP_DEG = 29.32; // rim → just before centre (runout, ~15% radius)
+      let songStartedAtMs = null;
+      let songDurationMs = null;
+      let tonearmSongId = null; // song the arm timing is locked to (ignore resends)
+      function updateTonearm() {
+        const el = document.getElementById("tonearm");
+        if (!el) return;
+        if (songStartedAtMs == null || !songDurationMs) {
+          el.classList.remove("ready");
+          return;
+        }
+        let p = (Date.now() - songStartedAtMs) / songDurationMs;
+        p = p < 0 ? 0 : p > 1 ? 1 : p;
+        el.classList.add("ready");
+        el.style.transform = `rotate(${(p * TONEARM_SWEEP_DEG).toFixed(2)}deg)`;
+      }
+      setInterval(updateTonearm, 500);
 
       // Background transition globals
       let bgTransActive = false;
@@ -1468,6 +1621,15 @@
             .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
             .join(', ');
           playingLink.setAttribute('href', `https://open.spotify.com/album/${data.albumid}`);
+          // Only (re)sync the arm on an actual song change — resends of the same
+          // song carry a fresh started_at and would otherwise jump the arm back.
+          if (data.songid !== tonearmSongId) {
+            tonearmSongId = data.songid;
+            const startMs = data.started_at ? Date.parse(data.started_at) : NaN;
+            songStartedAtMs = isNaN(startMs) ? null : startMs;
+            songDurationMs = data.duration_ms || null;
+          }
+          updateTonearm();
           if ('mediaSession' in navigator && data.song) {
             navigator.mediaSession.metadata = new MediaMetadata({
               title: data.song,
@@ -1720,6 +1882,10 @@
           }
           playingLink.setAttribute("href", "javascript:void(0)");
           updateSongId(null);
+          songStartedAtMs = null;
+          songDurationMs = null;
+          tonearmSongId = null;
+          updateTonearm();
           return;
         }
 
