@@ -1,0 +1,956 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+input { font-family: inherit; }
+
+:root {
+  --accent: #8B7BF0;
+  --accent-glow: rgba(139, 123, 240, 0.55);
+  --c1: #8B7BF0;
+  --c2: #2B1D6E;
+}
+
+/* ---- Theme tokens ---- */
+body.theme-dark {
+  --bg: #070708;
+  --fg: #f5f5f7;
+  --muted: rgba(235, 235, 245, 0.55);
+  --elev: rgba(255, 255, 255, 0.07);
+  --panel-border: rgba(255, 255, 255, 0.11);
+  --modal-surface: rgba(26, 26, 30, 0.92);
+}
+body.theme-light {
+  --bg: #edecee;
+  --fg: #19191b;
+  --muted: rgba(40, 40, 46, 0.74);
+  --elev: rgba(0, 0, 0, 0.06);
+  --panel-border: rgba(0, 0, 0, 0.09);
+  --modal-surface: rgba(252, 252, 253, 0.92);
+}
+
+body {
+  background: var(--bg, #070708);
+  color: var(--fg, #f5f5f7);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+  transition: background 0.7s ease, color 0.7s ease;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+/* ---- Backgrounds / effects (audio-reactive canvases) ---- */
+.vignette {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+}
+body.theme-dark .vignette {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 0, 0, 0) 32%,
+    rgba(0, 0, 0, 0.4) 78%,
+    rgba(0, 0, 0, 0.66) 100%
+  );
+}
+body.theme-light .vignette {
+  background: radial-gradient(
+    ellipse 120% 120% at 50% 42%,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0) 50%
+  );
+}
+
+#bg-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -2;
+  pointer-events: none;
+  filter: blur(20px);
+  opacity: 1;
+  transition: opacity 0.9s ease;
+}
+
+/* During a song change the record spins down and flips. Dim the ambient
+   background + side glow while it does, and keep them off until the record
+   spins back up to the new track. */
+body.fx-dimmed #bg-canvas,
+body.fx-dimmed #viz-canvas {
+  opacity: 0 !important;
+}
+
+#viz-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.5s ease;
+}
+
+#color-canvas { display: none; }
+
+/* Disable effects */
+.no-bg-animation .vignette,
+.no-bg-animation #bg-canvas,
+.no-bg-animation #viz-canvas {
+  display: none;
+}
+
+/* Lightweight mode: with effects off, drop GPU-heavy backdrop blurs and continuous
+   animations. backdrop-filter is very expensive on mobile (re-blurs everything behind
+   the element on every repaint) and runs even when the canvases are disabled. */
+.no-bg-animation .icon-btn,
+.no-bg-animation .ctrl-btn,
+.no-bg-animation .history-item,
+.no-bg-animation .toast,
+.no-bg-animation .modal-overlay,
+.no-bg-animation .modal-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.no-bg-animation .live-dot { animation: none !important; }
+
+/* ---- Display-only mode (index.html?display) ---- */
+/* Visuals-only kiosk view: keep the album art, title/artist and recently-played
+   list, but strip every control + the footer links/copyright. */
+body.display-mode .header-actions,
+body.display-mode .dock,
+body.display-mode footer,
+body.display-mode .live-row {
+  display: none !important;
+}
+
+/* ---- Header ---- */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  padding-top: max(16px, env(safe-area-inset-top));
+  position: relative;
+  z-index: 3;
+}
+.brand-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.brand-sub {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  margin-top: 2px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--panel-border);
+  background: var(--elev);
+  color: var(--fg);
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 0.3s, color 0.3s;
+}
+.icon-btn:hover { transform: translateY(-1px); }
+.icon-btn:active { transform: scale(0.92); }
+.icon-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* ---- Main / now playing ---- */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 24px;
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Vertically centres the whole group (art + history row, then the meta block). */
+.stage-wrap {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(14px, 2vh, 30px);
+  max-width: 100%;
+}
+.stage {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 34px;
+  max-width: 100%;
+}
+.now-playing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+}
+#art-card {
+  position: relative;
+  flex-shrink: 0;
+  width: min(40vmin, 32vh, 400px);
+  height: min(40vmin, 32vh, 400px);
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 40px 90px -28px rgba(0, 0, 0, 0.65),
+    0 0 0 1px var(--panel-border);
+  transition: transform 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.42s ease;
+}
+.art-placeholder {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(110% 110% at 28% 18%, var(--c1) 0%, rgba(0, 0, 0, 0) 55%),
+    radial-gradient(120% 120% at 82% 88%, var(--c2) 0%, rgba(0, 0, 0, 0) 58%),
+    linear-gradient(135deg, var(--c1), var(--c2));
+}
+#playing-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.art-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22),
+    rgba(255, 255, 255, 0) 42%,
+    rgba(0, 0, 0, 0.16)
+  );
+}
+/* ---- Spinning vinyl record (while playing) ---- */
+/* The spin itself is driven in JS (see spinFrame) so it can ramp speed up/down
+   and stop briefly during the song-change flip. */
+.record-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  background:
+    /* darken toward the rim like a record edge */
+    radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.32) 100%),
+    /* fine concentric grooves */
+    repeating-radial-gradient(
+      circle at 50% 50%,
+      rgba(0, 0, 0, 0.14) 0px, rgba(0, 0, 0, 0.14) 1px,
+      rgba(255, 255, 255, 0.045) 1px, rgba(255, 255, 255, 0.045) 3px
+    );
+}
+.record-overlay::before {
+  /* centre label ring (the paper disc around the spindle) */
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30%;
+  height: 30%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+.record-overlay::after {
+  /* tiny solid black centre (spindle hole) */
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #000;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
+}
+/* With fx on, the record is always shown — it just sits still (and the arm
+   parks to the side) while playback is paused, then spins up on play. */
+body:not(.no-bg-animation) #art-card { border-radius: 50%; }
+body:not(.no-bg-animation) .record-overlay { opacity: 1; }
+
+/* ---- Tonearm: sweeps from the rim to the centre as the song progresses ---- */
+/* Pivot sits just off the top-right of the disc at (100%, 2%) of the card.
+   The arm is drawn in its rest pose (stylus on the outer rim); JS rotates the
+   whole assembly about the pivot from 0deg → ~29.3deg as playback progresses
+   (stopping just shy of the centre, like a real record's runout). */
+#playing-link { position: relative; }
+.tonearm {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transform-origin: 100% 2%;
+  /* Rest pose = parked off to the side (matches TONEARM_PARK_DEG), so on load
+     the arm is already out rather than swinging out from the rim. */
+  transform: rotate(-10deg);
+  transition: opacity 0.5s ease, transform 0.5s linear;
+}
+body:not(.no-bg-animation) .tonearm.ready { opacity: 1; }
+.tonearm-arm,
+.tonearm-cw,
+.tonearm-pivot,
+.tonearm-head { position: absolute; left: 100%; top: 2%; }
+.tonearm-arm {
+  width: 65.31%; /* arm length R, as a fraction of the card */
+  height: 5px;
+  transform-origin: 0 50%;
+  transform: translateY(-50%) rotate(94.52deg);
+  background: linear-gradient(180deg, #ededf2, #a6a6ae);
+  border-radius: 3px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+}
+.tonearm-cw {
+  width: 16%;
+  height: 9px;
+  transform-origin: 0 50%;
+  transform: translateY(-50%) rotate(274.52deg); /* opposite the arm */
+  background: linear-gradient(180deg, #303036, #131316);
+  border-radius: 5px;
+}
+.tonearm-cw::after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  width: 17px;
+  height: 17px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #4a4a52, #18181c);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.tonearm-pivot {
+  width: 9%;
+  height: 9%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #3a3a40, #16161a);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.18);
+}
+.tonearm-head {
+  /* rest position = stylus on the outer rim (Q1) */
+  left: 94.85%;
+  top: 67.11%;
+  width: 7%;
+  height: 5%;
+  transform: translate(-50%, -50%) rotate(94.52deg);
+  background: linear-gradient(180deg, #2a2a30, #101014);
+  border-radius: 3px;
+  box-shadow: 0 3px 7px rgba(0, 0, 0, 0.55);
+}
+
+.meta {
+  text-align: center;
+  max-width: min(92vw, 400px);
+}
+.now-playing { min-width: 0; }
+.div-playing-title {
+  font-size: clamp(24px, 3.4vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.1;
+  min-height: 1.1em;
+}
+.div-playing-title a { color: inherit; text-decoration: none; }
+.div-playing-artist {
+  font-size: clamp(15px, 1.8vw, 19px);
+  color: var(--muted);
+  margin-top: 9px;
+  font-weight: 500;
+  min-height: 1em;
+}
+.div-playing-artist a { color: inherit; text-decoration: none; }
+.live-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff4d4f;
+  animation: livedot 1.7s ease-in-out infinite;
+}
+
+/* ---- Control dock ---- */
+.dock {
+  position: relative;
+  /* Lift the dock with margin, NOT `top`: an offset via `top` makes iOS Safari
+     paint the play button's box-shadow glow at the un-offset position, leaving
+     the glow detached from the button. Negative margin moves the real box. */
+  margin-top: -7vh;
+  z-index: 3;
+  padding: 0 20px 14px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.dock-buttons {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.ctrl-btn {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--panel-border);
+  background: var(--elev);
+  color: var(--fg);
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 0.3s, color 0.3s, opacity 0.3s;
+}
+.ctrl-btn:hover { transform: scale(1.08); }
+.ctrl-btn:active { transform: scale(0.92); }
+.ctrl-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.ctrl-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.play-btn {
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 14px 40px -8px var(--accent-glow);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.4s, background 0.5s;
+}
+.play-btn:hover { transform: scale(1.05); }
+.play-btn:active { transform: scale(0.94); }
+
+.volume-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: min(420px, 82vw);
+  color: var(--muted);
+}
+.vol-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--elev);
+  cursor: pointer;
+  touch-action: none;
+}
+.vol-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 50%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: background 0.5s;
+}
+.vol-thumb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 9px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, -50%);
+  transition: transform 0.15s;
+}
+
+/* ---- Footer ---- */
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 0 20px 14px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  font-size: 12px;
+  color: var(--muted);
+  z-index: 2;
+  position: relative;
+  flex-wrap: wrap;
+}
+footer a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+footer a:hover { color: var(--fg); }
+footer .sep { opacity: 0.4; }
+
+/* ---- Toast ---- */
+.toast {
+  position: fixed;
+  top: max(78px, calc(env(safe-area-inset-top) + 62px));
+  left: 50%;
+  z-index: 60;
+  transform: translateX(-50%);
+  padding: 13px 22px;
+  border-radius: 14px;
+  background: var(--modal-surface);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(24px);
+  font-size: 14px;
+  font-weight: 500;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.toast.show {
+  display: flex;
+  animation: toastpop 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* ---- Modals ---- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+.modal-overlay.show {
+  display: flex;
+  animation: fadein 0.25s ease both;
+}
+.modal-card {
+  width: min(540px, 100%);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 24px;
+  background: var(--modal-surface);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(40px);
+  overflow: hidden;
+  animation: modalpop 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  color: var(--fg);
+}
+.modal-card.narrow { width: min(420px, 100%); }
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 24px 16px;
+}
+.modal-head h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.modal-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: var(--elev);
+  color: var(--fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.modal-close:hover { background: var(--panel-border); }
+.field {
+  height: 46px;
+  padding: 0 16px;
+  border-radius: 13px;
+  border: 1px solid var(--panel-border);
+  background: var(--elev);
+  color: var(--fg);
+  font-size: 15px;
+  outline: none;
+  width: 100%;
+}
+.field::placeholder { color: var(--muted); }
+.search-wrap { position: relative; }
+.search-wrap svg {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.search-wrap .field { padding-left: 44px; }
+
+.results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 120px;
+}
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+.result-item:hover { background: var(--elev); }
+.result-art {
+  width: 46px;
+  height: 46px;
+  border-radius: 9px;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+}
+.result-text { flex: 1; min-width: 0; }
+.result-title {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.result-artist {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.results-msg {
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 30px 12px;
+}
+
+.modal-body-center { padding: 28px 28px 8px; text-align: center; }
+#confirm-song-image {
+  width: 150px;
+  height: 150px;
+  border-radius: 20px;
+  margin: 0 auto;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 20px 50px -16px rgba(0, 0, 0, 0.6);
+}
+.confirm-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 22px;
+}
+.confirm-artist { font-size: 15px; color: var(--muted); margin-top: 5px; }
+.confirm-prompt { font-size: 14px; color: var(--muted); margin-top: 18px; }
+.spotify-preview-container {
+  margin: 16px auto 0;
+  display: flex;
+  justify-content: center;
+}
+#spotify-preview {
+  border: none;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 320px;
+  background-color: transparent;
+}
+.turnstile-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  padding: 20px 24px 24px;
+}
+.btn {
+  height: 48px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.2s, opacity 0.2s;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-ghost {
+  flex: 1;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--fg);
+}
+.btn-ghost:hover { background: var(--elev); }
+.btn-accent {
+  flex: 1.4;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 10px 28px -8px var(--accent-glow);
+}
+.btn-accent:hover { transform: translateY(-1px); }
+.btn-accent:active { transform: scale(0.97); }
+.btn-danger {
+  flex: 1.4;
+  background: #ff4d4f;
+  color: #fff;
+  box-shadow: 0 10px 28px -8px rgba(255, 77, 79, 0.55);
+}
+.btn-danger:hover { transform: translateY(-1px); }
+.btn-danger:active { transform: scale(0.97); }
+.btn[disabled] { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
+.vote-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 24px;
+}
+.vote-stat .num {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.vote-stat .den { font-size: 16px; color: var(--muted); }
+.vote-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--elev);
+  margin-top: 14px;
+  overflow: hidden;
+}
+.vote-bar > div {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  width: 0%;
+  transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ---- Keyframes ---- */
+@keyframes modalpop { from { opacity: 0; transform: translateY(16px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+@keyframes toastpop { from { opacity: 0; transform: translate(-50%, -14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes livedot { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Song change: cross-fade the now-playing art + text */
+@keyframes fade-swap {
+  0% { opacity: 1; }
+  40% { opacity: 0; }
+  60% { opacity: 0; }
+  100% { opacity: 1; }
+}
+.fade-swap { animation: fade-swap 1.2s ease; } /* effects-off fallback for the card */
+.div-playing-title.fade-swap-text,
+.div-playing-artist.fade-swap-text {
+  display: block;
+  animation: fade-swap 1.2s ease;
+}
+/* Song change: flip the record edge-on (it "turns off"), swap, flip back */
+@keyframes flip-swap {
+  0%   { transform: perspective(900px) rotateY(0deg);  opacity: 1; }
+  50%  { transform: perspective(900px) rotateY(90deg); opacity: 0; }
+  100% { transform: perspective(900px) rotateY(0deg);  opacity: 1; }
+}
+.flip-swap { animation: flip-swap 1.2s ease; }
+
+/* ---- Song history ---- */
+.history-panel {
+  width: 250px;
+  flex-shrink: 0;
+  height: min(40vmin, 32vh, 400px); /* match album art height */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  padding-left: 4px;
+}
+.history-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history-item {
+  flex: 1;
+  min-height: 0;
+  max-height: 72px; /* cap height so a single item doesn't stretch to fill the panel */
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 14px;
+  background: var(--elev);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(20px);
+  text-decoration: none;
+  color: var(--fg);
+  transition: background 0.2s, transform 0.2s;
+}
+.history-item:hover {
+  background: var(--panel-border);
+  transform: translateX(-3px);
+}
+.history-art {
+  width: 46px;
+  height: 46px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+}
+.history-text { min-width: 0; flex: 1; }
+.history-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-artist {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+@keyframes history-enter {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+.history-item.history-enter {
+  animation: history-enter 0.45s ease;
+}
+/* Hide on narrower screens where it would overlap the now-playing art */
+/* Narrow screens: stack the history list underneath the album art instead of beside it */
+@media (max-width: 820px) {
+  .stage-wrap {
+    margin: 24px 0;
+    gap: 24px;
+  }
+  /* Flatten the row so art, now-playing text and history stack in one column,
+     letting `order` place the text between the art and the recently-played list. */
+  .stage { display: contents; }
+  .now-playing { order: 0; }
+  .meta { order: 1; }
+  .history-panel {
+    order: 2;
+    height: auto;
+    width: min(92vw, 360px);
+  }
+  .history-list { flex: none; }
+  .history-item { flex: none; }
+  /* Don't lift the dock over the scrollable content — it would hide the lower songs */
+  .dock { margin-top: 0; }
+}
+
