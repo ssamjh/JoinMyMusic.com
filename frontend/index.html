@@ -246,9 +246,8 @@
         );
       }
       /* ---- Spinning vinyl record (while playing) ---- */
-      @keyframes record-spin {
-        to { transform: rotate(360deg); }
-      }
+      /* The spin itself is driven in JS (see spinFrame) so it can ramp speed up/down
+         and stop briefly during the song-change flip. */
       .record-overlay {
         position: absolute;
         inset: 0;
@@ -294,10 +293,6 @@
         box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
       }
       body.is-playing:not(.no-bg-animation) #art-card { border-radius: 50%; }
-      body.is-playing:not(.no-bg-animation) #playing-image,
-      body.is-playing:not(.no-bg-animation) .art-placeholder {
-        animation: record-spin 8s linear infinite;
-      }
       body.is-playing:not(.no-bg-animation) .record-overlay { opacity: 1; }
 
       /* ---- Tonearm: sweeps from the rim to the centre as the song progresses ---- */
@@ -847,15 +842,23 @@
       /* Song change: cross-fade the now-playing art + text */
       @keyframes fade-swap {
         0% { opacity: 1; }
-        42% { opacity: 0; }
+        40% { opacity: 0; }
+        60% { opacity: 0; }
         100% { opacity: 1; }
       }
-      .fade-swap { animation: fade-swap 0.5s ease; }
+      .fade-swap { animation: fade-swap 1.2s ease; } /* effects-off fallback for the card */
       .div-playing-title.fade-swap-text,
       .div-playing-artist.fade-swap-text {
         display: block;
-        animation: fade-swap 0.5s ease;
+        animation: fade-swap 1.2s ease;
       }
+      /* Song change: flip the record edge-on (it "turns off"), swap, flip back */
+      @keyframes flip-swap {
+        0%   { transform: perspective(900px) rotateY(0deg);  opacity: 1; }
+        50%  { transform: perspective(900px) rotateY(90deg); opacity: 0; }
+        100% { transform: perspective(900px) rotateY(0deg);  opacity: 1; }
+      }
+      .flip-swap { animation: flip-swap 1.2s ease; }
 
       /* ---- Song history ---- */
       .history-panel {
@@ -991,6 +994,7 @@
               <div class="art-placeholder"></div>
               <img
                 id="playing-image"
+                crossorigin="anonymous"
                 src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
                 alt=""
                 width="400"
@@ -1183,9 +1187,11 @@
 
       // Tonearm progress globals — drive the arm from the rim to the centre
       const TONEARM_SWEEP_DEG = 29.32; // rim → just before centre (runout, ~15% radius)
+      const TONEARM_PARK_DEG = -13;    // swung back off the side of the record (rest)
       let songStartedAtMs = null;
       let songDurationMs = null;
       let tonearmSongId = null; // song the arm timing is locked to (ignore resends)
+      let tonearmChoreography = false; // true while the scripted swing-off/on is running
       function updateTonearm() {
         const el = document.getElementById("tonearm");
         if (!el) return;
@@ -1193,12 +1199,65 @@
           el.classList.remove("ready");
           return;
         }
+        el.classList.add("ready");
+        if (tonearmChoreography) return; // scripted swing in progress — don't fight it
         let p = (Date.now() - songStartedAtMs) / songDurationMs;
         p = p < 0 ? 0 : p > 1 ? 1 : p;
-        el.classList.add("ready");
         el.style.transform = `rotate(${(p * TONEARM_SWEEP_DEG).toFixed(2)}deg)`;
       }
       setInterval(updateTonearm, 500);
+
+      // ---- Record spin engine (JS-driven so speed can ramp up/down and stop) ----
+      const SPIN_FULL = 360 / 8000; // deg per ms → one revolution every 8s
+      const EASE_OUT = (x) => 1 - (1 - x) * (1 - x); // decelerate into a stop
+      const EASE_IN = (x) => x * x; // accelerate from a stop
+      let spinEls = null;
+      let spinAngle = 0, spinSpeed = 0, spinRaf = null, spinPrev = 0;
+      let spinRampFrom = 0, spinRampTo = 0, spinRampStart = 0, spinRampDur = 0, spinRampEase = EASE_OUT;
+      function recordSpinActive() {
+        return document.body.classList.contains("is-playing") &&
+          !document.body.classList.contains("no-bg-animation");
+      }
+      function startSpinRamp(to, dur, ease) {
+        spinRampFrom = spinSpeed;
+        spinRampTo = to;
+        spinRampStart = performance.now();
+        spinRampDur = dur;
+        spinRampEase = ease;
+        if (!spinRaf && recordSpinActive()) { spinPrev = 0; spinRaf = requestAnimationFrame(spinFrame); }
+      }
+      function spinFrame(t) {
+        if (!recordSpinActive()) {
+          // Stopped (paused or effects off) — clear the rotation so square-mode art sits upright.
+          spinRaf = null; spinSpeed = 0; spinRampDur = 0;
+          if (spinEls) spinEls.forEach((el) => (el.style.transform = ""));
+          return;
+        }
+        const dt = spinPrev ? Math.min(t - spinPrev, 50) : 16;
+        spinPrev = t;
+        if (spinRampDur > 0) {
+          const e = Math.min(1, (t - spinRampStart) / spinRampDur);
+          spinSpeed = spinRampFrom + (spinRampTo - spinRampFrom) * spinRampEase(e);
+          if (e >= 1) spinRampDur = 0; // hold final speed
+        }
+        spinAngle = (spinAngle + spinSpeed * dt) % 360;
+        if (spinEls) spinEls.forEach((el) => (el.style.transform = `rotate(${spinAngle}deg)`));
+        spinRaf = requestAnimationFrame(spinFrame);
+      }
+      function ensureSpin() {
+        if (!spinEls) {
+          spinEls = [
+            document.getElementById("playing-image"),
+            document.querySelector(".art-placeholder"),
+          ].filter(Boolean);
+        }
+        if (recordSpinActive()) {
+          if (!spinRaf && !tonearmChoreography) startSpinRamp(SPIN_FULL, 700, EASE_IN);
+        } else if (spinRaf) {
+          // let the next frame notice it's inactive and clean up
+          spinPrev = 0;
+        }
+      }
 
       // Background transition globals
       let bgTransActive = false;
@@ -1293,6 +1352,7 @@
         buttonToggle.querySelector(".stop-icon").style.display = isPlaying ? "" : "none";
         buttonToggle.title = isPlaying ? "Stop" : "Play";
         document.body.classList.toggle("is-playing", isPlaying);
+        ensureSpin();
       }
 
       function onPlayClick() {
@@ -1645,16 +1705,57 @@
           return;
         }
 
-        // Fade the current art + text out, swap while hidden, fade the new one in
-        cardEl.classList.add('fade-swap');
-        titleEl.classList.add('fade-swap-text');
-        artistEl.classList.add('fade-swap-text');
-        setTimeout(applyContent, 210); // swap at the faded-out point
+        const armEl = document.getElementById('tonearm');
+
+        // Lightweight mode: no record/arm — just cross-fade the art + text.
+        if (document.body.classList.contains('no-bg-animation')) {
+          cardEl.classList.add('fade-swap');
+          titleEl.classList.add('fade-swap-text');
+          artistEl.classList.add('fade-swap-text');
+          setTimeout(applyContent, 600);
+          setTimeout(() => {
+            cardEl.classList.remove('fade-swap');
+            titleEl.classList.remove('fade-swap-text');
+            artistEl.classList.remove('fade-swap-text');
+          }, 1200);
+          return;
+        }
+
+        // Full turntable sequence:
+        //   1. arm swings back off the side of the record
+        //   2. the record flips, swapping to the new cover while edge-on
+        //   3. arm drops back onto the rim to start the new song
+        const LEAD_MS = 700;  // let the record spin down a bit before the arm moves
+        const SWING_MS = 1000;
+        tonearmChoreography = true;
+        // Record eases to a stop first, finishing right as the arm parks / flip begins.
+        startSpinRamp(0, LEAD_MS + SWING_MS, EASE_OUT);
+
         setTimeout(() => {
-          cardEl.classList.remove('fade-swap');
-          titleEl.classList.remove('fade-swap-text');
-          artistEl.classList.remove('fade-swap-text');
-        }, 500);
+          // Arm swings off the side of the record.
+          if (armEl) {
+            armEl.style.transition = 'transform 1s ease, opacity 1s ease';
+            armEl.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
+          }
+          setTimeout(() => {
+            cardEl.classList.add('flip-swap');
+            titleEl.classList.add('fade-swap-text');
+            artistEl.classList.add('fade-swap-text');
+            setTimeout(applyContent, 600); // swap at the edge-on (invisible) point
+            setTimeout(() => {
+              cardEl.classList.remove('flip-swap');
+              titleEl.classList.remove('fade-swap-text');
+              artistEl.classList.remove('fade-swap-text');
+              // Flip done — drop the arm back onto the rim and spin back up to speed.
+              if (armEl) armEl.style.transform = 'rotate(0deg)';
+              startSpinRamp(SPIN_FULL, 1400, EASE_IN);
+              setTimeout(() => {
+                if (armEl) armEl.style.transition = ''; // restore play-time (linear) transition
+                tonearmChoreography = false;
+              }, SWING_MS);
+            }, 1200);
+          }, SWING_MS);
+        }, LEAD_MS);
       }
 
       // --- End Background Canvas ---
@@ -2257,6 +2358,7 @@
           startBg();
           if (isPlaying && analyser) startViz();
         }
+        ensureSpin();
       }
 
       // Runtime performance guard: while effects are auto-enabled, sample the real frame
@@ -2296,6 +2398,7 @@
               updateToggleButton();
               stopBg();
               stopViz();
+              ensureSpin();
               if (typeof showToast === 'function') showToast('Effects disabled to keep things smooth');
               return;
             }
