@@ -18,6 +18,7 @@ if (DISPLAY_MODE) document.body.classList.add("display-mode");
 
 // --- Web Audio graph (built lazily, only when the visualizer needs it) ---
 let audioContext = null;
+let audioStartTimer = null; // delays fx playback until the record/arm are in place
 let analyser = null;
 let audioSource = null;
 let gainNode = null;
@@ -31,6 +32,7 @@ let vizPrimary = { r: 80, g: 80, b: 80 };
 let vizPresence = { r: 80, g: 80, b: 80 };
 let smoothedBass = 0;      // 0..1 low-frequency energy, eased per frame
 let smoothedPresence = 0;  // 0..1 vocal-presence energy, eased per frame
+let vizDataArray = null;   // reused frequency buffer (allocated once, see drawViz)
 
 // --- Background glow canvas + state ---
 // Same primary/presence colours, but each frame the live value eases toward its
@@ -40,6 +42,9 @@ let bgPrimary = { r: 20, g: 20, b: 20 };
 let bgPrimaryTarget = { r: 20, g: 20, b: 20 };
 let bgPresence = { r: 20, g: 20, b: 20 };
 let bgPresenceTarget = { r: 20, g: 20, b: 20 };
+// Idle-skip state for drawBgLoop: last-painted energy + a force-redraw flag for
+// invalidations that aren't captured by the colour/energy values themselves.
+let bgLastBass = -1, bgLastPresence = -1, bgForceDraw = true;
 
 // Palette extracted from the next cover, staged until the record actually swaps
 // to it — so the backdrop / side glow never change colour ahead of the artwork.
@@ -74,6 +79,7 @@ setInterval(updateTonearm, 500);
 
 // ---- Record spin engine (JS-driven so speed can ramp up/down and stop) ----
 const SPIN_FULL = 360 / 8000; // deg per ms → one revolution every 8s
+const SPIN_UP_MS = 700;       // spin-up ramp on play (also the audio start delay w/ fx)
 const EASE_OUT = (x) => 1 - (1 - x) * (1 - x); // decelerate into a stop
 const EASE_IN = (x) => x * x; // accelerate from a stop
 let spinEls = null;
@@ -130,7 +136,7 @@ function ensureSpin() {
     else if (spinEls) spinEls.forEach((el) => (el.style.transform = ""));
   } else if (document.body.classList.contains("is-playing")) {
     // Playing — spin up to full speed from wherever the record is resting.
-    if (spinSpeed < SPIN_FULL) startSpinRamp(SPIN_FULL, 700, EASE_IN);
+    if (spinSpeed < SPIN_FULL) startSpinRamp(SPIN_FULL, SPIN_UP_MS, EASE_IN);
   } else if (spinSpeed > 0 || spinRafId) {
     // Paused — ease the record to a stop, leaving it where it lands.
     startSpinRamp(0, 1500, EASE_OUT);
@@ -174,6 +180,7 @@ function storageGet(key) {
 function applyTheme(theme) {
   document.body.classList.toggle("theme-dark", theme === "dark");
   document.body.classList.toggle("theme-light", theme === "light");
+  bgForceDraw = true; // light/dark changes how the glow colours are rendered
   document.querySelector(".theme-icon-dark").style.display =
     theme === "dark" ? "" : "none";
   document.querySelector(".theme-icon-light").style.display =
@@ -380,10 +387,12 @@ function resizeBgCanvas() {
   if (!bgCanvas) return;
   bgCanvas.width = Math.max(1, Math.floor(window.innerWidth / 8));
   bgCanvas.height = Math.max(1, Math.floor(window.innerHeight / 8));
+  bgForceDraw = true; // setting width clears the buffer — repaint next frame
 }
 
 function startBg() {
   if (bgRafId || document.body.classList.contains('no-bg-animation')) return;
+  bgForceDraw = true; // canvas was cleared by stopBg — repaint on restart
   drawBgLoop();
 }
 
@@ -397,7 +406,7 @@ function stopBg() {
 
 function drawBgLoop(timestamp) {
   bgRafId = requestAnimationFrame(drawBgLoop);
-  if (timestamp - bgLastTime < VIZ_INTERVAL) return;
+  if (timestamp - bgLastTime < BG_INTERVAL) return;
   bgLastTime = timestamp;
 
   // Lerp toward target colors
@@ -407,6 +416,26 @@ function drawBgLoop(timestamp) {
   bgPresence.r += (bgPresenceTarget.r - bgPresence.r) * 0.06;
   bgPresence.g += (bgPresenceTarget.g - bgPresence.g) * 0.06;
   bgPresence.b += (bgPresenceTarget.b - bgPresence.b) * 0.06;
+
+  // Skip the paint entirely when nothing is moving: colours have settled onto
+  // their targets and the bass/presence energy is steady. The loop keeps
+  // ticking cheaply and re-engages the moment audio or the palette changes.
+  // bgForceDraw covers invalidations that don't show up in these values
+  // (resize clears the canvas; theme toggle changes how colours are rendered).
+  const settled =
+    Math.abs(bgPrimaryTarget.r - bgPrimary.r) < 0.5 &&
+    Math.abs(bgPrimaryTarget.g - bgPrimary.g) < 0.5 &&
+    Math.abs(bgPrimaryTarget.b - bgPrimary.b) < 0.5 &&
+    Math.abs(bgPresenceTarget.r - bgPresence.r) < 0.5 &&
+    Math.abs(bgPresenceTarget.g - bgPresence.g) < 0.5 &&
+    Math.abs(bgPresenceTarget.b - bgPresence.b) < 0.5;
+  const motion =
+    Math.abs(smoothedBass - bgLastBass) > 0.002 ||
+    Math.abs(smoothedPresence - bgLastPresence) > 0.002;
+  if (!bgForceDraw && settled && !motion) return;
+  bgForceDraw = false;
+  bgLastBass = smoothedBass;
+  bgLastPresence = smoothedPresence;
 
   const W = bgCanvas.width, H = bgCanvas.height;
   const { cx, cy } = bgGlowCenter();
@@ -608,6 +637,11 @@ const VIZ_FPS = 60;
 const VIZ_INTERVAL = 1000 / VIZ_FPS;
 let vizLastTime = 0;
 
+// The background is just slowly-drifting radial glows — 30fps is imperceptible
+// and halves its per-frame gradient work vs. the audio-reactive visualizer.
+const BG_FPS = 30;
+const BG_INTERVAL = 1000 / BG_FPS;
+
 function drawViz(timestamp) {
   vizRafId = requestAnimationFrame(drawViz);
   if (!analyser) return;
@@ -615,8 +649,17 @@ function drawViz(timestamp) {
   vizLastTime = timestamp;
 
   const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  analyser.getByteFrequencyData(dataArray);
+  // Reuse a single buffer across frames — reallocating 60×/sec churns the GC.
+  if (!vizDataArray || vizDataArray.length !== bufferLength) {
+    vizDataArray = new Uint8Array(bufferLength);
+  }
+  const dataArray = vizDataArray;
+  // A paused stream is silence. Don't trust the analyser here: after a
+  // play→pause it still holds the last frequencies from before the pause, which
+  // would briefly flash the glow during the play() pre-roll. Feed zeros instead
+  // so the glow only rises once audio is actually flowing.
+  if (audioStream.paused) dataArray.fill(0);
+  else analyser.getByteFrequencyData(dataArray);
 
   const W = vizCanvas.width;
   const H = vizCanvas.height;
@@ -702,16 +745,26 @@ initVizCanvas();
 // --- End Enhanced Background Effects ---
 
 function togglePlay() {
-  qualityUpdate();
   isPlaying = true;
   startPolling();
-  updatePlayUI();
+  updatePlayUI();   // kicks off the spin-up ramp + tonearm swing
   updateButtons();
 
   // Only build the Web Audio graph when the visualizer actually needs it. With
   // effects off (most phones) the <audio> element plays natively — far lighter
   // on the CPU. Volume then runs through audioStream.volume (see volumeSet).
-  if (fxOn()) enableAudioGraph();
+  if (fxOn()) {
+    enableAudioGraph();
+    // Hold the audio until the record has spun up and the arm has dropped into
+    // place — like lowering the needle on a platter that's already at speed.
+    if (audioStartTimer) clearTimeout(audioStartTimer);
+    audioStartTimer = setTimeout(function () {
+      audioStartTimer = null;
+      if (isPlaying) qualityUpdate();
+    }, SPIN_UP_MS);
+  } else {
+    qualityUpdate();
+  }
 }
 
 // Lazily route the <audio> element through Web Audio (analyser + gain) for the
@@ -724,6 +777,7 @@ function enableAudioGraph() {
 }
 
 function buttonStop() {
+  if (audioStartTimer) { clearTimeout(audioStartTimer); audioStartTimer = null; }
   audioStream.pause();
   audioStream.currentTime = 0;
   isPlaying = false;
