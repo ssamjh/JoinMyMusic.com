@@ -313,6 +313,94 @@ main {
 body:not(.no-bg-animation) #art-card { border-radius: 50%; }
 body:not(.no-bg-animation) .record-overlay { opacity: 1; }
 
+/* ---- 3D turntable: lay the platter back flat (like looking across a table at a
+   real deck) and float the tonearm ABOVE the record surface. This is true 3D:
+   perspective lives on the parent (.now-playing), the platter assembly keeps its
+   children in 3D via preserve-3d, and the tonearm is lifted off the platter plane
+   along its normal with translateZ so it genuinely hovers over the disc.
+   The spin (a 2D rotate on the art) happens inside the laid-back plane, so the
+   cover still turns correctly — it just turns on a near-flat platter.
+   Only in fx mode, where the art is actually a round vinyl; with effects off it
+   stays a flat, square album cover viewed straight on. */
+:root {
+  --platter-tilt: 5deg;  /* 0 = top-down, 90 = edge-on; higher = flatter/more 3D */
+  --tonearm-lift: 34px;  /* how far the arm floats above the platter surface */
+  --flip-lift: 200px;    /* how high the record rises off the platter during a flip */
+}
+body:not(.no-bg-animation) .now-playing { perspective: 1200px; }
+body:not(.no-bg-animation) #playing-link {
+  transform: rotateX(var(--platter-tilt));
+  transform-style: preserve-3d;
+  /* Pin the near (front) edge so the platter lays back/away from the viewer and
+     its front rim stays close to the title text, like a deck seen from the front. */
+  transform-origin: center bottom;
+}
+/* Mount that carries the lift. The inner .tonearm keeps its JS-driven sweep
+   rotation; this wrapper just raises the whole arm off the platter. */
+.tonearm-mount {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform-style: preserve-3d;
+}
+body:not(.no-bg-animation) .tonearm-mount {
+  transform: translateZ(var(--tonearm-lift));
+}
+
+/* ---- Platter + spindle (fx mode only) ---- */
+/* The record rests on a slightly larger platter, and a chrome spindle pokes up
+   through the centre hole. Both sit in the laid-back 3D plane of #playing-link:
+   the platter just below the disc (negative Z), the spindle standing upright out
+   of it (counter-rotating the platter tilt so it points up in screen space). */
+.platter, .spindle { display: none; }
+body:not(.no-bg-animation) .platter,
+body:not(.no-bg-animation) .spindle { display: block; }
+
+.platter {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 110%;
+  height: 110%;
+  /* a touch below the record so its rim peeks out around the disc */
+  transform: translate(-50%, -50%) translateZ(-7px);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%,
+    #2c2c30 0%, #232327 60%, #161619 86%, #0d0d0f 100%);
+  box-shadow: 0 34px 70px -22px rgba(0, 0, 0, 0.72),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+.platter::after {
+  /* brushed-metal rim catching the light around the platter edge */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 24%,
+    rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0) 76%,
+    rgba(255, 255, 255, 0.14));
+  -webkit-mask: radial-gradient(circle at 50% 50%, transparent 79%, #000 81%);
+  mask: radial-gradient(circle at 50% 50%, transparent 79%, #000 81%);
+}
+
+.spindle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  /* Near top-down, a vertical pin would point at the camera and read as a flat
+     sliver — so show the spindle as a small chrome dome (its head seen from
+     almost above), lifted just off the platter so it sits in the centre hole. */
+  transform: translate(-50%, -50%) translateZ(4px);
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%,
+    #ffffff 0%, #dcdce0 30%, #9a9aa0 64%, #54545a 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
 /* Scratch: with the record showing, the card is grabbable. touch-action:none so
    a finger drag scratches the record instead of scrolling the page. */
 body:not(.no-bg-animation).is-playing #art-card { cursor: grab; touch-action: none; }
@@ -861,11 +949,18 @@ footer .sep { opacity: 0.4; }
   display: block;
   animation: fade-swap 1.2s ease;
 }
-/* Song change: flip the record edge-on (it "turns off"), swap, flip back */
+/* Song change: lift the record off the platter, flip it edge-on (it "turns off"),
+   swap the cover, flip back, then set it back down. The lift happens BEFORE any
+   rotation (and is held through it) so the disc clears the platter instead of
+   clipping through it. Perspective comes from the parent (.now-playing) — this
+   only runs in fx mode, where that 3D context is live. translateZ is along the
+   platter normal, so the record rises straight up off the deck. */
 @keyframes flip-swap {
-  0%   { transform: perspective(900px) rotateY(0deg);  opacity: 1; }
-  50%  { transform: perspective(900px) rotateY(90deg); opacity: 0; }
-  100% { transform: perspective(900px) rotateY(0deg);  opacity: 1; }
+  0%   { transform: translateZ(0)              rotateY(0deg);   opacity: 1; }
+  22%  { transform: translateZ(var(--flip-lift)) rotateY(0deg);  opacity: 1; }
+  50%  { transform: translateZ(var(--flip-lift)) rotateY(90deg); opacity: 0; }
+  78%  { transform: translateZ(var(--flip-lift)) rotateY(0deg);  opacity: 1; }
+  100% { transform: translateZ(0)              rotateY(0deg);   opacity: 1; }
 }
 .flip-swap { animation: flip-swap 1.2s ease; }
 
@@ -949,6 +1044,8 @@ footer .sep { opacity: 0.4; }
 /* Hide on narrower screens where it would overlap the now-playing art */
 /* Narrow screens: stack the history list underneath the album art instead of beside it */
 @media (max-width: 820px) {
+  /* Smaller card here, so the record needs less height to clear the platter. */
+  :root { --flip-lift: 120px; }
   .stage-wrap {
     margin: 24px 0;
     gap: 24px;

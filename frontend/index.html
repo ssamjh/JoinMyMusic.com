@@ -43,6 +43,7 @@
         <div class="stage">
         <div class="now-playing">
           <a id="playing-link" target="_blank" style="display:block;">
+            <div class="platter" aria-hidden="true"></div>
             <div id="art-card">
               <div class="art-placeholder"></div>
               <img
@@ -56,11 +57,14 @@
               <div class="record-overlay"></div>
               <div class="art-sheen"></div>
             </div>
-            <div class="tonearm" id="tonearm" aria-hidden="true">
-              <div class="tonearm-cw"></div>
-              <div class="tonearm-arm"></div>
-              <div class="tonearm-pivot"></div>
-              <div class="tonearm-head"></div>
+            <div class="spindle" aria-hidden="true"></div>
+            <div class="tonearm-mount" aria-hidden="true">
+              <div class="tonearm" id="tonearm">
+                <div class="tonearm-cw"></div>
+                <div class="tonearm-arm"></div>
+                <div class="tonearm-pivot"></div>
+                <div class="tonearm-head"></div>
+              </div>
             </div>
           </a>
         </div>
