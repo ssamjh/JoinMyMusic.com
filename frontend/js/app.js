@@ -1,7 +1,6 @@
 const audioStream = document.getElementById("audio-stream");
 const buttonToggle = document.getElementById("button-toggle");
 const playingImage = document.getElementById("playing-image");
-const playingLink = document.getElementById("playing-link");
 let isPlaying = false;
 let pollInterval = null;
 let lastVotedSongId = null;
@@ -21,8 +20,15 @@ let audioContext = null;
 let audioStartTimer = null; // delays fx playback until the record/arm are in place
 let analyser = null;
 let audioSource = null;
-let gainNode = null;
+let gainNode = null;        // master volume (final node before destination)
 let currentGain = 1.0;
+// Scratch graph: the live stream and a scrubbable buffer-player are crossfaded
+// into a shared mix bus, which the analyser taps and the volume node feeds out.
+//   source ─┬─→ liveGain ──────────────┐
+//           └─→ scratchNode → scratchGain ┤→ mixBus ─┬─→ analyser (tap)
+//                                                     └─→ gainNode → destination
+let liveGain = null, scratchGain = null, mixBus = null;
+let scratchNode = null, scratchReady = false, scratchModulePromise = null;
 
 // --- Visualizer canvas + state ---
 // Colours are { r, g, b }. "primary" = the dominant/bass colour, "presence" =
@@ -85,6 +91,11 @@ const EASE_IN = (x) => x * x; // accelerate from a stop
 let spinEls = null;
 let spinAngle = 0, spinSpeed = 0, spinRafId = null, spinPrev = 0;
 let spinRampFrom = 0, spinRampTo = 0, spinRampStart = 0, spinRampDur = 0, spinRampEase = EASE_OUT;
+// Scratch gesture state (see initRecordScratch). recordGrabbed pauses the spin
+// engine so the pointer can drive the record's angle (and the audio) directly.
+let recordGrabbed = false, scratchRect = null;
+let scratchPrevAngle = 0, scratchPrevTime = 0, scratchVel = 0;
+let scratchMoved = false;
 function fxOn() {
   return !document.body.classList.contains("no-bg-animation");
 }
@@ -99,6 +110,7 @@ function startSpinRamp(to, dur, ease) {
   if (!spinRafId && fxOn()) { spinPrev = 0; spinRafId = requestAnimationFrame(spinFrame); }
 }
 function spinFrame(t) {
+  if (recordGrabbed) { spinRafId = null; return; } // the hand is driving the record
   if (!fxOn()) {
     // Effects off — square-mode art must sit upright; clear rotation and stop.
     spinRafId = null; spinSpeed = 0; spinRampDur = 0;
@@ -129,6 +141,7 @@ function ensureSpin() {
       document.querySelector(".art-placeholder"),
     ].filter(Boolean);
   }
+  if (recordGrabbed) return;       // a scratch is driving the record directly
   if (tonearmChoreography) return; // song-change sequence is driving the spin
   if (!fxOn()) {
     // Effects off — clear to upright (now if idle, else on the next frame).
@@ -357,20 +370,273 @@ function initAudioContext() {
   analyser.maxDecibels = -5;   // near 0dBFS peak for compressed/loudness-war tracks
   gainNode = audioContext.createGain();
   gainNode.gain.value = currentGain;
+  // Scratch crossfade + summing bus (see graph diagram above).
+  mixBus = audioContext.createGain();
+  liveGain = audioContext.createGain();
+  scratchGain = audioContext.createGain();
+  liveGain.gain.value = 1;     // live stream audible by default
+  scratchGain.gain.value = 0;  // scrub layer silent until the record is grabbed
 }
 
 function connectAudioSource() {
   if (!audioContext || audioSource) return;
   try {
     audioSource = audioContext.createMediaElementSource(audioStream);
-    // analyser taps the full-amplitude signal; gainNode controls output volume
-    audioSource.connect(analyser);
-    analyser.connect(gainNode);
+    // Live path → mix bus. The scratch layer joins the same bus (scratchGain
+    // starts silent). The analyser taps the bus so the visualizer reacts to
+    // whatever is audible — live or scratch — at full amplitude, pre-volume.
+    audioSource.connect(liveGain);
+    liveGain.connect(mixBus);
+    scratchGain.connect(mixBus);
+    mixBus.connect(analyser);              // tap (not routed onward to destination)
+    mixBus.connect(gainNode);              // gainNode = master volume
     gainNode.connect(audioContext.destination);
     audioStream.volume = 1.0;
+    initScratchWorklet();                  // async; scratch becomes available once loaded
   } catch (e) {
     console.warn('Audio source connection failed:', e);
   }
+}
+
+// --- Record scratch engine ---
+
+// AudioWorklet processor (runs on the audio thread). It continuously records the
+// live signal into a ~6s stereo ring buffer, and while "scratching" plays that
+// buffer back at a position/rate driven from the main thread — negative rate =
+// reverse. Loaded from a Blob URL so it stays self-contained in this file (no
+// extra asset to copy into static/).
+const SCRATCH_WORKLET_CODE = `
+class ScratchProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.L = Math.floor(sampleRate * 6);
+    this.ring = [new Float32Array(this.L), new Float32Array(this.L)];
+    this.w = 0;            // absolute write head (samples written)
+    this.readPos = 0;      // absolute fractional read position
+    this.scratching = false;
+    this.rate = 0;         // current playback rate (1 = live speed)
+    this.targetRate = 0;
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'grab') { this.scratching = true; this.readPos = this.w - 64; this.rate = 0; this.targetRate = 0; }
+      else if (d.type === 'release') { this.scratching = false; }
+      else if (d.type === 'rate') { this.targetRate = d.value; }
+    };
+  }
+  process(inputs, outputs) {
+    const input = inputs[0];
+    const output = outputs[0];
+    const L = this.L;
+    // Record live input into the ring buffer (always, so scrubbing has material).
+    if (input && input.length && input[0]) {
+      const chN = Math.min(2, input.length);
+      for (let c = 0; c < chN; c++) {
+        const inCh = input[c], ring = this.ring[c];
+        for (let i = 0; i < inCh.length; i++) ring[(this.w + i) % L] = inCh[i];
+      }
+      if (input.length === 1) { // mono source — mirror into the right channel
+        const r0 = this.ring[0], r1 = this.ring[1], n = input[0].length;
+        for (let i = 0; i < n; i++) r1[(this.w + i) % L] = r0[(this.w + i) % L];
+      }
+      this.w += input[0].length;
+    }
+    const outLen = output[0] ? output[0].length : 128;
+    if (!this.scratching) {
+      for (let c = 0; c < output.length; c++) output[c].fill(0);
+      return true;
+    }
+    this.rate += (this.targetRate - this.rate) * 0.25; // smooth — kill zipper noise
+    const stopped = Math.abs(this.rate) < 0.02;        // held still = silence
+    // Readable window: the last ~6s of recorded audio, ending just behind the
+    // live write head. Instead of clamping at the edges (which freezes the
+    // sound), we LOOP — scrub past either end and the buffer wraps around and
+    // keeps playing. Live is never lost: w keeps advancing and release
+    // crossfades back to the always-running live stream.
+    const hi = this.w - 64;            // newest readable (just behind live)
+    const lo = this.w - (L - 512);     // oldest readable
+    const span = hi - lo;              // loop length (≈ 6s of buffer)
+    for (let i = 0; i < outLen; i++) {
+      let s0 = 0, s1 = 0;
+      if (!stopped) {
+        while (this.readPos > hi) this.readPos -= span; // scrubbed forward past live → loop
+        while (this.readPos < lo) this.readPos += span; // scrubbed back past buffer → loop
+        const i0 = Math.floor(this.readPos);
+        const frac = this.readPos - i0;
+        const a = ((i0 % L) + L) % L, b = (((i0 + 1) % L) + L) % L;
+        s0 = this.ring[0][a] + (this.ring[0][b] - this.ring[0][a]) * frac;
+        s1 = this.ring[1][a] + (this.ring[1][b] - this.ring[1][a]) * frac;
+        this.readPos += this.rate;
+      }
+      if (output[0]) output[0][i] = s0;
+      if (output[1]) output[1][i] = s1;
+    }
+    return true;
+  }
+}
+registerProcessor('scratch-processor', ScratchProcessor);
+`;
+
+function initScratchWorklet() {
+  if (!audioContext || !audioContext.audioWorklet || scratchNode || scratchModulePromise) return;
+  const url = URL.createObjectURL(new Blob([SCRATCH_WORKLET_CODE], { type: 'application/javascript' }));
+  scratchModulePromise = audioContext.audioWorklet.addModule(url)
+    .then(() => {
+      scratchNode = new AudioWorkletNode(audioContext, 'scratch-processor', {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+      });
+      if (audioSource) audioSource.connect(scratchNode); // feed the ring buffer
+      scratchNode.connect(scratchGain);
+      scratchReady = true;
+    })
+    .catch((e) => { console.warn('Scratch worklet unavailable:', e); })
+    .finally(() => URL.revokeObjectURL(url));
+}
+
+// Crossfade the audible signal between the live stream and the scrub layer. The
+// live <audio> element never stops, so on release we're already at the live edge.
+function startScratchAudio() {
+  if (!scratchNode) return;
+  const t = audioContext.currentTime;
+  liveGain.gain.cancelScheduledValues(t);
+  scratchGain.gain.cancelScheduledValues(t);
+  liveGain.gain.setValueAtTime(liveGain.gain.value, t);
+  scratchGain.gain.setValueAtTime(scratchGain.gain.value, t);
+  liveGain.gain.linearRampToValueAtTime(0, t + 0.04);
+  scratchGain.gain.linearRampToValueAtTime(1, t + 0.04);
+  scratchNode.port.postMessage({ type: 'grab' });
+}
+
+function setScratchRate(rate) {
+  if (scratchNode) scratchNode.port.postMessage({ type: 'rate', value: rate });
+}
+
+function stopScratchAudio() {
+  if (!scratchNode) return;
+  const t = audioContext.currentTime;
+  liveGain.gain.cancelScheduledValues(t);
+  scratchGain.gain.cancelScheduledValues(t);
+  liveGain.gain.setValueAtTime(liveGain.gain.value, t);
+  scratchGain.gain.setValueAtTime(scratchGain.gain.value, t);
+  liveGain.gain.linearRampToValueAtTime(1, t + 0.06);
+  scratchGain.gain.linearRampToValueAtTime(0, t + 0.06);
+  scratchNode.port.postMessage({ type: 'release' });
+}
+
+// --- Record-drop sound ---
+// Drop an audio file at this path (mp3/ogg/wav) to play a needle-drop when
+// playback starts. Missing file? It just no-ops.
+const RECORD_DROP_SRC = 'sounds/record-drop.mp3';
+let recordDropBuffer = null, recordDropLoading = false;
+
+function loadRecordDrop() {
+  if (!audioContext || recordDropBuffer || recordDropLoading) return;
+  recordDropLoading = true;
+  fetch(RECORD_DROP_SRC)
+    .then((r) => { if (!r.ok) throw new Error('no record-drop file'); return r.arrayBuffer(); })
+    .then((buf) => audioContext.decodeAudioData(buf))
+    .then((decoded) => { recordDropBuffer = decoded; })
+    .catch(() => { /* no sound supplied — silent */ })
+    .finally(() => { recordDropLoading = false; });
+}
+
+function playRecordDrop() {
+  if (!audioContext || !recordDropBuffer) return;
+  const src = audioContext.createBufferSource();
+  src.buffer = recordDropBuffer;
+  src.connect(gainNode); // respects the volume slider
+  src.start();
+}
+
+// --- Scratch gesture (pointer drag on the record) ---
+
+// Normal spin is SPIN_FULL deg/ms and corresponds to 1× playback, so the audio
+// rate is simply the hand's angular speed measured in those same units.
+const SCRATCH_MAX_RATE = 8;   // clamp wild flicks
+const SCRATCH_RELEASE_MS = 600; // how fast the platter recovers to full speed
+
+function scratchEnabled() {
+  return fxOn() && isPlaying && scratchReady && !recordGrabbed &&
+    !tonearmChoreography && !document.body.classList.contains('no-bg-animation');
+}
+
+function pointerAngleDeg(e) {
+  const cx = scratchRect.left + scratchRect.width / 2;
+  const cy = scratchRect.top + scratchRect.height / 2;
+  return Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+}
+
+function onRecordPointerDown(e) {
+  if (!scratchEnabled()) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const card = document.getElementById('art-card');
+  if (!card) return;
+  scratchRect = card.getBoundingClientRect();
+  recordGrabbed = true;
+  scratchMoved = false;
+  scratchVel = 0;
+  scratchPrevAngle = pointerAngleDeg(e);
+  scratchPrevTime = e.timeStamp || performance.now();
+  // Take over the spin engine: freeze any ramp and stop its rAF loop.
+  spinRampDur = 0;
+  if (spinRafId) { cancelAnimationFrame(spinRafId); spinRafId = null; }
+  if (card.setPointerCapture) { try { card.setPointerCapture(e.pointerId); } catch (_) {} }
+  document.body.classList.add('record-grabbed');
+  // Audio doesn't cross over to the scrub layer until the finger actually moves
+  // (see onRecordPointerMove) — so a plain tap to open the album link is silent-safe.
+  e.preventDefault();
+  window.addEventListener('pointermove', onRecordPointerMove);
+  window.addEventListener('pointerup', onRecordPointerUp);
+  window.addEventListener('pointercancel', onRecordPointerUp);
+}
+
+function onRecordPointerMove(e) {
+  if (!recordGrabbed) return;
+  const ang = pointerAngleDeg(e);
+  let d = ang - scratchPrevAngle;
+  if (d > 180) d -= 360; else if (d < -180) d += 360; // shortest way round
+  const now = e.timeStamp || performance.now();
+  let dt = now - scratchPrevTime;
+  if (dt < 1) dt = 1;
+  scratchPrevAngle = ang;
+  scratchPrevTime = now;
+  if (!scratchMoved && Math.abs(d) > 0.6) {
+    scratchMoved = true;
+    startScratchAudio(); // first real movement — cross over to the scrub layer
+  }
+  // Rotate the record under the finger.
+  spinAngle = (spinAngle + d) % 360;
+  if (spinEls) spinEls.forEach((el) => (el.style.transform = `rotate(${spinAngle}deg)`));
+  // Angular speed (deg/ms) → playback rate; 1× when moving at normal spin speed.
+  scratchVel = d / dt;
+  let rate = scratchVel / SPIN_FULL;
+  rate = Math.max(-SCRATCH_MAX_RATE, Math.min(SCRATCH_MAX_RATE, rate));
+  setScratchRate(rate);
+}
+
+function onRecordPointerUp() {
+  if (!recordGrabbed) return;
+  recordGrabbed = false;
+  window.removeEventListener('pointermove', onRecordPointerMove);
+  window.removeEventListener('pointerup', onRecordPointerUp);
+  window.removeEventListener('pointercancel', onRecordPointerUp);
+  document.body.classList.remove('record-grabbed');
+  if (scratchMoved) {
+    stopScratchAudio();          // cross back to the (still-live) stream
+  }
+  // Carry the hand's forward momentum into the spin, then ease back to full.
+  spinSpeed = Math.max(0, Math.min(scratchVel, SPIN_FULL * 3));
+  spinPrev = 0;
+  startSpinRamp(isPlaying ? SPIN_FULL : 0, SCRATCH_RELEASE_MS, EASE_OUT);
+}
+
+function initRecordScratch() {
+  const card = document.getElementById('art-card');
+  const link = document.getElementById('playing-link');
+  if (!card) return;
+  card.addEventListener('pointerdown', onRecordPointerDown);
+  // The record is not a link — it's only a scratch surface. Block any click
+  // navigation outright (a stray href, a scratch that ends as a tap, etc.).
+  if (link) link.addEventListener('click', (e) => { e.preventDefault(); }, true);
 }
 
 
@@ -510,7 +776,6 @@ function applyPendingMetadata() {
     artistEl.innerHTML = data.artist
       .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
       .join(', ');
-    playingLink.setAttribute('href', `https://open.spotify.com/album/${data.albumid}`);
     // Only (re)sync the arm on an actual song change — resends of the same
     // song carry a fresh started_at and would otherwise jump the arm back.
     if (data.songid !== tonearmSongId) {
@@ -741,6 +1006,7 @@ function drawViz(timestamp) {
 
 initBgCanvas();
 initVizCanvas();
+initRecordScratch();
 
 // --- End Enhanced Background Effects ---
 
@@ -755,6 +1021,7 @@ function togglePlay() {
   // on the CPU. Volume then runs through audioStream.volume (see volumeSet).
   if (fxOn()) {
     enableAudioGraph();
+    playRecordDrop(); // needle-drop over the spin-up; music lands at SPIN_UP_MS
     // Hold the audio until the record has spun up and the arm has dropped into
     // place — like lowering the needle on a platter that's already at speed.
     if (audioStartTimer) clearTimeout(audioStartTimer);
@@ -773,6 +1040,7 @@ function enableAudioGraph() {
   initAudioContext();
   connectAudioSource();
   if (audioContext.state === 'suspended') audioContext.resume();
+  loadRecordDrop();
   startViz();
 }
 
@@ -856,7 +1124,6 @@ function handleMetadata(currentData) {
       playingImage.src =
         "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
     }
-    playingLink.setAttribute("href", "javascript:void(0)");
     updateSongId(null);
     songStartedAtMs = null;
     songDurationMs = null;

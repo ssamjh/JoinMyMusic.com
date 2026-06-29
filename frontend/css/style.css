@@ -313,12 +313,27 @@ main {
 body:not(.no-bg-animation) #art-card { border-radius: 50%; }
 body:not(.no-bg-animation) .record-overlay { opacity: 1; }
 
+/* Scratch: with the record showing, the card is grabbable. touch-action:none so
+   a finger drag scratches the record instead of scrolling the page. */
+body:not(.no-bg-animation).is-playing #art-card { cursor: grab; touch-action: none; }
+body.record-grabbed #art-card { cursor: grabbing; }
+body.record-grabbed, body.record-grabbed * { user-select: none; }
+
 /* ---- Tonearm: sweeps from the rim to the centre as the song progresses ---- */
 /* Pivot sits just off the top-right of the disc at (100%, 2%) of the card.
    The arm is drawn in its rest pose (stylus on the outer rim); JS rotates the
    whole assembly about the pivot from 0deg → ~29.3deg as playback progresses
    (stopping just shy of the centre, like a real record's runout). */
 #playing-link { position: relative; }
+/* The record is a scratch surface, not a link or a selectable/draggable image. */
+#playing-link, #art-card, #playing-image, .art-placeholder,
+.record-overlay, .art-sheen {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+#playing-image { pointer-events: none; }
 .tonearm {
   position: absolute;
   inset: 0;
