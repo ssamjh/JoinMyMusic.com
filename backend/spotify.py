@@ -29,6 +29,7 @@ _EMPTY_METADATA = {
         "cover": "",
         "playing": False,
         "duration_ms": 0,
+        "progress_ms": 0,
     }
 }
 
@@ -78,6 +79,7 @@ class SpotifyClient:
                     "cover": cover,
                     "playing": playback["is_playing"],
                     "duration_ms": track.get("duration_ms", 0),
+                    "progress_ms": playback.get("progress_ms", 0),
                 }
             }
         except (KeyError, TypeError, AttributeError) as e:

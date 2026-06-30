@@ -3,28 +3,58 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
 METADATA_DELAY = float(os.environ.get("METADATA_DELAY", "5"))
+METADATA_DELAY_MS = METADATA_DELAY * 1000
 
-# The wall-clock time (ISO 8601) at which the current song's metadata was sent.
-# This is treated as the song's start time so that every consumer — the SSE
-# stream, new connections, and the REST fallback — reports the same value,
-# rather than each computing one from Spotify's actual playback position.
+# A jump in Spotify's reported position larger than this (vs. where continuous
+# playback would have us) is treated as a seek and re-anchors the song. Kept
+# well above normal poll/latency jitter so steady playback never trips it.
+SEEK_THRESHOLD_MS = 3000
+
+# The wall-clock instant (ISO 8601) at which the *currently heard* song was at
+# position 0 — i.e. the anchor clients reconstruct playback progress from. It is
+# expressed in stream time: the audio stream lags Spotify by METADATA_DELAY
+# seconds, so this is pushed back by that delay. Every consumer (SSE stream, new
+# connections, REST fallback) reports the same anchor.
 current_song_state: dict = {"songid": "", "started_at": None}
 
 
+def stream_started_at(polled_at: datetime, progress_ms: float) -> datetime:
+    """Wall-clock instant the currently-heard song was at position 0.
+
+    The listener hears audio METADATA_DELAY seconds behind Spotify's live
+    position, so the position in their ears right now is
+    ``progress_ms - METADATA_DELAY``. Anchoring to that lets a client rebuild the
+    heard position from its own monotonic clock — immune to clock skew.
+    """
+    heard_ms = progress_ms - METADATA_DELAY_MS
+    return polled_at - timedelta(milliseconds=heard_ms)
+
+
 def enrich_with_timing(current: dict) -> dict:
-    """Attach the stored start time for the current song, if it matches."""
+    """Attach elapsed playback time (ms, stream time) for the current song.
+
+    ``elapsed_ms`` is the position the listener is currently hearing (already
+    adjusted for the stream delay). Clients anchor their progress UI to it
+    against their own clock. May be negative while a freshly started song is
+    still inside the stream's delay buffer — clients clamp that to 0.
+    """
+    out = {k: v for k, v in current.items() if k != "progress_ms"}
     songid = current.get("songid", "")
-    started_at = (
-        current_song_state["started_at"]
-        if songid and songid == current_song_state["songid"]
-        else None
-    )
-    return {**current, "started_at": started_at}
+    started_at = current_song_state["started_at"]
+    if songid and songid == current_song_state["songid"] and started_at:
+        start = datetime.fromisoformat(started_at)
+        elapsed_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+        out["started_at"] = started_at
+        out["elapsed_ms"] = elapsed_ms
+    else:
+        out["started_at"] = None
+        out["elapsed_ms"] = None
+    return out
 
 
 class SSEBroadcaster:
@@ -59,7 +89,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
     """Background task: poll Spotify every 5s, broadcast metadata on change."""
     from storage import add_to_history, get_history, prune_history
 
-    last_metadata: dict | None = None
+    last_stable: dict | None = None  # last broadcast content, ignoring progress
     last_song_id: str = ""
     last_current: dict | None = None  # metadata of the currently playing song
 
@@ -68,15 +98,38 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             metadata = await spotify_client.get_current_playback()
             current = metadata.get("current", {})
             song_id = current.get("songid", "")
+            progress_ms = current.get("progress_ms", 0)
+            polled_at = datetime.now(timezone.utc)
 
             # Expire history entries older than the TTL, even if nothing else changed.
             history_changed = prune_history()
 
-            if metadata != last_metadata:
-                last_metadata = metadata
+            # Compare content without the ever-advancing progress, so steady
+            # playback doesn't look like a change on every poll.
+            stable = {k: v for k, v in current.items() if k != "progress_ms"}
+            content_changed = stable != last_stable
+
+            # Detect an in-track seek: re-derive the anchor from Spotify's live
+            # position; a jump past the threshold means someone scrubbed. Only
+            # while playing — a paused track's frozen progress would otherwise
+            # read as an ever-growing drift and re-broadcast every poll.
+            seeked = False
+            if (
+                current.get("playing")
+                and song_id
+                and song_id == current_song_state["songid"]
+                and current_song_state["started_at"]
+            ):
+                candidate = stream_started_at(polled_at, progress_ms)
+                stored = datetime.fromisoformat(current_song_state["started_at"])
+                if abs((candidate - stored).total_seconds()) * 1000 > SEEK_THRESHOLD_MS:
+                    seeked = True
+
+            if content_changed or seeked:
+                last_stable = stable
 
                 # A new song started: record the previous one and clear its votes.
-                if song_id and song_id != last_song_id:
+                if content_changed and song_id and song_id != last_song_id:
                     if last_song_id and last_current:
                         add_to_history(last_current)
                         history_changed = True
@@ -86,13 +139,17 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
                         needed = max(2, -(-total_listeners // 2))
                         await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
                     last_current = current
-                last_song_id = song_id
+                if content_changed:
+                    last_song_id = song_id
 
+                # Hold the announcement so the song flip / tonearm jump lands in
+                # sync with the delayed audio stream the listener actually hears.
                 await asyncio.sleep(METADATA_DELAY)
-                # Stamp the start time the moment we send a new song's metadata.
-                if song_id and song_id != current_song_state["songid"]:
+                # (Re)anchor to the live position — on a song change and on a
+                # seek alike — compensating for the stream delay.
+                if song_id:
                     current_song_state["songid"] = song_id
-                    current_song_state["started_at"] = datetime.now(timezone.utc).isoformat()
+                    current_song_state["started_at"] = stream_started_at(polled_at, progress_ms).isoformat()
                 await broadcaster.broadcast("metadata", enrich_with_timing(current))
 
             if history_changed:

@@ -59,14 +59,18 @@ let pendingColors = null;
 // Tonearm progress globals — drive the arm from the rim to the centre
 const TONEARM_SWEEP_DEG = 29.32; // rim → just before centre (runout, ~15% radius)
 const TONEARM_PARK_DEG = -10;    // swung off the side of the record (rest)
-let songStartedAtMs = null;
+// Anchored against performance.now() (monotonic) rather than Date.now(), so the
+// arm position is immune to the listener's wall clock being wrong/skewed. Set
+// from the server's elapsed_ms — the position currently being heard — on every
+// metadata event (song change, in-track seek, or reconnect snapshot).
+let songStartedAtPerf = null;
 let songDurationMs = null;
-let tonearmSongId = null; // song the arm timing is locked to (ignore resends)
+let tonearmSongId = null; // song the arm timing is locked to
 let tonearmChoreography = false; // true while the scripted swing-off/on is running
 function updateTonearm() {
   const el = document.getElementById("tonearm");
   if (!el) return;
-  if (songStartedAtMs == null || !songDurationMs) {
+  if (songStartedAtPerf == null || !songDurationMs) {
     el.classList.remove("ready");
     return;
   }
@@ -77,11 +81,16 @@ function updateTonearm() {
     el.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
     return;
   }
-  let p = (Date.now() - songStartedAtMs) / songDurationMs;
+  let p = (performance.now() - songStartedAtPerf) / songDurationMs;
   p = p < 0 ? 0 : p > 1 ? 1 : p;
   el.style.transform = `rotate(${(p * TONEARM_SWEEP_DEG).toFixed(2)}deg)`;
 }
 setInterval(updateTonearm, 500);
+// Background tabs throttle the interval above to ~1/min, so snap the arm to the
+// right spot the instant we're refocused rather than waiting for the next tick.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) updateTonearm();
+});
 
 // ---- Record spin engine (JS-driven so speed can ramp up/down and stop) ----
 const SPIN_FULL = 360 / 8000; // deg per ms → one revolution every 8s
@@ -776,14 +785,18 @@ function applyPendingMetadata() {
     artistEl.innerHTML = data.artist
       .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
       .join(', ');
-    // Only (re)sync the arm on an actual song change — resends of the same
-    // song carry a fresh started_at and would otherwise jump the arm back.
-    if (data.songid !== tonearmSongId) {
-      tonearmSongId = data.songid;
-      const startMs = data.started_at ? Date.parse(data.started_at) : NaN;
-      songStartedAtMs = isNaN(startMs) ? null : startMs;
-      songDurationMs = data.duration_ms || null;
-    }
+    // Re-anchor the arm on every metadata — song change, in-track seek, and the
+    // reconnect snapshot all carry a fresh elapsed_ms (the position currently
+    // being heard, already adjusted for the stream delay server-side). The
+    // server only re-sends mid-song when there's a real seek, so this is
+    // idempotent for steady playback. elapsed_ms may be negative while a new
+    // song is still in the stream's delay buffer — updateTonearm clamps to 0.
+    tonearmSongId = data.songid;
+    songDurationMs = data.duration_ms || null;
+    songStartedAtPerf =
+      typeof data.elapsed_ms === "number"
+        ? performance.now() - data.elapsed_ms
+        : null;
     updateTonearm();
     if ('mediaSession' in navigator && data.song) {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -1125,7 +1138,7 @@ function handleMetadata(currentData) {
         "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
     }
     updateSongId(null);
-    songStartedAtMs = null;
+    songStartedAtPerf = null;
     songDurationMs = null;
     tonearmSongId = null;
     updateTonearm();
