@@ -67,6 +67,29 @@ let songStartedAtPerf = null;
 let songDurationMs = null;
 let tonearmSongId = null; // song the arm timing is locked to
 let tonearmChoreography = false; // true while the scripted swing-off/on is running
+// Pending timeouts of the running swap sequence, so a second song change (e.g.
+// a skip landing right at a track boundary) or a stop can abort it cleanly
+// instead of two choreographies fighting over the arm and the dim state.
+let choreoTimers = [];
+function choreoTimeout(fn, ms) {
+  choreoTimers.push(setTimeout(fn, ms));
+}
+function cancelChoreography() {
+  choreoTimers.forEach(clearTimeout);
+  choreoTimers = [];
+  const cardEl = document.getElementById('art-card');
+  const titleEl = document.querySelector('.div-playing-title');
+  const artistEl = document.querySelector('.div-playing-artist');
+  if (cardEl) cardEl.classList.remove('flip-swap', 'fade-swap');
+  if (titleEl) titleEl.classList.remove('fade-swap-text');
+  if (artistEl) artistEl.classList.remove('fade-swap-text');
+  if (tonearmChoreography) {
+    const armEl = document.getElementById('tonearm');
+    if (armEl) armEl.style.transition = ''; // restore play-time (linear) transition
+    tonearmChoreography = false;
+  }
+  document.body.classList.remove('fx-dimmed');
+}
 function updateTonearm() {
   const el = document.getElementById("tonearm");
   if (!el) return;
@@ -275,6 +298,52 @@ function enableVoteSkipButton(token) {
   }
 }
 
+// --- Turnstile (rendered explicitly so each modal owns its widget) ---
+// Tokens are single-use, so after every submission the widget that produced the
+// token is reset by id. A no-arg turnstile.reset() only targets the first
+// widget on the page, which left the vote widget holding a spent token.
+const TURNSTILE_SITEKEY = "0x4AAAAAAAeaz0KAvdHl7LvY";
+let turnstileRequestId = null;
+let turnstileVoteId = null;
+
+// Called by the Turnstile API script (?onload=onTurnstileLoad), which is loaded
+// after app.js so this is guaranteed to exist by then.
+function onTurnstileLoad() {
+  turnstileRequestId = turnstile.render("#turnstile-request", {
+    sitekey: TURNSTILE_SITEKEY,
+    callback: enableConfirmButton,
+    "expired-callback": disarmRequestChallenge,
+  });
+  turnstileVoteId = turnstile.render("#turnstile-vote", {
+    sitekey: TURNSTILE_SITEKEY,
+    callback: enableVoteSkipButton,
+    "expired-callback": disarmVoteChallenge,
+  });
+}
+
+// Drop the stored token and disable the button until a fresh token arrives.
+function disarmRequestChallenge() {
+  const btn = document.getElementById("confirmRequestBtn");
+  btn.disabled = true;
+  delete btn.dataset.turnstileToken;
+}
+
+function disarmVoteChallenge() {
+  const btn = document.getElementById("confirmVoteSkipBtn");
+  btn.disabled = true;
+  delete btn.dataset.turnstileToken;
+}
+
+function resetRequestChallenge() {
+  disarmRequestChallenge();
+  if (window.turnstile && turnstileRequestId !== null) turnstile.reset(turnstileRequestId);
+}
+
+function resetVoteChallenge() {
+  disarmVoteChallenge();
+  if (window.turnstile && turnstileVoteId !== null) turnstile.reset(turnstileVoteId);
+}
+
 function pollServer() {
   if (!isPlaying) return;
 
@@ -317,10 +386,73 @@ function icecastFallbackHandler() {
   fallbackToIcecast();
 }
 
+// Deliberate ceiling: the slider maps 0–100 onto 0–30% gain (50 → 10%).
+// This is not a bug — don't "fix" it to reach 1.0.
 function scaleVolume(inputValue) {
   return inputValue <= 50
     ? inputValue * 0.2
     : 10 + (inputValue - 50) * 0.4;
+}
+
+const HLS_STREAM_URL = "https://hls.sjh.at/spotifynet/stream.m3u8";
+
+// hls.js is only needed on the effects-on / no-native-HLS path, so it's loaded
+// on demand instead of on every page view (~85 KB gzipped, unused until play).
+const HLS_JS_SRC = "https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js";
+const HLS_JS_INTEGRITY = "sha384-5E8B0pTlZZJMabWpC0fyYf6OUpe15jJij34BqBAh4NXoHAlLNOjCPRrwtOXOQFAn";
+let hlsJsPromise = null;
+function loadHlsJs() {
+  if (window.Hls) return Promise.resolve();
+  if (!hlsJsPromise) {
+    hlsJsPromise = new Promise(function (resolve, reject) {
+      const s = document.createElement("script");
+      s.src = HLS_JS_SRC;
+      s.integrity = HLS_JS_INTEGRITY;
+      s.crossOrigin = "anonymous";
+      s.onload = () => resolve();
+      s.onerror = () => {
+        hlsJsPromise = null; // allow a retry on the next play attempt
+        reject(new Error("hls.js failed to load"));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return hlsJsPromise;
+}
+
+function playNativeHls() {
+  // Re-arm the fallback handler without stacking one per call.
+  audioStream.removeEventListener("error", icecastFallbackHandler);
+  audioStream.src = HLS_STREAM_URL;
+  audioStream.addEventListener("error", icecastFallbackHandler, { once: true });
+  audioStream.play().catch(function (e) {});
+}
+
+function startHlsJs() {
+  // Two play attempts can be queued behind the same script download — never
+  // let a second instance orphan (and leak) a still-streaming first one.
+  if (hlsInstance) {
+    hlsInstance.destroy();
+    hlsInstance = null;
+  }
+  // Effects on: use hls.js so the analyser gets a clean, decodable signal.
+  hlsInstance = new Hls();
+  hlsInstance.loadSource(HLS_STREAM_URL);
+  hlsInstance.attachMedia(audioStream);
+
+  hlsInstance.once(Hls.Events.MANIFEST_PARSED, function () {
+    audioStream.play().catch(function (e) { console.warn("HLS play failed:", e); });
+  });
+
+  hlsInstance.on(Hls.Events.ERROR, function (event, data) {
+    if (data.fatal) {
+      console.warn("HLS fatal error, falling back to Icecast", data);
+      hlsFailed = true;
+      hlsInstance.destroy();
+      hlsInstance = null;
+      fallbackToIcecast();
+    }
+  });
 }
 
 function qualityUpdate() {
@@ -332,39 +464,31 @@ function qualityUpdate() {
 
   const nativeHls = audioStream.canPlayType("application/vnd.apple.mpegurl");
 
-  if (!hlsFailed && nativeHls && !fxOn()) {
+  if (hlsFailed) {
+    fallbackToIcecast();
+    return;
+  }
+
+  if (nativeHls && !fxOn()) {
     // With effects off we don't need the Web Audio analyser, so prefer the
     // browser's native HLS — it's hardware-accelerated and far lighter on the
     // CPU than hls.js's software MSE pipeline (which makes phones stutter).
-    audioStream.src = "https://hls.sjh.at/spotifynet/stream.m3u8";
-    audioStream.addEventListener("error", icecastFallbackHandler, { once: true });
-    audioStream.play().catch(function(e) {});
-  } else if (!hlsFailed && Hls.isSupported()) {
-    // Effects on: use hls.js so the analyser gets a clean, decodable signal.
-    hlsInstance = new Hls();
-    hlsInstance.loadSource("https://hls.sjh.at/spotifynet/stream.m3u8");
-    hlsInstance.attachMedia(audioStream);
-
-    hlsInstance.once(Hls.Events.MANIFEST_PARSED, function() {
-      audioStream.play().catch(function(e) { console.warn("HLS play failed:", e); });
-    });
-
-    hlsInstance.on(Hls.Events.ERROR, function (event, data) {
-      if (data.fatal) {
-        console.warn("HLS fatal error, falling back to Icecast", data);
-        hlsFailed = true;
-        hlsInstance.destroy();
-        hlsInstance = null;
-        fallbackToIcecast();
-      }
-    });
-  } else if (!hlsFailed && nativeHls) {
-    audioStream.src = "https://hls.sjh.at/spotifynet/stream.m3u8";
-    audioStream.addEventListener("error", icecastFallbackHandler, { once: true });
-    audioStream.play().catch(function(e) {});
-  } else {
-    fallbackToIcecast();
+    playNativeHls();
+    return;
   }
+
+  loadHlsJs()
+    .then(function () {
+      if (!isPlaying) return; // stopped while the script was downloading
+      if (Hls.isSupported()) startHlsJs();
+      else if (nativeHls) playNativeHls();
+      else fallbackToIcecast();
+    })
+    .catch(function () {
+      if (!isPlaying) return;
+      if (nativeHls) playNativeHls();
+      else fallbackToIcecast();
+    });
 }
 
 // --- Enhanced Background Effects ---
@@ -529,31 +653,6 @@ function stopScratchAudio() {
   liveGain.gain.linearRampToValueAtTime(1, t + 0.06);
   scratchGain.gain.linearRampToValueAtTime(0, t + 0.06);
   scratchNode.port.postMessage({ type: 'release' });
-}
-
-// --- Record-drop sound ---
-// Drop an audio file at this path (mp3/ogg/wav) to play a needle-drop when
-// playback starts. Missing file? It just no-ops.
-const RECORD_DROP_SRC = 'sounds/record-drop.mp3';
-let recordDropBuffer = null, recordDropLoading = false;
-
-function loadRecordDrop() {
-  if (!audioContext || recordDropBuffer || recordDropLoading) return;
-  recordDropLoading = true;
-  fetch(RECORD_DROP_SRC)
-    .then((r) => { if (!r.ok) throw new Error('no record-drop file'); return r.arrayBuffer(); })
-    .then((buf) => audioContext.decodeAudioData(buf))
-    .then((decoded) => { recordDropBuffer = decoded; })
-    .catch(() => { /* no sound supplied — silent */ })
-    .finally(() => { recordDropLoading = false; });
-}
-
-function playRecordDrop() {
-  if (!audioContext || !recordDropBuffer) return;
-  const src = audioContext.createBufferSource();
-  src.buffer = recordDropBuffer;
-  src.connect(gainNode); // respects the volume slider
-  src.start();
 }
 
 // --- Scratch gesture (pointer drag on the record) ---
@@ -766,7 +865,7 @@ function applyPendingMetadata() {
   pendingMetadata = null;
 
   const createLink = (url, id, name) =>
-    `<a href="${url}${id}" target="_blank" style="color: inherit; text-decoration: none;">${name}</a>`;
+    `<a href="${url}${encodeURIComponent(id)}" target="_blank" style="color: inherit; text-decoration: none;">${escapeHtml(name)}</a>`;
 
   const cardEl   = document.getElementById('art-card');
   const titleEl  = document.querySelector('.div-playing-title');
@@ -813,6 +912,10 @@ function applyPendingMetadata() {
     return;
   }
 
+  // A previous swap may still be mid-flight (rapid skip / back-to-back
+  // changes) — abort it before starting this one.
+  cancelChoreography();
+
   const armEl = document.getElementById('tonearm');
 
   // Lightweight mode: no record/arm — just cross-fade the art + text.
@@ -820,8 +923,8 @@ function applyPendingMetadata() {
     cardEl.classList.add('fade-swap');
     titleEl.classList.add('fade-swap-text');
     artistEl.classList.add('fade-swap-text');
-    setTimeout(applyContent, 600);
-    setTimeout(() => {
+    choreoTimeout(applyContent, 600);
+    choreoTimeout(() => {
       cardEl.classList.remove('fade-swap');
       titleEl.classList.remove('fade-swap-text');
       artistEl.classList.remove('fade-swap-text');
@@ -841,18 +944,18 @@ function applyPendingMetadata() {
   // Record eases to a stop first, finishing right as the arm parks / flip begins.
   startSpinRamp(0, LEAD_MS + SWING_MS, EASE_OUT);
 
-  setTimeout(() => {
+  choreoTimeout(() => {
     // Arm swings off the side of the record.
     if (armEl) {
       armEl.style.transition = 'transform 1s ease, opacity 1s ease';
       armEl.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
     }
-    setTimeout(() => {
+    choreoTimeout(() => {
       cardEl.classList.add('flip-swap');
       titleEl.classList.add('fade-swap-text');
       artistEl.classList.add('fade-swap-text');
-      setTimeout(applyContent, 600); // swap at the edge-on (invisible) point
-      setTimeout(() => {
+      choreoTimeout(applyContent, 600); // swap at the edge-on (invisible) point
+      choreoTimeout(() => {
         cardEl.classList.remove('flip-swap');
         titleEl.classList.remove('fade-swap-text');
         artistEl.classList.remove('fade-swap-text');
@@ -862,7 +965,7 @@ function applyPendingMetadata() {
         startSpinRamp(isPlaying ? SPIN_FULL : 0, 1400, EASE_IN);
         // Record's spinning again — bring the background + side glow back.
         document.body.classList.remove('fx-dimmed');
-        setTimeout(() => {
+        choreoTimeout(() => {
           if (armEl) armEl.style.transition = ''; // restore play-time (linear) transition
           tonearmChoreography = false;
         }, SWING_MS);
@@ -1034,7 +1137,6 @@ function togglePlay() {
   // on the CPU. Volume then runs through audioStream.volume (see volumeSet).
   if (fxOn()) {
     enableAudioGraph();
-    playRecordDrop(); // needle-drop over the spin-up; music lands at SPIN_UP_MS
     // Hold the audio until the record has spun up and the arm has dropped into
     // place — like lowering the needle on a platter that's already at speed.
     if (audioStartTimer) clearTimeout(audioStartTimer);
@@ -1053,7 +1155,6 @@ function enableAudioGraph() {
   initAudioContext();
   connectAudioSource();
   if (audioContext.state === 'suspended') audioContext.resume();
-  loadRecordDrop();
   startViz();
 }
 
@@ -1066,8 +1167,9 @@ function buttonStop() {
   updatePlayUI();
   updateButtons();
   stopViz();
-  // Don't leave the background dimmed if we stopped mid song-change.
-  document.body.classList.remove('fx-dimmed');
+  // Abort any in-flight song-change sequence — don't leave the background
+  // dimmed or the arm mid-swing.
+  cancelChoreography();
 }
 
 function volumeSet(val) {
@@ -1085,9 +1187,11 @@ function volumeSet(val) {
 function setVolumeUI(val) {
   const fill = document.getElementById("vol-fill");
   const thumb = document.getElementById("vol-thumb");
+  const track = document.getElementById("vol-track");
   const pct = Math.max(0, Math.min(100, val));
   if (fill) fill.style.width = pct + "%";
   if (thumb) thumb.style.left = pct + "%";
+  if (track) track.setAttribute("aria-valuenow", String(pct));
 }
 
 // Custom volume slider drag
@@ -1102,16 +1206,37 @@ function setVolumeUI(val) {
     volumeSet(v);
   }
   track.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    // Without this the browser can start a text-selection/native drag mid-
+    // slide, which cancels the pointer stream and leaves the slider stuck.
+    e.preventDefault();
     dragging = true;
-    track.setPointerCapture(e.pointerId);
+    try { track.setPointerCapture(e.pointerId); } catch (_) {}
     updateFromX(e.clientX);
   });
-  track.addEventListener("pointermove", (e) => {
+  // Listen on window, not the track: if pointer capture failed (or was lost)
+  // the drag keeps tracking even once the cursor leaves the 6px-tall track,
+  // and a pointerup anywhere always ends it.
+  window.addEventListener("pointermove", (e) => {
     if (dragging) updateFromX(e.clientX);
   });
   const end = () => { dragging = false; };
-  track.addEventListener("pointerup", end);
-  track.addEventListener("pointercancel", end);
+  window.addEventListener("pointerup", end);
+  window.addEventListener("pointercancel", end);
+
+  // Keyboard support (role="slider"): arrows nudge, Home/End jump.
+  track.addEventListener("keydown", (e) => {
+    const current = parseInt(storageGet("volume") ?? "50", 10);
+    let next = null;
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") next = current - 5;
+    else if (e.key === "ArrowRight" || e.key === "ArrowUp") next = current + 5;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = 100;
+    if (next !== null) {
+      e.preventDefault();
+      volumeSet(Math.max(0, Math.min(100, next)));
+    }
+  });
 })();
 
 function preloadImage(url, callback) {
@@ -1185,8 +1310,8 @@ function renderHistory(history) {
   list.innerHTML = items
     .map((it) => {
       const artists = (it.artist || []).map((a) => escapeHtml(a.name)).join(", ");
-      return `<a class="history-item" href="https://open.spotify.com/track/${it.songid}" target="_blank">
-        <img class="history-art" src="${it.cover}" alt="" />
+      return `<a class="history-item" href="https://open.spotify.com/track/${encodeURIComponent(it.songid)}" target="_blank">
+        <img class="history-art" src="${escapeHtml(it.cover || "")}" alt="" />
         <div class="history-text">
           <div class="history-title">${escapeHtml(it.song)}</div>
           <div class="history-artist">${artists}</div>
@@ -1305,15 +1430,16 @@ function shiftHue(rgb, degrees) {
 
 function extractColors(imgElement) {
   return new Promise((resolve) => {
-    const canvas = document.getElementById("color-canvas");
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    img.crossOrigin = "Anonymous";
-
-    img.onload = function () {
+    // preloadImage hands over an already-loaded, decoded image — draw it
+    // directly instead of re-fetching the URL through a second Image element.
+    // drawImage/getImageData throw on a broken or CORS-tainted image; fall
+    // back to a neutral palette in that case.
+    try {
+      const canvas = document.getElementById("color-canvas");
+      const ctx = canvas.getContext("2d");
       canvas.width = 50;
       canvas.height = 50;
-      ctx.drawImage(img, 0, 0, 50, 50);
+      ctx.drawImage(imgElement, 0, 0, 50, 50);
 
       const imageData = ctx.getImageData(0, 0, 50, 50);
       const data = imageData.data;
@@ -1378,16 +1504,12 @@ function extractColors(imgElement) {
         primary:  `rgb(${bass.r}, ${bass.g}, ${bass.b})`,
         presence: `rgb(${presence.r}, ${presence.g}, ${presence.b})`,
       });
-    };
-
-    img.onerror = function () {
+    } catch (e) {
       resolve({
         primary:  'rgb(100, 40, 40)',
         presence: 'rgb(40, 40, 100)',
       });
-    };
-
-    img.src = imgElement.src;
+    }
   });
 }
 
@@ -1655,6 +1777,31 @@ function stopSpotifyPreview() {
   if (spotifyPreview) spotifyPreview.src = "about:blank";
 }
 
+// ---- Keyboard shortcuts ----
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeModals();
+    return;
+  }
+  // Space = play/stop, but never while typing, on a focused control (buttons
+  // and the slider handle Space/keys themselves), or with a modal open.
+  if (e.code === "Space") {
+    const t = e.target;
+    if (
+      t &&
+      (t.tagName === "INPUT" ||
+        t.tagName === "TEXTAREA" ||
+        t.tagName === "BUTTON" ||
+        t.isContentEditable ||
+        (t.getAttribute && t.getAttribute("role") === "slider"))
+    )
+      return;
+    if (document.querySelector(".modal-overlay.show")) return;
+    e.preventDefault(); // don't scroll the page
+    onPlayClick();
+  }
+});
+
 // ---- Search / request / vote ----
 document.addEventListener("DOMContentLoaded", function () {
   const songSearchInput = document.getElementById("songSearchInput");
@@ -1776,13 +1923,13 @@ document.addEventListener("DOMContentLoaded", function () {
       const item = document.createElement("div");
       item.className = "result-item";
       const cover = track.cover
-        ? `<img src="${track.cover}" alt="" class="result-art">`
+        ? `<img src="${escapeHtml(track.cover)}" alt="" class="result-art">`
         : `<div class="result-art"></div>`;
       item.innerHTML = `
         ${cover}
         <div class="result-text">
-          <div class="result-title">${track.name}</div>
-          <div class="result-artist">${track.artist}</div>
+          <div class="result-title">${escapeHtml(track.name)}</div>
+          <div class="result-artist">${escapeHtml(track.artist)}</div>
         </div>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
       `;
@@ -1855,7 +2002,6 @@ document.addEventListener("DOMContentLoaded", function () {
     })
       .then((response) => response.json())
       .then((data) => {
-        confirmBtn.disabled = false;
         confirmBtn.innerHTML = "Request";
 
         if (data.success) {
@@ -1865,19 +2011,24 @@ document.addEventListener("DOMContentLoaded", function () {
           showToast(data.error || "Failed to send song request.");
         }
 
-        if (window.turnstile) window.turnstile.reset();
+        // The token was consumed either way — the button stays disabled until
+        // the fresh challenge issues a new one via enableConfirmButton.
+        resetRequestChallenge();
       })
       .catch((error) => {
         console.error("Error:", error);
-        confirmBtn.disabled = false;
         confirmBtn.innerHTML = "Request";
         showToast("An error occurred while sending the request.");
-        if (window.turnstile) window.turnstile.reset();
+        resetRequestChallenge();
       });
   }
 
   function displayMessage(message) {
-    searchResults.innerHTML = `<div class="results-msg">${message}</div>`;
+    searchResults.innerHTML = "";
+    const msg = document.createElement("div");
+    msg.className = "results-msg";
+    msg.textContent = message;
+    searchResults.appendChild(msg);
   }
 
   document
@@ -1909,10 +2060,9 @@ document.addEventListener("DOMContentLoaded", function () {
           } else {
             showToast(data.detail || data.error || "Failed to submit vote");
           }
-          this.disabled = false;
           this.innerHTML = "Vote to skip";
           try {
-            if (window.turnstile) window.turnstile.reset();
+            resetVoteChallenge();
           } catch (e) {
             console.error("Error resetting turnstile:", e);
           }
@@ -1920,10 +2070,9 @@ document.addEventListener("DOMContentLoaded", function () {
         .catch((error) => {
           console.error("Error:", error);
           showToast("An error occurred while submitting your vote");
-          this.disabled = false;
           this.innerHTML = "Vote to skip";
           try {
-            if (window.turnstile) window.turnstile.reset();
+            resetVoteChallenge();
           } catch (e) {
             console.error("Error resetting turnstile:", e);
           }
