@@ -403,6 +403,8 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="d-flex align-items-center justify-content-between mb-3">
         <h4 class="mb-0">Music Sync Admin</h4>
         <div class="d-flex align-items-center gap-3">
+            <button class="btn btn-outline-info btn-sm" onclick="sendMessage('')">Message all</button>
+            <button class="btn btn-outline-danger btn-sm" onclick="stopPlayback('')">Stop all</button>
             <a id="bansLink" href="#" class="btn btn-outline-secondary btn-sm">Bans</a>
             <div class="form-check form-switch mb-0">
                 <input class="form-check-input" type="checkbox" id="autoApproveToggle">
@@ -485,8 +487,14 @@ ADMIN_HTML = """<!DOCTYPE html>
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start gap-2">
                         <div class="listener-name">${esc(l.name || 'Anonymous')} ${skipBadge} ${bannedBadge}</div>
-                        <button class="btn btn-outline-danger btn-sm" title="Ban this listener (IP + ID)" ${l.banned ? 'disabled' : ''}
-                                onclick="banUser('${esc(l.ip || '')}', '${esc(l.uuid || '')}')">Ban</button>
+                        <div class="d-flex gap-1">
+                            <button class="btn btn-outline-info btn-sm" title="Send popup message to this listener"
+                                    onclick="sendMessage('${esc(l.uuid || '')}')">Msg</button>
+                            <button class="btn btn-outline-warning btn-sm" title="Stop playback for this listener"
+                                    onclick="stopPlayback('${esc(l.uuid || '')}')">Stop</button>
+                            <button class="btn btn-outline-danger btn-sm" title="Ban this listener (IP + ID)" ${l.banned ? 'disabled' : ''}
+                                    onclick="banUser('${esc(l.ip || '')}', '${esc(l.uuid || '')}')">Ban</button>
+                        </div>
                     </div>
                     <div class="track-meta">${esc(l.ip)} &middot; ${new Date(l.last_seen * 1000).toLocaleTimeString()}</div>
                     <div class="track-meta text-truncate" style="max-width:100%">${esc(l.user_agent)}</div>
@@ -584,6 +592,35 @@ ADMIN_HTML = """<!DOCTYPE html>
             alert(d.detail || 'Failed to add ban');
         }
         loadData();
+    }
+
+    async function stopPlayback(uuid) {
+        const who = uuid ? 'this listener' : 'ALL listeners';
+        if (!confirm('Stop playback for ' + who + '?')) return;
+        const res = await fetch('/api/admin/stop?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({uuid: uuid || null})
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Failed to send stop');
+        }
+    }
+
+    async function sendMessage(uuid) {
+        const who = uuid ? 'this listener' : 'ALL listeners';
+        const text = prompt('Popup message to ' + who + ':', '');
+        if (text === null || !text.trim()) return;
+        const res = await fetch('/api/admin/message?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: text.trim(), uuid: uuid || null})
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Failed to send message');
+        }
     }
 
     // The admin_key cookie keeps navigation authenticated; only carry the key
@@ -850,6 +887,37 @@ async def admin_set_auto_approve(payload: AutoApprovePayload, _: None = Depends(
         return {"success": True, "auto_approve": value}
     finally:
         db.close()
+
+# ─── Remote control ──────────────────────────────────────────────────────────
+# Push commands to connected clients over SSE. Targeting is best-effort: SSE is
+# broadcast-to-all, so a uuid in the payload just tells non-matching clients to
+# ignore it. uuid of None/"" means everyone.
+
+class StopPayload(BaseModel):
+    uuid: Optional[str] = None
+
+
+@app.post("/api/admin/stop")
+async def admin_stop_playback(payload: StopPayload, _: None = Depends(require_admin)):
+    await broadcaster.broadcast("stop", {"uuid": (payload.uuid or "").strip() or None})
+    return {"success": True}
+
+
+class AnnouncePayload(BaseModel):
+    text: str
+    uuid: Optional[str] = None
+
+
+@app.post("/api/admin/message")
+async def admin_send_message(payload: AnnouncePayload, _: None = Depends(require_admin)):
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="No message text provided")
+    await broadcaster.broadcast(
+        "announce",
+        {"text": text[:500], "uuid": (payload.uuid or "").strip() or None},
+    )
+    return {"success": True}
 
 # ─── Bans ────────────────────────────────────────────────────────────────────
 

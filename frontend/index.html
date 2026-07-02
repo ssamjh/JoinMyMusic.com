@@ -246,6 +246,19 @@
       </div>
     </div>
 
+    <!-- Announcement modal (popup messages pushed from the admin panel) -->
+    <div id="announceModal" class="modal-overlay" style="z-index:54" onclick="if (event.target === event.currentTarget) closeAnnouncement()">
+      <div class="modal-card narrow" role="dialog" aria-modal="true" aria-labelledby="announceModalTitle" onclick="event.stopPropagation()" style="text-align:center;">
+        <div style="padding:32px 28px 22px;">
+          <h2 id="announceModalTitle" style="font-size:20px;font-weight:700;letter-spacing:-0.02em;margin:0;">Announcement</h2>
+          <div id="announce-text" style="font-size:14px;color:var(--muted);margin-top:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:break-word;"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-accent" onclick="closeAnnouncement()">OK</button>
+        </div>
+      </div>
+    </div>
+
     <script src="js/app.js"></script>
     <!-- Loaded after app.js so onTurnstileLoad is defined when the API is ready.
          Explicit rendering gives each modal its own widget id, so a reset never

@@ -1392,6 +1392,23 @@ function connectSSE() {
     }
   });
 
+  // Admin push commands. A uuid in the payload targets one listener;
+  // everyone else ignores the event. No uuid means everyone.
+  evtSource.addEventListener("stop", (e) => {
+    const data = JSON.parse(e.data);
+    if (data.uuid && data.uuid !== getOrCreateUUID()) return;
+    if (isPlaying) {
+      buttonStop();
+      showToast("Playback was stopped by the host.");
+    }
+  });
+
+  evtSource.addEventListener("announce", (e) => {
+    const data = JSON.parse(e.data);
+    if (data.uuid && data.uuid !== getOrCreateUUID()) return;
+    showAnnouncement(data.text);
+  });
+
   evtSource.onerror = () => {
     evtSource.close();
     setTimeout(connectSSE, 5000);
@@ -1812,6 +1829,17 @@ function openVoteModal() {
 function stopSpotifyPreview() {
   const spotifyPreview = document.getElementById("spotify-preview");
   if (spotifyPreview) spotifyPreview.src = "about:blank";
+}
+
+// ---- Admin announcements ----
+// Closes only its own overlay (not closeModals) so a popup arriving while the
+// user is mid-request doesn't tear down the modal they were using.
+function showAnnouncement(text) {
+  document.getElementById("announce-text").textContent = text;
+  openModal("announceModal");
+}
+function closeAnnouncement() {
+  document.getElementById("announceModal").classList.remove("show");
 }
 
 // ---- Keyboard shortcuts ----
