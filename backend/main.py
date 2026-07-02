@@ -23,6 +23,10 @@ from storage import (
     get_db,
     get_history,
     init_db,
+    is_banned,
+    is_song_banned,
+    normalize_ban_ip,
+    normalize_songid,
     listeners,
     submission_ids,
     vote_skips,
@@ -52,9 +56,32 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
 def require_admin(request: Request):
-    key = request.headers.get("X-Auth-Key") or request.query_params.get("key")
+    key = (
+        request.headers.get("X-Auth-Key")
+        or request.query_params.get("key")
+        or request.cookies.get("admin_key")
+    )
     if key != AUTH_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def admin_page_response(request: Request, html: str) -> HTMLResponse:
+    """Serve an admin page, remembering a valid ?key= in a cookie so
+    navigation between admin pages (and their fetches) stays authenticated
+    without carrying the key in every URL."""
+    key = request.query_params.get("key")
+    has_cookie = request.cookies.get("admin_key") == AUTH_KEY
+    if key != AUTH_KEY and not has_cookie:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    resp = HTMLResponse(html)
+    if key == AUTH_KEY and not has_cookie:
+        # HttpOnly keeps it away from page JS; Lax stops cross-site POSTs
+        # from riding on it while still allowing normal link navigation.
+        resp.set_cookie(
+            "admin_key", key,
+            httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
+        )
+    return resp
 
 # ─── Turnstile ───────────────────────────────────────────────────────────────
 
@@ -165,10 +192,16 @@ async def listener_stats():
 
 class SearchPayload(BaseModel):
     query: str
+    uuid: Optional[str] = None
+
+
+BAN_MESSAGE = "You have been banned from requesting songs."
 
 
 @app.post("/api/search")
 async def search_songs(payload: SearchPayload, request: Request):
+    if is_banned(request.client.host, payload.uuid):
+        raise HTTPException(status_code=403, detail=BAN_MESSAGE)
     if not check_rate_limit("search", request.client.host, 500, 3600):
         raise HTTPException(status_code=429, detail="Too many searches. Wait a bit and try again.")
     if len(payload.query) < 2:
@@ -186,12 +219,17 @@ class RequestPayload(BaseModel):
     name: str
     submission_id: str
     turnstile: str
+    uuid: Optional[str] = None
 
 
 @app.post("/api/request")
 async def add_request(payload: RequestPayload, request: Request):
     ip = request.client.host
 
+    if is_banned(ip, payload.uuid):
+        raise HTTPException(status_code=403, detail=BAN_MESSAGE)
+    if is_song_banned(payload.uri):
+        raise HTTPException(status_code=403, detail="This song can't be requested.")
     if not check_rate_limit("add", ip, 10, 1800):
         raise HTTPException(status_code=429, detail="Slow down on the requests there bud. Try again soon.")
     if not payload.uri:
@@ -261,6 +299,8 @@ class SkipPayload(BaseModel):
 async def vote_skip(payload: SkipPayload, request: Request):
     ip = request.client.host
 
+    if is_banned(ip, payload.uuid):
+        raise HTTPException(status_code=403, detail="You have been banned from voting to skip.")
     if not await verify_turnstile(payload.turnstile, ip):
         raise HTTPException(status_code=400, detail="Turnstile verification failed")
 
@@ -336,7 +376,7 @@ async def callback(code: Optional[str] = None):
 # ─── Admin ───────────────────────────────────────────────────────────────────
 
 ADMIN_HTML = """<!DOCTYPE html>
-<html lang="en" data-bs-theme="auto">
+<html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -362,9 +402,12 @@ ADMIN_HTML = """<!DOCTYPE html>
 <div class="container-fluid py-3" style="max-width:1200px">
     <div class="d-flex align-items-center justify-content-between mb-3">
         <h4 class="mb-0">Music Sync Admin</h4>
-        <div class="form-check form-switch mb-0">
-            <input class="form-check-input" type="checkbox" id="autoApproveToggle">
-            <label class="form-check-label" for="autoApproveToggle">Auto-approve</label>
+        <div class="d-flex align-items-center gap-3">
+            <a id="bansLink" href="#" class="btn btn-outline-secondary btn-sm">Bans</a>
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="autoApproveToggle">
+                <label class="form-check-label" for="autoApproveToggle">Auto-approve</label>
+            </div>
         </div>
     </div>
 
@@ -389,6 +432,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 <script>
     const authKey = new URLSearchParams(window.location.search).get('key') || '';
+    let requestsById = {};
 
     function esc(s) {
         return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -403,15 +447,20 @@ ADMIN_HTML = """<!DOCTYPE html>
                         ? `<img src="${esc(r.cover_url)}" class="album-art">`
                         : `<div class="album-art-placeholder bg-secondary-subtle"></div>`}
                     <div class="flex-grow-1 overflow-hidden">
-                        <div class="track-title text-truncate">${esc(r.track_name || r.spotify_uri)}</div>
+                        <div class="track-title text-truncate">${esc(r.track_name || r.spotify_uri)}
+                            ${r.song_banned ? '<span class="badge bg-danger ms-1">song banned</span>' : ''}</div>
                         <div class="track-meta text-truncate">${esc(r.artist_name || '')}${r.album_name ? ' &mdash; ' + esc(r.album_name) : ''}</div>
-                        <div class="track-meta">From <strong>${esc(r.requester_name || 'Anonymous')}</strong> &middot; ${esc(r.requester_ip || '')} &middot; ${r.created_at}</div>
+                        <div class="track-meta">From <strong>${esc(r.requester_name || 'Anonymous')}</strong>
+                            ${r.requester_banned ? '<span class="badge bg-danger">banned</span>' : ''}
+                            &middot; ${esc(r.requester_ip || '')} &middot; ${r.created_at}</div>
                     </div>
-                    ${pending ? `
                     <div class="d-flex flex-column gap-1">
+                        ${pending ? `
                         <button class="btn btn-success btn-sm" onclick="approveRequest(${r.id})">&#10003;</button>
-                        <button class="btn btn-danger btn-sm" onclick="deleteRequest(${r.id})">&#10005;</button>
-                    </div>` : ''}
+                        <button class="btn btn-danger btn-sm" onclick="deleteRequest(${r.id})">&#10005;</button>` : ''}
+                        <button class="btn btn-outline-danger btn-sm" title="Ban requester IP" ${r.requester_banned ? 'disabled' : ''} onclick="banUser('${esc(r.requester_ip || '')}', '')">&#128683;</button>
+                        <button class="btn btn-outline-warning btn-sm" title="Ban this song" ${r.song_banned ? 'disabled' : ''} onclick="banSong(${r.id})">&#9835;</button>
+                    </div>
                 </div>
             </div>`).join('');
     }
@@ -423,6 +472,9 @@ ADMIN_HTML = """<!DOCTYPE html>
             const skipBadge = l.voted_skip
                 ? '<span class="badge bg-danger ms-1">voted skip</span>'
                 : '';
+            const bannedBadge = l.banned
+                ? '<span class="badge bg-danger ms-1">banned</span>'
+                : '';
             const volHtml = vol != null ? `
                 <div class="d-flex align-items-center gap-2 mt-1">
                     <small class="text-secondary" style="width:3rem">Vol ${vol}%</small>
@@ -431,7 +483,11 @@ ADMIN_HTML = """<!DOCTYPE html>
             return `
             <div class="card">
                 <div class="card-body">
-                    <div class="listener-name">${esc(l.name || 'Anonymous')} ${skipBadge}</div>
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="listener-name">${esc(l.name || 'Anonymous')} ${skipBadge} ${bannedBadge}</div>
+                        <button class="btn btn-outline-danger btn-sm" title="Ban this listener (IP + ID)" ${l.banned ? 'disabled' : ''}
+                                onclick="banUser('${esc(l.ip || '')}', '${esc(l.uuid || '')}')">Ban</button>
+                    </div>
                     <div class="track-meta">${esc(l.ip)} &middot; ${new Date(l.last_seen * 1000).toLocaleTimeString()}</div>
                     <div class="track-meta text-truncate" style="max-width:100%">${esc(l.user_agent)}</div>
                     ${volHtml}
@@ -453,6 +509,9 @@ ADMIN_HTML = """<!DOCTYPE html>
         const requests = await reqRes.json();
         const listenersData = await lisRes.json();
         const settings = await settingsRes.json();
+
+        requestsById = {};
+        requests.forEach(r => { requestsById[r.id] = r; });
 
         document.getElementById('autoApproveToggle').checked = settings.auto_approve === 'true';
 
@@ -490,6 +549,47 @@ ADMIN_HTML = """<!DOCTYPE html>
         });
     });
 
+    async function banSong(requestId) {
+        const r = requestsById[requestId];
+        if (!r) return;
+        if (!confirm('Ban the song "' + (r.track_name || r.spotify_uri) + '"?\\n\\nNo one will be able to request it, and pending requests for it are removed.')) return;
+        const res = await fetch('/api/admin/song-bans?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({songid: r.spotify_uri, track_name: r.track_name, artist_name: r.artist_name})
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Failed to ban song');
+        }
+        loadData();
+    }
+
+    async function banUser(ip, uuid) {
+        if (!ip && !uuid) return;
+        const who = [ip, uuid && 'ID ' + uuid.slice(0, 8) + '…'].filter(Boolean).join(' + ');
+        const hours = prompt('Ban ' + who + '?\\n\\nDuration in hours (leave blank for permanent):', '');
+        if (hours === null) return; // cancelled
+        const h = parseFloat(hours);
+        const res = await fetch('/api/admin/bans?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ip, uuid,
+                duration_minutes: (hours.trim() && h > 0) ? Math.round(h * 60) : null,
+            })
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Failed to add ban');
+        }
+        loadData();
+    }
+
+    // The admin_key cookie keeps navigation authenticated; only carry the key
+    // in the URL when this page itself was opened with one.
+    document.getElementById('bansLink').href = '/api/admin/bans/view' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
+
     loadData();
     setInterval(loadData, 10000);
 </script>
@@ -497,11 +597,166 @@ ADMIN_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+BANS_HTML = """<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bans &mdash; Music Sync Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <style>
+        body { font-size: 0.9rem; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; word-break: break-all; }
+    </style>
+</head>
+<body>
+<div class="container py-3" style="max-width:960px">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h4 class="mb-0">Bans</h4>
+        <a id="backLink" href="#" class="btn btn-outline-secondary btn-sm">&larr; Admin</a>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label mb-1">IP or CIDR</label>
+                    <input id="banIp" class="form-control form-control-sm" placeholder="1.2.3.4 or 2001:db8::/56">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label mb-1">Listener ID (UUID)</label>
+                    <input id="banUuid" class="form-control form-control-sm" placeholder="xxxxxxxx-xxxx-...">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label mb-1">Duration</label>
+                    <select id="banDuration" class="form-select form-select-sm">
+                        <option value="">Permanent</option>
+                        <option value="60">1 hour</option>
+                        <option value="360">6 hours</option>
+                        <option value="1440">24 hours</option>
+                        <option value="10080">7 days</option>
+                        <option value="43200">30 days</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label mb-1">Reason</label>
+                    <input id="banReason" class="form-control form-control-sm" placeholder="optional">
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-danger btn-sm w-100" onclick="addBan()">Add ban</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="ban-list"></div>
+
+    <h5 class="mt-4 mb-2">Banned songs</h5>
+    <div id="song-ban-list"></div>
+</div>
+
+<script>
+    const authKey = new URLSearchParams(window.location.search).get('key') || '';
+    // The admin_key cookie keeps navigation authenticated; only carry the key
+    // in the URL when this page itself was opened with one.
+    document.getElementById('backLink').href = '/api/admin' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
+
+    function esc(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    async function loadBans() {
+        const res = await fetch('/api/admin/bans?key=' + authKey);
+        if (!res.ok) {
+            document.getElementById('ban-list').innerHTML = '<p class="text-danger mt-4">Access denied.</p>';
+            return;
+        }
+        const bans = await res.json();
+        if (bans.length === 0) {
+            document.getElementById('ban-list').innerHTML = '<p class="text-secondary">No active bans.</p>';
+            return;
+        }
+        document.getElementById('ban-list').innerHTML = `
+            <div class="table-responsive"><table class="table table-sm align-middle">
+                <thead><tr><th>IP</th><th>Listener ID</th><th>Reason</th><th>Expires</th><th>Banned at</th><th></th></tr></thead>
+                <tbody>${bans.map(b => `
+                    <tr>
+                        <td class="mono">${esc(b.ip) || '<span class="text-secondary">&mdash;</span>'}</td>
+                        <td class="mono">${esc(b.uuid) || '<span class="text-secondary">&mdash;</span>'}</td>
+                        <td>${esc(b.reason)}</td>
+                        <td>${b.expires_at ? esc(b.expires_at) + ' UTC' : '<span class="badge bg-danger">permanent</span>'}</td>
+                        <td>${esc(b.created_at)} UTC</td>
+                        <td class="text-end"><button class="btn btn-outline-success btn-sm" onclick="unban(${b.id})">Unban</button></td>
+                    </tr>`).join('')}
+                </tbody>
+            </table></div>`;
+    }
+
+    async function addBan() {
+        const ip = document.getElementById('banIp').value.trim();
+        const uuid = document.getElementById('banUuid').value.trim();
+        const duration = document.getElementById('banDuration').value;
+        const reason = document.getElementById('banReason').value.trim();
+        if (!ip && !uuid) { alert('Enter an IP and/or a listener ID.'); return; }
+        const res = await fetch('/api/admin/bans?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ip, uuid, reason, duration_minutes: duration ? parseInt(duration, 10) : null})
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Failed to add ban');
+            return;
+        }
+        document.getElementById('banIp').value = '';
+        document.getElementById('banUuid').value = '';
+        document.getElementById('banReason').value = '';
+        loadBans();
+    }
+
+    async function unban(id) {
+        await fetch('/api/admin/bans/' + id + '?key=' + authKey, {method: 'DELETE'});
+        loadBans();
+    }
+
+    async function loadSongBans() {
+        const res = await fetch('/api/admin/song-bans?key=' + authKey);
+        if (!res.ok) return;
+        const bans = await res.json();
+        if (bans.length === 0) {
+            document.getElementById('song-ban-list').innerHTML = '<p class="text-secondary">No banned songs.</p>';
+            return;
+        }
+        document.getElementById('song-ban-list').innerHTML = `
+            <div class="table-responsive"><table class="table table-sm align-middle">
+                <thead><tr><th>Track</th><th>Artist</th><th>Song ID</th><th>Banned at</th><th></th></tr></thead>
+                <tbody>${bans.map(b => `
+                    <tr>
+                        <td>${esc(b.track_name) || '<span class="text-secondary">&mdash;</span>'}</td>
+                        <td>${esc(b.artist_name)}</td>
+                        <td class="mono">${esc(b.songid)}</td>
+                        <td>${esc(b.created_at)} UTC</td>
+                        <td class="text-end"><button class="btn btn-outline-success btn-sm" onclick="unbanSong(${b.id})">Unban</button></td>
+                    </tr>`).join('')}
+                </tbody>
+            </table></div>`;
+    }
+
+    async function unbanSong(id) {
+        await fetch('/api/admin/song-bans/' + id + '?key=' + authKey, {method: 'DELETE'});
+        loadSongBans();
+    }
+
+    loadBans();
+    loadSongBans();
+</script>
+</body>
+</html>"""
+
+
 @app.get("/api/admin", response_class=HTMLResponse)
-async def admin_panel(key: Optional[str] = None):
-    if key != AUTH_KEY:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    return ADMIN_HTML
+async def admin_panel(request: Request):
+    return admin_page_response(request, ADMIN_HTML)
 
 
 @app.get("/api/admin/requests")
@@ -511,9 +766,15 @@ async def admin_get_requests(_: None = Depends(require_admin)):
         rows = db.execute(
             "SELECT * FROM requests WHERE status IN ('pending', 'approved') ORDER BY created_at DESC LIMIT 100"
         ).fetchall()
-        return [dict(r) for r in rows]
     finally:
         db.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["requester_banned"] = is_banned(d.get("requester_ip"))
+        d["song_banned"] = is_song_banned(d.get("spotify_uri"))
+        result.append(d)
+    return result
 
 
 @app.post("/api/admin/requests/{request_id}/approve")
@@ -557,7 +818,11 @@ async def admin_get_listeners(_: None = Depends(require_admin)):
 
     result = []
     for uuid, data in listeners.items():
-        result.append({**data, "voted_skip": uuid in current_voters})
+        result.append({
+            **data,
+            "voted_skip": uuid in current_voters,
+            "banned": is_banned(data.get("ip"), uuid),
+        })
     return result
 
 
@@ -585,3 +850,116 @@ async def admin_set_auto_approve(payload: AutoApprovePayload, _: None = Depends(
         return {"success": True, "auto_approve": value}
     finally:
         db.close()
+
+# ─── Bans ────────────────────────────────────────────────────────────────────
+
+class BanPayload(BaseModel):
+    ip: Optional[str] = None
+    uuid: Optional[str] = None
+    reason: Optional[str] = None
+    duration_minutes: Optional[int] = None  # None/0 = permanent
+
+
+@app.get("/api/admin/bans")
+async def admin_get_bans(_: None = Depends(require_admin)):
+    db = get_db()
+    try:
+        # Expired temporary bans are dead weight — sweep them while we're here.
+        db.execute("DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')")
+        db.commit()
+        rows = db.execute("SELECT * FROM bans ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/bans")
+async def admin_add_ban(payload: BanPayload, _: None = Depends(require_admin)):
+    # IPv6 bans are widened to the household's /64 (see normalize_ban_ip)
+    ip = normalize_ban_ip(payload.ip)
+    uuid = (payload.uuid or "").strip()
+    if not ip and not uuid:
+        raise HTTPException(status_code=400, detail="Provide an IP and/or a listener ID to ban")
+    minutes = payload.duration_minutes or 0
+    db = get_db()
+    try:
+        if minutes > 0:
+            db.execute(
+                """INSERT INTO bans (ip, uuid, reason, expires_at)
+                   VALUES (?, ?, ?, datetime('now', '+' || ? || ' minutes'))""",
+                (ip, uuid, (payload.reason or "").strip(), minutes),
+            )
+        else:
+            db.execute(
+                "INSERT INTO bans (ip, uuid, reason) VALUES (?, ?, ?)",
+                (ip, uuid, (payload.reason or "").strip()),
+            )
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
+@app.delete("/api/admin/bans/{ban_id}")
+async def admin_delete_ban(ban_id: int, _: None = Depends(require_admin)):
+    db = get_db()
+    try:
+        db.execute("DELETE FROM bans WHERE id=?", (ban_id,))
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
+class SongBanPayload(BaseModel):
+    songid: str
+    track_name: Optional[str] = None
+    artist_name: Optional[str] = None
+
+
+@app.get("/api/admin/song-bans")
+async def admin_get_song_bans(_: None = Depends(require_admin)):
+    db = get_db()
+    try:
+        rows = db.execute("SELECT * FROM song_bans ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/song-bans")
+async def admin_add_song_ban(payload: SongBanPayload, _: None = Depends(require_admin)):
+    sid = normalize_songid(payload.songid)
+    if not sid:
+        raise HTTPException(status_code=400, detail="No song id provided")
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT OR IGNORE INTO song_bans (songid, track_name, artist_name) VALUES (?, ?, ?)",
+            (sid, (payload.track_name or "").strip(), (payload.artist_name or "").strip()),
+        )
+        # A banned song has no business sitting in the pending queue either
+        db.execute(
+            "UPDATE requests SET status='deleted' WHERE status='pending' AND spotify_uri IN (?, ?)",
+            (sid, f"spotify:track:{sid}"),
+        )
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
+@app.delete("/api/admin/song-bans/{ban_id}")
+async def admin_delete_song_ban(ban_id: int, _: None = Depends(require_admin)):
+    db = get_db()
+    try:
+        db.execute("DELETE FROM song_bans WHERE id=?", (ban_id,))
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/bans/view", response_class=HTMLResponse)
+async def bans_page(request: Request):
+    return admin_page_response(request, BANS_HTML)

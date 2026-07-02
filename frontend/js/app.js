@@ -1516,44 +1516,35 @@ function extractColors(imgElement) {
         );
       }
 
-      const sectorDist = (a, b) =>
-        Math.min(Math.abs(a - b), NUM_SECTORS - Math.abs(a - b));
-
-      let bass, presence, label;
+      let bass, presence;
       if (chromatic.length === 0) {
         // Fully neutral/monochrome — sanitize average and shift hue for presence
         bass = sanitizeColor(Math.round(tr/tc), Math.round(tg/tc), Math.round(tb/tc));
         presence = shiftHue(bass, 120);
-        label = shiftHue(bass, -120);
       } else if (chromatic.length === 1) {
         bass = bucketAvg(chromatic[0]);
         presence = shiftHue(bass, 120);
-        label = shiftHue(bass, -120);
       } else {
         bass = bucketAvg(chromatic[0]);
         // Find second colour at least 2 sectors (60°) away from dominant
-        const second = chromatic.find(b => sectorDist(b.i, chromatic[0].i) >= 2)
-          || chromatic[1];
+        const second = chromatic.find(b => {
+          const dist = Math.min(
+            Math.abs(b.i - chromatic[0].i),
+            NUM_SECTORS - Math.abs(b.i - chromatic[0].i)
+          );
+          return dist >= 2;
+        }) || chromatic[1];
         presence = bucketAvg(second);
-        // Third colour (the record's centre-label paper) — a hue distinct
-        // from both accents when the art has one, else rotate the dominant.
-        const third = chromatic.find(b =>
-          b !== chromatic[0] && b !== second &&
-          sectorDist(b.i, chromatic[0].i) >= 2 && sectorDist(b.i, second.i) >= 2
-        );
-        label = third ? bucketAvg(third) : shiftHue(bass, -120);
       }
 
       resolve({
         primary:  `rgb(${bass.r}, ${bass.g}, ${bass.b})`,
         presence: `rgb(${presence.r}, ${presence.g}, ${presence.b})`,
-        label:    `rgb(${label.r}, ${label.g}, ${label.b})`,
       });
     } catch (e) {
       resolve({
         primary:  'rgb(100, 40, 40)',
         presence: 'rgb(40, 40, 100)',
-        label:    'rgb(90, 62, 38)',
       });
     }
   });
@@ -1570,50 +1561,12 @@ function rgbToHex(c) {
 }
 
 // Drive the design's accent / glow CSS variables from album art colours
-function applyAccentVars(primary, presence, label) {
+function applyAccentVars(primary, presence) {
   const root = document.documentElement.style;
   root.setProperty("--accent", rgbToHex(primary));
   root.setProperty("--accent-glow", `rgba(${primary.r}, ${primary.g}, ${primary.b}, 0.55)`);
   root.setProperty("--c1", rgbToHex(primary));
   root.setProperty("--c2", rgbToHex(presence));
-  // The record's centre label gets its own paper colour — a third hue from the
-  // art (already distinct from both accents), pulled into classic label-paper
-  // territory — and an ink picked against the FINAL paper colour, so the text
-  // is readable no matter what the art hands us.
-  const paper = toLabelPaper(label || shiftHue(primary, -120));
-  root.setProperty("--label-paper", rgbToHex(paper));
-  const lum = (0.2126 * paper.r + 0.7152 * paper.g + 0.0722 * paper.b) / 255;
-  root.setProperty(
-    "--label-ink",
-    lum > 0.5 ? "rgba(26, 20, 14, 0.92)" : "rgba(246, 240, 228, 0.92)"
-  );
-}
-
-// Normalize a colour into "label paper" territory: keep the hue, but pull
-// saturation and lightness into the rich mid-dark range of classic pressed
-// labels (deep reds, navies, forest greens). The lightness cap is what lets
-// applyAccentVars guarantee ink contrast with a single luminance check.
-function toLabelPaper(rgb) {
-  const rn = rgb.r/255, gn = rgb.g/255, bn = rgb.b/255;
-  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
-  let h, s, l = (max + min) / 2;
-  if (max === min) { h = 0; s = 0; }
-  else {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
-    else if (max === gn) h = ((bn - rn) / d + 2) / 6;
-    else h = ((rn - gn) / d + 4) / 6;
-  }
-  s = Math.max(0.35, Math.min(0.8, s));
-  l = Math.max(0.26, Math.min(0.44, l));
-  const q2 = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p2 = 2 * l - q2;
-  return {
-    r: Math.round(hue2rgb(p2, q2, h + 1/3) * 255),
-    g: Math.round(hue2rgb(p2, q2, h) * 255),
-    b: Math.round(hue2rgb(p2, q2, h - 1/3) * 255),
-  };
 }
 
 // Stash the new palette and drive the song-change sequence. The colours are
@@ -1624,7 +1577,6 @@ function updateBackgroundColors(colors) {
   pendingColors = {
     primary: parseRgb(colors.primary),
     presence: parseRgb(colors.presence),
-    label: parseRgb(colors.label || colors.primary),
   };
   bgHasBeenSet = true;
   applyPendingMetadata();
@@ -1640,7 +1592,7 @@ function applyPendingColors() {
   bgPrimary = { ...pendingColors.primary };
   bgPresenceTarget = { ...pendingColors.presence };
   bgPresence = { ...pendingColors.presence };
-  applyAccentVars(vizPrimary, vizPresence, pendingColors.label);
+  applyAccentVars(vizPrimary, vizPresence);
   pendingColors = null;
 }
 
@@ -1975,12 +1927,12 @@ document.addEventListener("DOMContentLoaded", function () {
     fetch("/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, uuid: getOrCreateUUID() }),
     })
       .then((response) => response.json())
       .then((data) => {
-        if (data.error) {
-          displayMessage(data.error);
+        if (data.error || data.detail) {
+          displayMessage(data.error || data.detail);
         } else {
           displaySearchResults(data);
         }
@@ -2083,6 +2035,7 @@ document.addEventListener("DOMContentLoaded", function () {
         name: requesterName,
         submission_id: submissionId,
         turnstile: turnstileToken,
+        uuid: getOrCreateUUID(),
       }),
     })
       .then((response) => response.json())
@@ -2093,7 +2046,7 @@ document.addEventListener("DOMContentLoaded", function () {
           closeModals();
           showToast(data.message || "Added to the queue");
         } else {
-          showToast(data.error || "Failed to send song request.");
+          showToast(data.error || data.detail || "Failed to send song request.");
         }
 
         // The token was consumed either way — the button stays disabled until

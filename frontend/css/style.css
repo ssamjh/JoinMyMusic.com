@@ -5,10 +5,8 @@ input { font-family: inherit; }
 :root {
   --accent: #8B7BF0;
   --accent-glow: rgba(139, 123, 240, 0.55);
-  /* The record's centre label: paper is a third colour pulled from the album
-     art (distinct from the two accents, normalized to classic label-paper
-     depth); ink is flipped dark/light by JS against the final paper colour. */
-  --label-paper: #5a3e26;
+  /* The record's centre label: fixed black paper with cream ink */
+  --label-paper: #111113;
   --label-ink: rgba(246, 240, 228, 0.92);
   --c1: #8B7BF0;
   --c2: #2B1D6E;
@@ -287,11 +285,10 @@ main {
     );
 }
 /* ---- Centre label: classic pressed-record label ---- */
-/* A paper disc tinted with its own colour from the album art (--label-paper),
-   with the song title arcing over the top, the artist arcing under the bottom,
-   and the release year + pressing info around the spindle hole. Spins with the
-   record (it's in spinEls), so it is positioned with inset (not a translate) —
-   JS owns its transform. */
+/* A black paper disc with the song title arcing over the top, the artist
+   arcing under the bottom, and the release year + pressing info around the
+   spindle hole. Spins with the record (it's in spinEls), so it is positioned
+   with inset (not a translate) — JS owns its transform. */
 .record-label {
   position: absolute;
   inset: 34.7%;
