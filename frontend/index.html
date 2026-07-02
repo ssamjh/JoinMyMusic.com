@@ -60,6 +60,31 @@
                 width="400"
                 height="400" />
               <div class="record-overlay"></div>
+              <svg id="record-label" class="record-label" viewBox="0 0 100 100" aria-hidden="true">
+                <defs>
+                  <path id="label-arc-top" d="M 12.5 50 A 37.5 37.5 0 0 1 87.5 50" />
+                  <path id="label-arc-bottom" d="M 6 50 A 44 44 0 0 0 94 50" />
+                  <radialGradient id="label-shade" cx="50%" cy="40%" r="70%">
+                    <stop offset="0%" stop-color="#fff" stop-opacity="0.16" />
+                    <stop offset="55%" stop-color="#fff" stop-opacity="0.03" />
+                    <stop offset="100%" stop-color="#000" stop-opacity="0.28" />
+                  </radialGradient>
+                </defs>
+                <circle class="label-paper" cx="50" cy="50" r="50" />
+                <circle cx="50" cy="50" r="50" fill="url(#label-shade)" />
+                <circle class="label-ring" cx="50" cy="50" r="47" />
+                <circle class="label-ring" cx="50" cy="50" r="29" />
+                <text id="label-title" class="label-text">
+                  <textPath href="#label-arc-top" startOffset="50%"></textPath>
+                </text>
+                <text id="label-artist" class="label-text">
+                  <textPath href="#label-arc-bottom" startOffset="50%"></textPath>
+                </text>
+                <text id="label-year" class="label-text label-year" x="50" y="41"></text>
+                <text class="label-text label-rpm" x="50" y="62">33&#8531; RPM</text>
+                <text class="label-text label-rpm" x="50" y="66.6">STEREO</text>
+                <circle class="label-hole" cx="50" cy="50" r="3.6" />
+              </svg>
               <div class="art-sheen"></div>
             </div>
             <div class="spindle" aria-hidden="true"></div>

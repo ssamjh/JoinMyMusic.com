@@ -171,6 +171,7 @@ function ensureSpin() {
     spinEls = [
       document.getElementById("playing-image"),
       document.querySelector(".art-placeholder"),
+      document.getElementById("record-label"),
     ].filter(Boolean);
   }
   if (recordGrabbed) return;       // a scratch is driving the record directly
@@ -884,6 +885,7 @@ function applyPendingMetadata() {
     artistEl.innerHTML = data.artist
       .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
       .join(', ');
+    updateRecordLabel(data);
     // Re-anchor the arm on every metadata — song change, in-track seek, and the
     // reconnect snapshot all carry a fresh elapsed_ms (the position currently
     // being heard, already adjusted for the stream delay server-side). The
@@ -1255,6 +1257,7 @@ function handleMetadata(currentData) {
     document
       .querySelectorAll(".div-playing-title, .div-playing-artist")
       .forEach((el) => (el.textContent = ""));
+    updateRecordLabel(null);
     if (
       playingImage.src !==
       "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
@@ -1286,6 +1289,40 @@ function handleMetadata(currentData) {
     pendingMetadata = { data: currentData, imgSrc: currentData.cover };
     applyPendingMetadata();
   }
+}
+
+// ---- Record centre label (classic pressed-vinyl label text) ----
+// Title arcs over the top of the label, artist arcs under the bottom, release
+// year sits above the spindle hole. Text is sized to fit its arc; if it can't
+// fit even at the minimum size it's trimmed with an ellipsis, like a tight
+// pressing plant typesetter would.
+const LABEL_ARCS = {
+  title: { len: 104, max: 8.0 },  // usable path length + max font size, in viewBox units
+  artist: { len: 118, max: 6.0 },
+};
+function setLabelArcText(textEl, str, arc) {
+  if (!textEl) return;
+  const MIN_FS = 2.9;
+  const CHAR_W = 0.75; // avg uppercase glyph width (incl. tracking) as a fraction of font-size
+  let text = (str || "").toUpperCase();
+  let fs = Math.min(arc.max, arc.len / (Math.max(text.length, 1) * CHAR_W));
+  if (fs < MIN_FS) {
+    fs = MIN_FS;
+    text = text.slice(0, Math.floor(arc.len / (fs * CHAR_W)) - 1) + "…";
+  }
+  textEl.setAttribute("font-size", fs.toFixed(2));
+  textEl.querySelector("textPath").textContent = text;
+}
+function updateRecordLabel(data) {
+  const svg = document.getElementById("record-label");
+  if (!svg) return;
+  setLabelArcText(svg.querySelector("#label-title"), data && data.song, LABEL_ARCS.title);
+  setLabelArcText(
+    svg.querySelector("#label-artist"),
+    data && data.artist ? data.artist.map((a) => a.name).join(" · ") : "",
+    LABEL_ARCS.artist
+  );
+  svg.querySelector("#label-year").textContent = (data && data.year) || "";
 }
 
 function escapeHtml(str) {
@@ -1479,35 +1516,44 @@ function extractColors(imgElement) {
         );
       }
 
-      let bass, presence;
+      const sectorDist = (a, b) =>
+        Math.min(Math.abs(a - b), NUM_SECTORS - Math.abs(a - b));
+
+      let bass, presence, label;
       if (chromatic.length === 0) {
         // Fully neutral/monochrome — sanitize average and shift hue for presence
         bass = sanitizeColor(Math.round(tr/tc), Math.round(tg/tc), Math.round(tb/tc));
         presence = shiftHue(bass, 120);
+        label = shiftHue(bass, -120);
       } else if (chromatic.length === 1) {
         bass = bucketAvg(chromatic[0]);
         presence = shiftHue(bass, 120);
+        label = shiftHue(bass, -120);
       } else {
         bass = bucketAvg(chromatic[0]);
         // Find second colour at least 2 sectors (60°) away from dominant
-        const second = chromatic.find(b => {
-          const dist = Math.min(
-            Math.abs(b.i - chromatic[0].i),
-            NUM_SECTORS - Math.abs(b.i - chromatic[0].i)
-          );
-          return dist >= 2;
-        }) || chromatic[1];
+        const second = chromatic.find(b => sectorDist(b.i, chromatic[0].i) >= 2)
+          || chromatic[1];
         presence = bucketAvg(second);
+        // Third colour (the record's centre-label paper) — a hue distinct
+        // from both accents when the art has one, else rotate the dominant.
+        const third = chromatic.find(b =>
+          b !== chromatic[0] && b !== second &&
+          sectorDist(b.i, chromatic[0].i) >= 2 && sectorDist(b.i, second.i) >= 2
+        );
+        label = third ? bucketAvg(third) : shiftHue(bass, -120);
       }
 
       resolve({
         primary:  `rgb(${bass.r}, ${bass.g}, ${bass.b})`,
         presence: `rgb(${presence.r}, ${presence.g}, ${presence.b})`,
+        label:    `rgb(${label.r}, ${label.g}, ${label.b})`,
       });
     } catch (e) {
       resolve({
         primary:  'rgb(100, 40, 40)',
         presence: 'rgb(40, 40, 100)',
+        label:    'rgb(90, 62, 38)',
       });
     }
   });
@@ -1524,12 +1570,50 @@ function rgbToHex(c) {
 }
 
 // Drive the design's accent / glow CSS variables from album art colours
-function applyAccentVars(primary, presence) {
+function applyAccentVars(primary, presence, label) {
   const root = document.documentElement.style;
   root.setProperty("--accent", rgbToHex(primary));
   root.setProperty("--accent-glow", `rgba(${primary.r}, ${primary.g}, ${primary.b}, 0.55)`);
   root.setProperty("--c1", rgbToHex(primary));
   root.setProperty("--c2", rgbToHex(presence));
+  // The record's centre label gets its own paper colour — a third hue from the
+  // art (already distinct from both accents), pulled into classic label-paper
+  // territory — and an ink picked against the FINAL paper colour, so the text
+  // is readable no matter what the art hands us.
+  const paper = toLabelPaper(label || shiftHue(primary, -120));
+  root.setProperty("--label-paper", rgbToHex(paper));
+  const lum = (0.2126 * paper.r + 0.7152 * paper.g + 0.0722 * paper.b) / 255;
+  root.setProperty(
+    "--label-ink",
+    lum > 0.5 ? "rgba(26, 20, 14, 0.92)" : "rgba(246, 240, 228, 0.92)"
+  );
+}
+
+// Normalize a colour into "label paper" territory: keep the hue, but pull
+// saturation and lightness into the rich mid-dark range of classic pressed
+// labels (deep reds, navies, forest greens). The lightness cap is what lets
+// applyAccentVars guarantee ink contrast with a single luminance check.
+function toLabelPaper(rgb) {
+  const rn = rgb.r/255, gn = rgb.g/255, bn = rgb.b/255;
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = 0; s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
+    else if (max === gn) h = ((bn - rn) / d + 2) / 6;
+    else h = ((rn - gn) / d + 4) / 6;
+  }
+  s = Math.max(0.35, Math.min(0.8, s));
+  l = Math.max(0.26, Math.min(0.44, l));
+  const q2 = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p2 = 2 * l - q2;
+  return {
+    r: Math.round(hue2rgb(p2, q2, h + 1/3) * 255),
+    g: Math.round(hue2rgb(p2, q2, h) * 255),
+    b: Math.round(hue2rgb(p2, q2, h - 1/3) * 255),
+  };
 }
 
 // Stash the new palette and drive the song-change sequence. The colours are
@@ -1540,6 +1624,7 @@ function updateBackgroundColors(colors) {
   pendingColors = {
     primary: parseRgb(colors.primary),
     presence: parseRgb(colors.presence),
+    label: parseRgb(colors.label || colors.primary),
   };
   bgHasBeenSet = true;
   applyPendingMetadata();
@@ -1555,7 +1640,7 @@ function applyPendingColors() {
   bgPrimary = { ...pendingColors.primary };
   bgPresenceTarget = { ...pendingColors.presence };
   bgPresence = { ...pendingColors.presence };
-  applyAccentVars(vizPrimary, vizPresence);
+  applyAccentVars(vizPrimary, vizPresence, pendingColors.label);
   pendingColors = null;
 }
 

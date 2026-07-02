@@ -5,6 +5,11 @@ input { font-family: inherit; }
 :root {
   --accent: #8B7BF0;
   --accent-glow: rgba(139, 123, 240, 0.55);
+  /* The record's centre label: paper is a third colour pulled from the album
+     art (distinct from the two accents, normalized to classic label-paper
+     depth); ink is flipped dark/light by JS against the final paper colour. */
+  --label-paper: #5a3e26;
+  --label-ink: rgba(246, 240, 228, 0.92);
   --c1: #8B7BF0;
   --c2: #2B1D6E;
 }
@@ -281,32 +286,41 @@ main {
       rgba(255, 255, 255, 0.045) 1px, rgba(255, 255, 255, 0.045) 3px
     );
 }
-.record-overlay::before {
-  /* centre label ring (the paper disc around the spindle) */
-  content: "";
+/* ---- Centre label: classic pressed-record label ---- */
+/* A paper disc tinted with its own colour from the album art (--label-paper),
+   with the song title arcing over the top, the artist arcing under the bottom,
+   and the release year + pressing info around the spindle hole. Spins with the
+   record (it's in spinEls), so it is positioned with inset (not a translate) —
+   JS owns its transform. */
+.record-label {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 30%;
-  height: 30%;
-  transform: translate(-50%, -50%);
+  inset: 34.7%;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
-    0 0 0 1px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 1px 8px rgba(0, 0, 0, 0.35);
 }
-.record-overlay::after {
-  /* tiny solid black centre (spindle hole) */
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 14px;
-  height: 14px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: #000;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
+body:not(.no-bg-animation) .record-label { opacity: 1; }
+.record-label .label-paper { fill: var(--label-paper); }
+.record-label .label-ring {
+  fill: none;
+  stroke: var(--label-ink);
+  stroke-width: 0.45;
+  opacity: 0.5;
+}
+.record-label .label-text {
+  fill: var(--label-ink);
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: 0.08em;
+  text-anchor: middle;
+}
+.record-label .label-year { font-size: 7px; font-weight: 600; }
+.record-label .label-rpm { font-size: 3.4px; opacity: 0.8; }
+.record-label .label-hole {
+  fill: #0a0a0b;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 0.7;
 }
 /* With fx on, the record is always shown — it just sits still (and the arm
    parks to the side) while playback is paused, then spins up on play. */

@@ -27,6 +27,7 @@ _EMPTY_METADATA = {
         "songid": "",
         "albumid": "",
         "cover": "",
+        "year": "",
         "playing": False,
         "duration_ms": 0,
         "progress_ms": 0,
@@ -77,6 +78,8 @@ class SpotifyClient:
                     "songid": track["id"],
                     "albumid": album["id"],
                     "cover": cover,
+                    # release_date is YYYY, YYYY-MM or YYYY-MM-DD depending on precision
+                    "year": (album.get("release_date") or "")[:4],
                     "playing": playback["is_playing"],
                     "duration_ms": track.get("duration_ms", 0),
                     "progress_ms": playback.get("progress_ms", 0),
