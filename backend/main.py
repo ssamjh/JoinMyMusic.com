@@ -16,7 +16,14 @@ import os
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
 from spotify import SpotifyClient
-from sse import broadcaster, cleanup_listeners, cleanup_old_requests, enrich_with_timing, poll_spotify, refresh_token_loop
+from sse import (
+    broadcaster,
+    cleanup_listeners,
+    cleanup_old_requests,
+    metadata_for_clients,
+    poll_spotify,
+    refresh_token_loop,
+)
 from storage import (
     check_rate_limit,
     check_submission_id,
@@ -41,11 +48,19 @@ spotify_client = SpotifyClient()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    asyncio.create_task(poll_spotify(spotify_client, listeners, vote_skips))
-    asyncio.create_task(cleanup_listeners(listeners))
-    asyncio.create_task(refresh_token_loop(spotify_client))
-    asyncio.create_task(cleanup_old_requests())
-    yield
+    tasks = [
+        asyncio.create_task(poll_spotify(spotify_client, listeners, vote_skips)),
+        asyncio.create_task(cleanup_listeners(listeners)),
+        asyncio.create_task(refresh_token_loop(spotify_client)),
+        asyncio.create_task(cleanup_old_requests()),
+    ]
+    try:
+        yield
+    finally:
+        # Cancel background loops so SIGTERM/docker stop does not hang on them.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -105,7 +120,7 @@ async def sse_events(request: Request):
         try:
             # Send current state immediately on connect
             metadata = await spotify_client.get_current_playback()
-            yield f"event: metadata\ndata: {json.dumps(enrich_with_timing(metadata.get('current', {})))}\n\n"
+            yield f"event: metadata\ndata: {json.dumps(metadata_for_clients(metadata.get('current', {})))}\n\n"
             yield f"event: listeners\ndata: {json.dumps({'count': len(listeners)})}\n\n"
             yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
 
@@ -135,7 +150,7 @@ async def sse_events(request: Request):
 @app.get("/api/metadata")
 async def get_metadata():
     metadata = await spotify_client.get_current_playback()
-    return {"current": enrich_with_timing(metadata.get("current", {}))}
+    return {"current": metadata_for_clients(metadata.get("current", {}))}
 
 
 @app.get("/api/history")

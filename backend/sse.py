@@ -22,6 +22,20 @@ SEEK_THRESHOLD_MS = 3000
 # connections, REST fallback) reports the same anchor.
 current_song_state: dict = {"songid": "", "started_at": None}
 
+# Empty "now playing" payload clients already treat as no track (clear UI).
+_EMPTY_CURRENT = {
+    "artist": [],
+    "song": "",
+    "album": "",
+    "songid": "",
+    "albumid": "",
+    "cover": "",
+    "year": "",
+    "playing": False,
+    "duration_ms": 0,
+    "progress_ms": 0,
+}
+
 
 def stream_started_at(polled_at: datetime, progress_ms: float) -> datetime:
     """Wall-clock instant the currently-heard song was at position 0.
@@ -57,6 +71,17 @@ def enrich_with_timing(current: dict) -> dict:
     return out
 
 
+def metadata_for_clients(current: dict) -> dict:
+    """Client-facing now-playing: empty while Spotify is paused or idle.
+
+    Paused tracks are parked in history by the poll loop; clients should not
+    keep showing them as the current song.
+    """
+    if not current.get("playing") or not current.get("songid"):
+        return enrich_with_timing(dict(_EMPTY_CURRENT))
+    return enrich_with_timing(current)
+
+
 class SSEBroadcaster:
     def __init__(self):
         self.clients: list[asyncio.Queue] = []
@@ -86,18 +111,25 @@ broadcaster = SSEBroadcaster()
 
 
 async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: dict):
-    """Background task: poll Spotify every 5s, broadcast metadata on change."""
-    from storage import add_to_history, get_history, prune_history
+    """Background task: poll Spotify every 5s, broadcast metadata on change.
 
-    last_stable: dict | None = None  # last broadcast content, ignoring progress
+    Pause clears the current track for clients and parks it in play history.
+    Resume of the same track restores it as current and removes it from history.
+    """
+    from storage import add_to_history, get_history, prune_history, remove_from_history
+
+    last_stable: dict | None = None  # last Spotify content, ignoring progress
     last_song_id: str = ""
-    last_current: dict | None = None  # metadata of the currently playing song
+    last_current: dict | None = None  # metadata of the last active track
+    # Song id we moved into history because Spotify paused (for resume restore).
+    parked_for_pause_id: str = ""
 
     while True:
         try:
             metadata = await spotify_client.get_current_playback()
             current = metadata.get("current", {})
             song_id = current.get("songid", "")
+            playing = bool(current.get("playing"))
             progress_ms = current.get("progress_ms", 0)
             polled_at = datetime.now(timezone.utc)
 
@@ -115,7 +147,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             # read as an ever-growing drift and re-broadcast every poll.
             seeked = False
             if (
-                current.get("playing")
+                playing
                 and song_id
                 and song_id == current_song_state["songid"]
                 and current_song_state["started_at"]
@@ -128,29 +160,79 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             if content_changed or seeked:
                 last_stable = stable
 
-                # A new song started: record the previous one and clear its votes.
-                if content_changed and song_id and song_id != last_song_id:
-                    if last_song_id and last_current:
+                # Track identity changed (new song, or cleared entirely).
+                if content_changed and song_id != last_song_id:
+                    # Previous track finished / was skipped: history it unless we
+                    # already parked it for a pause (would double-insert).
+                    if last_song_id and last_current and not parked_for_pause_id:
                         add_to_history(last_current)
                         history_changed = True
+                        # Drop current so the pause branch below does not re-park.
+                        if current_song_state["songid"] == last_song_id:
+                            current_song_state["songid"] = ""
+                            current_song_state["started_at"] = None
                     if last_song_id:
                         vote_skips_state.pop(last_song_id, None)
                         total_listeners = len(listeners_state)
                         needed = max(2, -(-total_listeners // 2))
-                        await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
-                    last_current = current
-                if content_changed:
-                    last_song_id = song_id
+                        await broadcaster.broadcast(
+                            "skipvotes",
+                            {"song": song_id, "count": 0, "needed": needed},
+                        )
+                    if song_id:
+                        last_current = current
+                        last_song_id = song_id
+                    else:
+                        last_current = None
+                        last_song_id = ""
+                    # Keep parked_for_pause_id across paused track-list browsing;
+                    # only resume / a new *playing* track clears it (below).
 
                 # Hold the announcement so the song flip / tonearm jump lands in
                 # sync with the delayed audio stream the listener actually hears.
                 await asyncio.sleep(METADATA_DELAY)
-                # (Re)anchor to the live position — on a song change and on a
-                # seek alike — compensating for the stream delay.
-                if song_id:
+
+                if playing and song_id:
+                    # Playing (or resumed). If this track was parked on pause,
+                    # pull it back out of history.
+                    if parked_for_pause_id == song_id:
+                        if remove_from_history(song_id):
+                            history_changed = True
+                        parked_for_pause_id = ""
+                    elif parked_for_pause_id:
+                        # A different track is now playing; leave the parked one
+                        # in history.
+                        parked_for_pause_id = ""
+
+                    last_current = current
+                    last_song_id = song_id
                     current_song_state["songid"] = song_id
-                    current_song_state["started_at"] = stream_started_at(polled_at, progress_ms).isoformat()
-                await broadcaster.broadcast("metadata", enrich_with_timing(current))
+                    current_song_state["started_at"] = stream_started_at(
+                        polled_at, progress_ms
+                    ).isoformat()
+                    await broadcaster.broadcast("metadata", enrich_with_timing(current))
+                else:
+                    # Paused or no playback: clients see empty "now playing".
+                    # Park whatever we were actively showing, once (resume restores).
+                    if current_song_state["songid"] and not parked_for_pause_id:
+                        to_park = None
+                        shown_id = current_song_state["songid"]
+                        if last_current and last_current.get("songid") == shown_id:
+                            to_park = last_current
+                        elif song_id == shown_id and current.get("song"):
+                            to_park = current
+                        if to_park and to_park.get("songid"):
+                            add_to_history(to_park)
+                            history_changed = True
+                            parked_for_pause_id = to_park["songid"]
+                            last_current = to_park
+                            last_song_id = parked_for_pause_id
+
+                    current_song_state["songid"] = ""
+                    current_song_state["started_at"] = None
+                    await broadcaster.broadcast(
+                        "metadata", enrich_with_timing(dict(_EMPTY_CURRENT))
+                    )
 
             if history_changed:
                 await broadcaster.broadcast("history", {"history": get_history()})

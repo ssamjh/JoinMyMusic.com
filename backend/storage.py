@@ -38,6 +38,21 @@ def add_to_history(song: dict) -> None:
     prune_history()
 
 
+def remove_from_history(songid: str) -> bool:
+    """Remove the newest history entry for ``songid``.
+
+    Used when a paused track resumes so it leaves history and becomes current
+    again. Returns True if an entry was removed.
+    """
+    if not songid:
+        return False
+    for i, entry in enumerate(play_history):
+        if entry.get("songid") == songid:
+            del play_history[i]
+            return True
+    return False
+
+
 def get_history() -> List[dict]:
     """Return the current, pruned play history (newest first)."""
     prune_history()
