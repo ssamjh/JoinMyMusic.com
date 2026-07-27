@@ -8,21 +8,20 @@ from typing import Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import os
 
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
-from spotify import SpotifyClient
+from tidal import TidalClient
 from sse import (
     broadcaster,
     cleanup_listeners,
     cleanup_old_requests,
     metadata_for_clients,
-    poll_spotify,
-    refresh_token_loop,
+    poll_tidal,
 )
 from storage import (
     check_rate_limit,
@@ -42,16 +41,15 @@ from storage import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-spotify_client = SpotifyClient()
+tidal_client = TidalClient()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     tasks = [
-        asyncio.create_task(poll_spotify(spotify_client, listeners, vote_skips)),
+        asyncio.create_task(poll_tidal(tidal_client, listeners, vote_skips)),
         asyncio.create_task(cleanup_listeners(listeners)),
-        asyncio.create_task(refresh_token_loop(spotify_client)),
         asyncio.create_task(cleanup_old_requests()),
     ]
     try:
@@ -61,6 +59,7 @@ async def lifespan(app: FastAPI):
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await tidal_client.aclose()
 
 
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -119,7 +118,7 @@ async def sse_events(request: Request):
         queue = broadcaster.subscribe()
         try:
             # Send current state immediately on connect
-            metadata = await spotify_client.get_current_playback()
+            metadata = await tidal_client.get_current_playback()
             yield f"event: metadata\ndata: {json.dumps(metadata_for_clients(metadata.get('current', {})))}\n\n"
             yield f"event: listeners\ndata: {json.dumps({'count': len(listeners)})}\n\n"
             yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
@@ -149,7 +148,7 @@ async def sse_events(request: Request):
 
 @app.get("/api/metadata")
 async def get_metadata():
-    metadata = await spotify_client.get_current_playback()
+    metadata = await tidal_client.get_current_playback()
     return {"current": metadata_for_clients(metadata.get("current", {}))}
 
 
@@ -161,7 +160,7 @@ async def get_play_history():
 
 @app.get("/api/auth_status")
 async def auth_status():
-    return {"authenticated": spotify_client.is_authenticated()}
+    return {"authenticated": await tidal_client.is_authenticated()}
 
 # ─── Listener ────────────────────────────────────────────────────────────────
 
@@ -222,7 +221,7 @@ async def search_songs(payload: SearchPayload, request: Request):
     if len(payload.query) < 2:
         raise HTTPException(status_code=400, detail="No search text provided.")
     try:
-        results = await spotify_client.search(payload.query)
+        results = await tidal_client.search(payload.query)
         return {"results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -230,7 +229,7 @@ async def search_songs(payload: SearchPayload, request: Request):
 # ─── Request ─────────────────────────────────────────────────────────────────
 
 class RequestPayload(BaseModel):
-    uri: str
+    track_id: str
     name: str
     submission_id: str
     turnstile: str
@@ -243,12 +242,12 @@ async def add_request(payload: RequestPayload, request: Request):
 
     if is_banned(ip, payload.uuid):
         raise HTTPException(status_code=403, detail=BAN_MESSAGE)
-    if is_song_banned(payload.uri):
+    if is_song_banned(payload.track_id):
         raise HTTPException(status_code=403, detail="This song can't be requested.")
     if not check_rate_limit("add", ip, 10, 1800):
         raise HTTPException(status_code=429, detail="Slow down on the requests there bud. Try again soon.")
-    if not payload.uri:
-        raise HTTPException(status_code=400, detail="No URI provided")
+    if not payload.track_id:
+        raise HTTPException(status_code=400, detail="No track id provided")
     if not payload.name:
         raise HTTPException(status_code=400, detail="Please provide your name")
 
@@ -263,7 +262,7 @@ async def add_request(payload: RequestPayload, request: Request):
     # Fetch track info (best-effort; don't fail the request if unavailable)
     track_info: dict = {}
     try:
-        track_info = await spotify_client.get_track_info(payload.uri)
+        track_info = await tidal_client.get_track_info(payload.track_id)
     except Exception:
         pass
 
@@ -273,7 +272,7 @@ async def add_request(payload: RequestPayload, request: Request):
         auto_approve = row["value"] == "true" if row else False
 
         if auto_approve:
-            await spotify_client.add_to_queue(payload.uri)
+            await tidal_client.add_to_queue(payload.track_id)
             status = "approved"
             message = "Your request has been automatically approved and added to the queue!"
         else:
@@ -282,11 +281,11 @@ async def add_request(payload: RequestPayload, request: Request):
 
         db.execute(
             """INSERT INTO requests
-               (spotify_uri, track_name, artist_name, album_name, cover_url,
+               (track_id, track_name, artist_name, album_name, cover_url,
                 requester_name, requester_ip, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                payload.uri,
+                payload.track_id,
                 track_info.get("song", ""),
                 ", ".join(a["name"] for a in track_info.get("artist", [])),
                 track_info.get("album", ""),
@@ -325,7 +324,7 @@ async def vote_skip(payload: SkipPayload, request: Request):
     if not check_rate_limit("vote", ip, 5, 60):
         raise HTTPException(status_code=429, detail="Too many vote attempts. Please wait before trying again.")
 
-    metadata = await spotify_client.get_current_playback()
+    metadata = await tidal_client.get_current_playback()
     current_song_id = metadata.get("current", {}).get("songid", "")
     if payload.songid != current_song_id:
         raise HTTPException(status_code=400, detail="Voted song does not match currently playing song")
@@ -345,7 +344,7 @@ async def vote_skip(payload: SkipPayload, request: Request):
 
     if count >= needed:
         try:
-            await spotify_client.skip()
+            await tidal_client.skip()
             vote_skips.pop(song_id, None)
             await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
             return {"success": True, "message": "Song skipped successfully"}
@@ -358,35 +357,16 @@ async def vote_skip(payload: SkipPayload, request: Request):
 
 @app.get("/api/skip/stats")
 async def skip_stats():
-    metadata = await spotify_client.get_current_playback()
+    metadata = await tidal_client.get_current_playback()
     song_id = metadata.get("current", {}).get("songid", "")
     count = len(vote_skips.get(song_id, set()))
     total_listeners = len(listeners)
     needed = max(2, -(-total_listeners // 2))
     return {"song": song_id, "count": count, "needed": needed}
 
-# ─── Spotify OAuth ───────────────────────────────────────────────────────────
-
-@app.get("/api/setup")
-async def setup():
-    return RedirectResponse(spotify_client.get_auth_url())
-
-
-@app.get("/api/callback")
-async def callback(code: Optional[str] = None):
-    if code and spotify_client.handle_callback(code):
-        message = "Authentication successful! This window will close in 10 seconds."
-    else:
-        message = "Error during authentication."
-    return HTMLResponse(f"""
-    <html>
-    <head>
-        <title>Spotify Callback</title>
-        <script>setTimeout(function(){{ window.close(); }}, 10000);</script>
-    </head>
-    <body><p>{message}</p></body>
-    </html>
-    """)
+# No OAuth routes: the TIDAL desktop client owns its own session, and the Luna
+# bridge plugin authenticates to us with a shared token. /api/auth_status
+# reports whether that bridge is reachable and logged in.
 
 # ─── Admin ───────────────────────────────────────────────────────────────────
 
@@ -464,7 +444,7 @@ ADMIN_HTML = """<!DOCTYPE html>
                         ? `<img src="${esc(r.cover_url)}" class="album-art">`
                         : `<div class="album-art-placeholder bg-secondary-subtle"></div>`}
                     <div class="flex-grow-1 overflow-hidden">
-                        <div class="track-title text-truncate">${esc(r.track_name || r.spotify_uri)}
+                        <div class="track-title text-truncate">${esc(r.track_name || r.track_id)}
                             ${r.song_banned ? '<span class="badge bg-danger ms-1">song banned</span>' : ''}</div>
                         <div class="track-meta text-truncate">${esc(r.artist_name || '')}${r.album_name ? ' &mdash; ' + esc(r.album_name) : ''}</div>
                         <div class="track-meta">From <strong>${esc(r.requester_name || 'Anonymous')}</strong>
@@ -575,11 +555,11 @@ ADMIN_HTML = """<!DOCTYPE html>
     async function banSong(requestId) {
         const r = requestsById[requestId];
         if (!r) return;
-        if (!confirm('Ban the song "' + (r.track_name || r.spotify_uri) + '"?\\n\\nNo one will be able to request it, and pending requests for it are removed.')) return;
+        if (!confirm('Ban the song "' + (r.track_name || r.track_id) + '"?\\n\\nNo one will be able to request it, and pending requests for it are removed.')) return;
         const res = await fetch('/api/admin/song-bans?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({songid: r.spotify_uri, track_name: r.track_name, artist_name: r.artist_name})
+            body: JSON.stringify({songid: r.track_id, track_name: r.track_name, artist_name: r.artist_name})
         });
         if (!res.ok) {
             const d = await res.json().catch(() => ({}));
@@ -824,7 +804,7 @@ async def admin_get_requests(_: None = Depends(require_admin)):
     for r in rows:
         d = dict(r)
         d["requester_banned"] = is_banned(d.get("requester_ip"))
-        d["song_banned"] = is_song_banned(d.get("spotify_uri"))
+        d["song_banned"] = is_song_banned(d.get("track_id"))
         result.append(d)
     return result
 
@@ -836,7 +816,7 @@ async def admin_approve_request(request_id: int, _: None = Depends(require_admin
         row = db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Request not found")
-        await spotify_client.add_to_queue(row["spotify_uri"])
+        await tidal_client.add_to_queue(row["track_id"])
         db.execute("UPDATE requests SET status='approved' WHERE id=?", (request_id,))
         db.commit()
         return {"success": True}
@@ -1023,8 +1003,8 @@ async def admin_add_song_ban(payload: SongBanPayload, _: None = Depends(require_
         )
         # A banned song has no business sitting in the pending queue either
         db.execute(
-            "UPDATE requests SET status='deleted' WHERE status='pending' AND spotify_uri IN (?, ?)",
-            (sid, f"spotify:track:{sid}"),
+            "UPDATE requests SET status='deleted' WHERE status='pending' AND track_id = ?",
+            (sid,),
         )
         db.commit()
         return {"success": True}

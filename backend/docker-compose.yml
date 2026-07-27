@@ -4,16 +4,19 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/data  # SQLite DB + Spotify token cache
+      - ./data:/data  # SQLite DB
+    # Reach the TidaLuna bridge running on the Windows host. Built in on Docker
+    # Desktop; only strictly required on Linux Docker Engine, but declared here
+    # so the host dependency is explicit.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      SPOTIFY_CLIENT_ID: ""
-      SPOTIFY_CLIENT_SECRET: ""
-      SPOTIFY_DEVICE_NAME: ""
-      SPOTIFY_REDIRECT_URI: "http://localhost:8080/api/callback"
+      # The bridge plugin binds 0.0.0.0 so the container can reach it — a
+      # 127.0.0.1 bind is NOT reachable via host.docker.internal.
+      TIDAL_BRIDGE_URL: "http://host.docker.internal:24124"
       AUTH_KEY: "change_me"
       TURNSTILE_SECRET: ""
       TURNSTILE_SITE_KEY: ""
-      TOKEN_CACHE_FILE: "/data/token_cache.json"
       DB_FILE: "/data/music_sync.db"
       PORT: "8080"
       METADATA_DELAY: "5"

@@ -850,12 +850,12 @@ footer .sep { opacity: 0.4; }
 }
 .confirm-artist { font-size: 15px; color: var(--muted); margin-top: 5px; }
 .confirm-prompt { font-size: 14px; color: var(--muted); margin-top: 18px; }
-.spotify-preview-container {
+.track-preview-container {
   margin: 16px auto 0;
   display: flex;
   justify-content: center;
 }
-#spotify-preview {
+#track-preview {
   border: none;
   border-radius: 12px;
   width: 100%;

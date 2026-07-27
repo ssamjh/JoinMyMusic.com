@@ -64,7 +64,7 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            spotify_uri TEXT NOT NULL,
+            track_id TEXT NOT NULL,
             track_name TEXT,
             artist_name TEXT,
             album_name TEXT,
@@ -179,12 +179,13 @@ def is_banned(ip: Optional[str], uuid: Optional[str] = None) -> bool:
 
 
 def normalize_songid(songid: Optional[str]) -> str:
-    """Reduce a Spotify track reference to its bare id.
+    """Reduce a track reference to its canonical id.
 
-    Requests arrive as bare ids from the frontend, but tolerate the
-    'spotify:track:<id>' URI form too.
+    TIDAL ids are bare numerics with no URI form, so this is currently just a
+    trim — but it stays the single normalisation point every call site funnels
+    through, so a future id format only has to be handled here.
     """
-    return (songid or "").strip().split(":")[-1]
+    return str(songid or "").strip()
 
 
 def is_song_banned(songid: Optional[str]) -> bool:

@@ -1,0 +1,10 @@
+{
+	"name": "@joinmymusic/bridge",
+	"description": "Exposes now-playing, search and queue control to the JoinMyMusic backend",
+	"author": {
+		"name": "ssamjh",
+		"url": "https://github.com/ssamjh"
+	},
+	"main": "./src/index.ts",
+	"type": "module"
+}

@@ -881,9 +881,9 @@ function applyPendingMetadata() {
     // until they fade back in as the record spins up.
     applyPendingColors();
     playingImage.src = imgSrc;
-    titleEl.innerHTML  = createLink('https://open.spotify.com/track/', data.songid, data.song);
+    titleEl.innerHTML  = createLink('https://tidal.com/track/', data.songid, data.song);
     artistEl.innerHTML = data.artist
-      .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
+      .map((a) => createLink('https://tidal.com/artist/', a.id, a.name))
       .join(', ');
     updateRecordLabel(data);
     // Re-anchor the arm on every metadata — song change, in-track seek, and the
@@ -1347,7 +1347,7 @@ function renderHistory(history) {
   list.innerHTML = items
     .map((it) => {
       const artists = (it.artist || []).map((a) => escapeHtml(a.name)).join(", ");
-      return `<a class="history-item" href="https://open.spotify.com/track/${encodeURIComponent(it.songid)}" target="_blank">
+      return `<a class="history-item" href="https://tidal.com/track/${encodeURIComponent(it.songid)}" target="_blank">
         <img class="history-art" src="${escapeHtml(it.cover || "")}" alt="" />
         <div class="history-text">
           <div class="history-title">${escapeHtml(it.song)}</div>
@@ -1803,7 +1803,7 @@ function closeModals() {
   document.querySelectorAll(".modal-overlay").forEach((m) =>
     m.classList.remove("show")
   );
-  stopSpotifyPreview();
+  stopTrackPreview();
 }
 function closeModalsFromOverlay(event) {
   if (event.target === event.currentTarget) closeModals();
@@ -1817,7 +1817,7 @@ function openRequestModal() {
   setTimeout(() => target && target.focus(), 60);
 }
 function backToRequest() {
-  stopSpotifyPreview();
+  stopTrackPreview();
   document.getElementById("songConfirmModal").classList.remove("show");
   openModal("songRequestModal");
 }
@@ -1826,9 +1826,9 @@ function openVoteModal() {
   openModal("voteSkipModal");
 }
 
-function stopSpotifyPreview() {
-  const spotifyPreview = document.getElementById("spotify-preview");
-  if (spotifyPreview) spotifyPreview.src = "about:blank";
+function stopTrackPreview() {
+  const preview = document.getElementById("track-preview");
+  if (preview) preview.src = "about:blank";
 }
 
 // ---- Admin announcements ----
@@ -2010,8 +2010,8 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("confirm-song-title").textContent = track.name;
     document.getElementById("confirm-song-artist").textContent = track.artist;
 
-    const spotifyPreview = document.getElementById("spotify-preview");
-    spotifyPreview.src = `https://open.spotify.com/embed/track/${track.id}`;
+    const preview = document.getElementById("track-preview");
+    preview.src = `https://embed.tidal.com/tracks/${track.id}`;
 
     document.getElementById("songRequestModal").classList.remove("show");
     openModal("songConfirmModal");
@@ -2036,8 +2036,8 @@ document.addEventListener("DOMContentLoaded", function () {
       // Persist the name for future requests
       storageSet("requesterName", requesterName);
 
-      // Stop the Spotify preview before sending the request
-      stopSpotifyPreview();
+      // Stop the track preview before sending the request
+      stopTrackPreview();
 
       const submissionId =
         Date.now() + "-" + Math.random().toString(36).substr(2, 9);
@@ -2059,7 +2059,7 @@ document.addEventListener("DOMContentLoaded", function () {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        uri,
+        track_id: uri,
         name: requesterName,
         submission_id: submissionId,
         turnstile: turnstileToken,

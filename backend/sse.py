@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 METADATA_DELAY = float(os.environ.get("METADATA_DELAY", "5"))
 METADATA_DELAY_MS = METADATA_DELAY * 1000
 
-# A jump in Spotify's reported position larger than this (vs. where continuous
+# A jump in TIDAL's reported position larger than this (vs. where continuous
 # playback would have us) is treated as a seek and re-anchors the song. Kept
 # well above normal poll/latency jitter so steady playback never trips it.
 SEEK_THRESHOLD_MS = 3000
 
 # The wall-clock instant (ISO 8601) at which the *currently heard* song was at
 # position 0 — i.e. the anchor clients reconstruct playback progress from. It is
-# expressed in stream time: the audio stream lags Spotify by METADATA_DELAY
+# expressed in stream time: the audio stream lags TIDAL by METADATA_DELAY
 # seconds, so this is pushed back by that delay. Every consumer (SSE stream, new
 # connections, REST fallback) reports the same anchor.
 current_song_state: dict = {"songid": "", "started_at": None}
@@ -40,7 +40,7 @@ _EMPTY_CURRENT = {
 def stream_started_at(polled_at: datetime, progress_ms: float) -> datetime:
     """Wall-clock instant the currently-heard song was at position 0.
 
-    The listener hears audio METADATA_DELAY seconds behind Spotify's live
+    The listener hears audio METADATA_DELAY seconds behind TIDAL's live
     position, so the position in their ears right now is
     ``progress_ms - METADATA_DELAY``. Anchoring to that lets a client rebuild the
     heard position from its own monotonic clock — immune to clock skew.
@@ -72,7 +72,7 @@ def enrich_with_timing(current: dict) -> dict:
 
 
 def metadata_for_clients(current: dict) -> dict:
-    """Client-facing now-playing: empty while Spotify is paused or idle.
+    """Client-facing now-playing: empty while TIDAL is paused or idle.
 
     Paused tracks are parked in history by the poll loop; clients should not
     keep showing them as the current song.
@@ -110,23 +110,23 @@ class SSEBroadcaster:
 broadcaster = SSEBroadcaster()
 
 
-async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: dict):
-    """Background task: poll Spotify every 5s, broadcast metadata on change.
+async def poll_tidal(tidal_client, listeners_state: dict, vote_skips_state: dict):
+    """Background task: poll TIDAL every 5s, broadcast metadata on change.
 
     Pause clears the current track for clients and parks it in play history.
     Resume of the same track restores it as current and removes it from history.
     """
     from storage import add_to_history, get_history, prune_history, remove_from_history
 
-    last_stable: dict | None = None  # last Spotify content, ignoring progress
+    last_stable: dict | None = None  # last TIDAL content, ignoring progress
     last_song_id: str = ""
     last_current: dict | None = None  # metadata of the last active track
-    # Song id we moved into history because Spotify paused (for resume restore).
+    # Song id we moved into history because TIDAL paused (for resume restore).
     parked_for_pause_id: str = ""
 
     while True:
         try:
-            metadata = await spotify_client.get_current_playback()
+            metadata = await tidal_client.get_current_playback()
             current = metadata.get("current", {})
             song_id = current.get("songid", "")
             playing = bool(current.get("playing"))
@@ -141,7 +141,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             stable = {k: v for k, v in current.items() if k != "progress_ms"}
             content_changed = stable != last_stable
 
-            # Detect an in-track seek: re-derive the anchor from Spotify's live
+            # Detect an in-track seek: re-derive the anchor from TIDAL's live
             # position; a jump past the threshold means someone scrubbed. Only
             # while playing — a paused track's frozen progress would otherwise
             # read as an ever-growing drift and re-broadcast every poll.
@@ -237,7 +237,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             if history_changed:
                 await broadcaster.broadcast("history", {"history": get_history()})
         except Exception as e:
-            logger.error(f"Spotify poll error: {e}")
+            logger.error(f"TIDAL poll error: {e}")
 
         await asyncio.sleep(5)
 
@@ -265,13 +265,3 @@ async def cleanup_old_requests():
             _cleanup()
         except Exception as e:
             logger.error(f"Request cleanup error: {e}")
-
-
-async def refresh_token_loop(spotify_client):
-    """Background task: refresh Spotify token every 5 minutes."""
-    while True:
-        await asyncio.sleep(300)
-        try:
-            await spotify_client.refresh_token_if_needed()
-        except Exception as e:
-            logger.error(f"Token refresh loop error: {e}")
