@@ -22,6 +22,20 @@ if (DISPLAY_MODE) document.body.classList.add("display-mode");
 // isn't held back by the normal stream's audio-sync delay.
 const DISPLAY_NO_AUDIO = DISPLAY_MODE && /[?&]noaudio\b/i.test(location.search);
 
+// index.html?display&volume=60 — output level for unattended screens, 0–100.
+// The dock (and with it the volume slider) is hidden in display mode, so there
+// is no way to set the level from the screen itself — this is the knob. Unlike
+// the slider this is a direct output gain with no ceiling applied, since a kiosk
+// is normally feeding an amp that does its own attenuating; hence the default of
+// 100 rather than the slider's 50 (which would be 10% gain, see scaleVolume).
+// null outside display mode = leave the normal slider path alone.
+const DISPLAY_VOLUME = (function () {
+  if (!DISPLAY_MODE) return null;
+  const raw = new URLSearchParams(location.search).get("volume");
+  const v = parseFloat(raw);
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100;
+})();
+
 // index.html?zoom=1.2 — scale the whole page up (CSS zoom, not a transform) so
 // it fills more of the screen on displays with a lot of unused border. Zoom
 // re-flows layout at the new scale rather than stretching a fixed-size render,
@@ -367,7 +381,12 @@ function pollServer() {
   const listenerName = storageGet("requesterName") || "";
   const userUUID = getOrCreateUUID();
 
-  const volume = parseInt(storageGet("volume") ?? "50", 10);
+  // Display screens have no slider, so report the URL-configured level instead
+  // of the stale stored one — otherwise every kiosk shows as 50 in the admin panel.
+  const volume =
+    DISPLAY_VOLUME !== null
+      ? Math.round(DISPLAY_VOLUME)
+      : parseInt(storageGet("volume") ?? "50", 10);
   fetch("/api/listener", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1190,14 +1209,19 @@ function buttonStop() {
   cancelChoreography();
 }
 
-function volumeSet(val) {
-  const scaledVolume = scaleVolume(val);
-  currentGain = scaledVolume / 100;
+// Apply an output gain (0–1). Safe to call before the Web Audio graph exists —
+// createAudioGraph seeds gainNode from currentGain when it is eventually built.
+function applyGain(gain) {
+  currentGain = gain;
   if (gainNode) {
     gainNode.gain.value = currentGain;
   } else {
     audioStream.volume = currentGain;
   }
+}
+
+function volumeSet(val) {
+  applyGain(scaleVolume(val) / 100);
   storageSet("volume", val);
   setVolumeUI(val);
 }
@@ -1938,9 +1962,13 @@ document.addEventListener("DOMContentLoaded", function () {
   const savedName = storageGet("requesterName");
   if (savedName) requesterNameInput.value = savedName;
 
-  // Volume slider: desktop shows it, mobile relies on hardware volume
+  // Volume slider: desktop shows it, mobile relies on hardware volume, display
+  // mode takes its level from the URL (see DISPLAY_VOLUME).
   const isMobileUA = navigator.userAgent.toLowerCase().match(/mobile/i);
-  if (isMobileUA) {
+  if (DISPLAY_VOLUME !== null) {
+    document.getElementById("div-volume").style.display = "none";
+    applyGain(DISPLAY_VOLUME / 100);
+  } else if (isMobileUA) {
     document.getElementById("div-volume").style.display = "none";
     audioStream.volume = 1.0;
   } else {
