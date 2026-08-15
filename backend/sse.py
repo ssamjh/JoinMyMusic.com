@@ -82,6 +82,26 @@ def metadata_for_clients(current: dict) -> dict:
     return enrich_with_timing(current)
 
 
+def live_metadata_for_clients(current: dict, polled_at: datetime | None = None) -> dict:
+    """Now-playing payload for realtime consumers: no audio-sync delay.
+
+    Unlike ``metadata_for_clients``, ``elapsed_ms`` is Spotify's live reported
+    position, not the stream-delayed position the audio listener actually
+    hears. Intended for the realtime SSE stream, not the synced player UI.
+    """
+    if not current.get("playing") or not current.get("songid"):
+        out = {k: v for k, v in _EMPTY_CURRENT.items() if k != "progress_ms"}
+        out["started_at"] = None
+        out["elapsed_ms"] = None
+        return out
+    polled_at = polled_at or datetime.now(timezone.utc)
+    progress_ms = current.get("progress_ms", 0)
+    out = {k: v for k, v in current.items() if k != "progress_ms"}
+    out["started_at"] = (polled_at - timedelta(milliseconds=progress_ms)).isoformat()
+    out["elapsed_ms"] = progress_ms
+    return out
+
+
 class SSEBroadcaster:
     def __init__(self):
         self.clients: list[asyncio.Queue] = []
@@ -96,11 +116,10 @@ class SSEBroadcaster:
             self.clients.remove(queue)
 
     async def broadcast(self, event: str, data: dict):
-        message = f"event: {event}\ndata: {json.dumps(data)}\n\n"
         dead = []
         for queue in self.clients:
             try:
-                queue.put_nowait(message)
+                queue.put_nowait((event, data))
             except asyncio.QueueFull:
                 dead.append(queue)
         for queue in dead:
@@ -108,6 +127,15 @@ class SSEBroadcaster:
 
 
 broadcaster = SSEBroadcaster()
+# Fed the same events as `broadcaster`, except "metadata" is pushed the instant
+# Spotify reports a change instead of waiting out METADATA_DELAY — for
+# consumers that want live data rather than data synced to the audio stream.
+realtime_broadcaster = SSEBroadcaster()
+
+
+async def broadcast_both(event: str, data: dict):
+    await broadcaster.broadcast(event, data)
+    await realtime_broadcaster.broadcast(event, data)
 
 
 async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: dict):
@@ -160,6 +188,12 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
             if content_changed or seeked:
                 last_stable = stable
 
+                # Realtime consumers get the raw metadata the instant it
+                # changes — they don't wait for the audio-sync delay below.
+                await realtime_broadcaster.broadcast(
+                    "metadata", live_metadata_for_clients(current, polled_at)
+                )
+
                 # Track identity changed (new song, or cleared entirely).
                 if content_changed and song_id != last_song_id:
                     # Previous track finished / was skipped: history it unless we
@@ -175,7 +209,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
                         vote_skips_state.pop(last_song_id, None)
                         total_listeners = len(listeners_state)
                         needed = max(2, -(-total_listeners // 2))
-                        await broadcaster.broadcast(
+                        await broadcast_both(
                             "skipvotes",
                             {"song": song_id, "count": 0, "needed": needed},
                         )
@@ -235,7 +269,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
                     )
 
             if history_changed:
-                await broadcaster.broadcast("history", {"history": get_history()})
+                await broadcast_both("history", {"history": get_history()})
         except Exception as e:
             logger.error(f"Spotify poll error: {e}")
 
@@ -251,7 +285,7 @@ async def cleanup_listeners(listeners_state: dict):
             expired = [u for u, d in list(listeners_state.items()) if now - d["last_seen"] > 60]
             for u in expired:
                 del listeners_state[u]
-            await broadcaster.broadcast("listeners", {"count": len(listeners_state)})
+            await broadcast_both("listeners", {"count": len(listeners_state)})
         except Exception as e:
             logger.error(f"Listener cleanup error: {e}")
 

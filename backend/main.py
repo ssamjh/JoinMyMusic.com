@@ -17,11 +17,14 @@ AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
 from spotify import SpotifyClient
 from sse import (
+    broadcast_both,
     broadcaster,
     cleanup_listeners,
     cleanup_old_requests,
+    live_metadata_for_clients,
     metadata_for_clients,
     poll_spotify,
+    realtime_broadcaster,
     refresh_token_loop,
 )
 from storage import (
@@ -126,14 +129,81 @@ async def sse_events(request: Request):
 
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=20)
+                    event, data = await asyncio.wait_for(queue.get(), timeout=20)
+                    message = f"event: {event}\ndata: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
-                    data = ": keepalive\n\n"
-                yield data
+                    message = ": keepalive\n\n"
+                yield message
         except asyncio.CancelledError:
             raise
         finally:
             broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+# ─── SSE (realtime, no audio-sync delay) ────────────────────────────────────
+# Same event types as /api/events, but "metadata" is pushed the instant
+# Spotify reports a change rather than delayed to line up with the audio
+# stream. Filter which categories to receive with query flags, e.g.
+# /api/events-realtime?music=1 for only now-playing/history updates.
+# Recognized flags: music (metadata, history), listeners, skipvotes, control
+# (stop, announce). Omit all flags to receive every category.
+
+_REALTIME_EVENT_CATEGORY = {
+    "metadata": "music",
+    "history": "music",
+    "listeners": "listeners",
+    "skipvotes": "skipvotes",
+    "stop": "control",
+    "announce": "control",
+}
+_REALTIME_CATEGORIES = ("music", "listeners", "skipvotes", "control")
+
+
+def _query_flag_truthy(value: Optional[str]) -> bool:
+    return value is not None and value.lower() not in ("0", "false", "no", "")
+
+
+@app.get("/api/events-realtime")
+async def sse_events_realtime(request: Request):
+    requested = [c for c in _REALTIME_CATEGORIES if c in request.query_params]
+    allowed = (
+        {c for c in requested if _query_flag_truthy(request.query_params.get(c))}
+        if requested
+        else set(_REALTIME_CATEGORIES)
+    )
+
+    async def event_generator():
+        queue = realtime_broadcaster.subscribe()
+        try:
+            metadata = await spotify_client.get_current_playback()
+            if "music" in allowed:
+                yield f"event: metadata\ndata: {json.dumps(live_metadata_for_clients(metadata.get('current', {})))}\n\n"
+                yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
+            if "listeners" in allowed:
+                yield f"event: listeners\ndata: {json.dumps({'count': len(listeners)})}\n\n"
+
+            while True:
+                try:
+                    event, data = await asyncio.wait_for(queue.get(), timeout=20)
+                    if _REALTIME_EVENT_CATEGORY.get(event) not in allowed:
+                        continue
+                    message = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    message = ": keepalive\n\n"
+                yield message
+        except asyncio.CancelledError:
+            raise
+        finally:
+            realtime_broadcaster.unsubscribe(queue)
 
     return StreamingResponse(
         event_generator(),
@@ -347,12 +417,12 @@ async def vote_skip(payload: SkipPayload, request: Request):
         try:
             await spotify_client.skip()
             vote_skips.pop(song_id, None)
-            await broadcaster.broadcast("skipvotes", {"song": song_id, "count": 0, "needed": needed})
+            await broadcast_both("skipvotes", {"song": song_id, "count": 0, "needed": needed})
             return {"success": True, "message": "Song skipped successfully"}
         except Exception as e:
             raise HTTPException(status_code=500, detail="Failed to skip the song")
 
-    await broadcaster.broadcast("skipvotes", {"song": song_id, "count": count, "needed": needed})
+    await broadcast_both("skipvotes", {"song": song_id, "count": count, "needed": needed})
     return {"success": True, "message": "Vote recorded", "count": count, "needed": needed}
 
 
@@ -914,7 +984,7 @@ class StopPayload(BaseModel):
 
 @app.post("/api/admin/stop")
 async def admin_stop_playback(payload: StopPayload, _: None = Depends(require_admin)):
-    await broadcaster.broadcast("stop", {"uuid": (payload.uuid or "").strip() or None})
+    await broadcast_both("stop", {"uuid": (payload.uuid or "").strip() or None})
     return {"success": True}
 
 
@@ -928,7 +998,7 @@ async def admin_send_message(payload: AnnouncePayload, _: None = Depends(require
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="No message text provided")
-    await broadcaster.broadcast(
+    await broadcast_both(
         "announce",
         {"text": text[:500], "uuid": (payload.uuid or "").strip() or None},
     )

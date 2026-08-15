@@ -15,6 +15,22 @@ let hlsInstance = null;
 const DISPLAY_MODE = /[?&]display\b/i.test(location.search);
 if (DISPLAY_MODE) document.body.classList.add("display-mode");
 
+// index.html?display&noaudio — visuals only, the <audio> element never plays
+// (e.g. a screen showing now-playing while the room's actual audio comes from
+// elsewhere). With no local audio to stay in sync with, this also switches the
+// metadata feed to the realtime SSE stream (see connectSSE) so the display
+// isn't held back by the normal stream's audio-sync delay.
+const DISPLAY_NO_AUDIO = DISPLAY_MODE && /[?&]noaudio\b/i.test(location.search);
+
+// index.html?zoom=1.2 — scale the whole page up (CSS zoom, not a transform) so
+// it fills more of the screen on displays with a lot of unused border. Zoom
+// re-flows layout at the new scale rather than stretching a fixed-size render,
+// so nothing clips or gets a scrollbar. Silently ignored where unsupported.
+(function applyZoom() {
+  const zoom = parseFloat(new URLSearchParams(location.search).get("zoom"));
+  if (zoom > 0 && zoom <= 3) document.documentElement.style.zoom = zoom;
+})();
+
 // --- Web Audio graph (built lazily, only when the visualizer needs it) ---
 let audioContext = null;
 let audioStartTimer = null; // delays fx playback until the record/arm are in place
@@ -1364,7 +1380,9 @@ function renderHistory(history) {
 }
 
 function connectSSE() {
-  const evtSource = new EventSource("/api/events");
+  const evtSource = new EventSource(
+    DISPLAY_NO_AUDIO ? "/api/events-realtime" : "/api/events"
+  );
 
   evtSource.addEventListener("metadata", (e) => {
     handleMetadata(JSON.parse(e.data));
@@ -1877,6 +1895,13 @@ document.addEventListener("DOMContentLoaded", function () {
     isPlaying = true;
     startPolling();
     updatePlayUI();
+  } else if (DISPLAY_NO_AUDIO) {
+    // Visual-only display: drive the play-state (record spin, tonearm,
+    // listener heartbeat) without ever touching the <audio> element.
+    isPlaying = true;
+    startPolling();
+    updatePlayUI();
+    updateButtons();
   } else if (DISPLAY_MODE) {
     // Autoplay on a display (e.g. OBS browser source). Browsers (incl. OBS's
     // Chromium/CEF) block autoplay WITH SOUND without a user gesture, so start
