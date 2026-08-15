@@ -411,7 +411,7 @@ function scaleVolume(inputValue) {
     : 10 + (inputValue - 50) * 0.4;
 }
 
-const HLS_STREAM_URL = "https://hls.sjh.at/jmm/stream.m3u8";
+const HLS_STREAM_URL = "https://hls.sjh.at/jmm/audio/index.m3u8";
 
 // hls.js is only needed on the effects-on / no-native-HLS path, so it's loaded
 // on demand instead of on every page view (~85 KB gzipped, unused until play).
