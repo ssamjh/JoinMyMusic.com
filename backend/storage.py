@@ -8,7 +8,7 @@ import os
 DB_FILE = os.environ.get("DB_FILE", "/data/music_sync.db")
 
 # In-memory ephemeral state (protected by asyncio single-thread guarantee)
-listeners: Dict[str, dict] = {}          # {uuid: {name, ip, last_seen, user_agent}}
+listeners: Dict[str, dict] = {}          # {uuid: {name, ip, last_seen, user_agent, display}}
 vote_skips: Dict[str, Set[str]] = {}     # {song_id: {uuid:ip, ...}}
 rate_limits: Dict[str, List[float]] = {} # {action:ip: [timestamp, ...]}
 submission_ids: Dict[str, float] = {}    # {submission_id: created_at}  TTL 5 min
@@ -16,6 +16,17 @@ play_history: List[dict] = []            # [{...song metadata, played_at}, ...] 
 
 HISTORY_MAX_ITEMS = 10
 HISTORY_TTL_SECS = 3600  # songs drop off the history 1 hour after they played
+
+
+def active_listener_count(listeners_state: Optional[Dict[str, dict]] = None) -> int:
+    """People listening, excluding display/kiosk screens (index.html?display).
+
+    Kiosks stay in the registry so the admin panel can still see and control
+    them, but they are nobody in the room — they must not inflate the public
+    count or the skip-vote threshold derived from it.
+    """
+    state = listeners if listeners_state is None else listeners_state
+    return sum(1 for d in state.values() if not d.get("display"))
 
 
 def prune_history() -> bool:

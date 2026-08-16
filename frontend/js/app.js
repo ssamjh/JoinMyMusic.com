@@ -387,10 +387,18 @@ function pollServer() {
     DISPLAY_VOLUME !== null
       ? Math.round(DISPLAY_VOLUME)
       : parseInt(storageGet("volume") ?? "50", 10);
+  // Kiosks still heartbeat so the admin panel can see and control them, but
+  // the flag keeps them out of the "listening now" count — a screen in the
+  // corner isn't a person.
   fetch("/api/listener", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uuid: userUUID, name: listenerName, volume }),
+    body: JSON.stringify({
+      uuid: userUUID,
+      name: listenerName,
+      volume,
+      display: DISPLAY_MODE,
+    }),
   }).catch((error) => console.error("Error polling server:", error));
 }
 

@@ -144,7 +144,13 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
     Pause clears the current track for clients and parks it in play history.
     Resume of the same track restores it as current and removes it from history.
     """
-    from storage import add_to_history, get_history, prune_history, remove_from_history
+    from storage import (
+        active_listener_count,
+        add_to_history,
+        get_history,
+        prune_history,
+        remove_from_history,
+    )
 
     last_stable: dict | None = None  # last Spotify content, ignoring progress
     last_song_id: str = ""
@@ -207,7 +213,7 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
                             current_song_state["started_at"] = None
                     if last_song_id:
                         vote_skips_state.pop(last_song_id, None)
-                        total_listeners = len(listeners_state)
+                        total_listeners = active_listener_count(listeners_state)
                         needed = max(2, -(-total_listeners // 2))
                         await broadcast_both(
                             "skipvotes",
@@ -278,6 +284,8 @@ async def poll_spotify(spotify_client, listeners_state: dict, vote_skips_state: 
 
 async def cleanup_listeners(listeners_state: dict):
     """Background task: expire stale listeners every 30s, broadcast listener count."""
+    from storage import active_listener_count
+
     while True:
         await asyncio.sleep(30)
         try:
@@ -285,7 +293,7 @@ async def cleanup_listeners(listeners_state: dict):
             expired = [u for u, d in list(listeners_state.items()) if now - d["last_seen"] > 60]
             for u in expired:
                 del listeners_state[u]
-            await broadcast_both("listeners", {"count": len(listeners_state)})
+            await broadcast_both("listeners", {"count": active_listener_count(listeners_state)})
         except Exception as e:
             logger.error(f"Listener cleanup error: {e}")
 

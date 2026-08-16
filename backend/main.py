@@ -28,6 +28,7 @@ from sse import (
     refresh_token_loop,
 )
 from storage import (
+    active_listener_count,
     check_rate_limit,
     check_submission_id,
     get_db,
@@ -124,7 +125,7 @@ async def sse_events(request: Request):
             # Send current state immediately on connect
             metadata = await spotify_client.get_current_playback()
             yield f"event: metadata\ndata: {json.dumps(metadata_for_clients(metadata.get('current', {})))}\n\n"
-            yield f"event: listeners\ndata: {json.dumps({'count': len(listeners)})}\n\n"
+            yield f"event: listeners\ndata: {json.dumps({'count': active_listener_count()})}\n\n"
             yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
 
             while True:
@@ -189,7 +190,7 @@ async def sse_events_realtime(request: Request):
                 yield f"event: metadata\ndata: {json.dumps(live_metadata_for_clients(metadata.get('current', {})))}\n\n"
                 yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
             if "listeners" in allowed:
-                yield f"event: listeners\ndata: {json.dumps({'count': len(listeners)})}\n\n"
+                yield f"event: listeners\ndata: {json.dumps({'count': active_listener_count()})}\n\n"
 
             while True:
                 try:
@@ -252,6 +253,7 @@ class ListenerPayload(BaseModel):
     uuid: str
     name: Optional[str] = None
     volume: Optional[int] = None  # 0–100
+    display: bool = False         # display/kiosk screen — not a person in the room
 
 
 @app.post("/api/listener", status_code=204)
@@ -266,12 +268,13 @@ async def register_listener(payload: ListenerPayload, request: Request):
         "user_agent": request.headers.get("user-agent", "Unknown"),
         "volume": volume,
         "uuid": payload.uuid,
+        "display": payload.display,
     }
 
 
 @app.get("/api/listener/stats")
 async def listener_stats():
-    return {"count": len(listeners)}
+    return {"count": active_listener_count()}
 
 # ─── Search ──────────────────────────────────────────────────────────────────
 
@@ -410,7 +413,7 @@ async def vote_skip(payload: SkipPayload, request: Request):
 
     vote_skips[song_id].add(combined)
     count = len(vote_skips[song_id])
-    total_listeners = len(listeners)
+    total_listeners = active_listener_count()
     needed = max(2, -(-total_listeners // 2))  # ceil division
 
     if count >= needed:
@@ -431,7 +434,7 @@ async def skip_stats():
     metadata = await spotify_client.get_current_playback()
     song_id = metadata.get("current", {}).get("songid", "")
     count = len(vote_skips.get(song_id, set()))
-    total_listeners = len(listeners)
+    total_listeners = active_listener_count()
     needed = max(2, -(-total_listeners // 2))
     return {"song": song_id, "count": count, "needed": needed}
 
@@ -562,6 +565,11 @@ ADMIN_HTML = """<!DOCTYPE html>
             const bannedBadge = l.banned
                 ? '<span class="badge bg-danger ms-1">banned</span>'
                 : '';
+            // Displays are listed and controllable here but excluded from the
+            // public "listening now" count.
+            const displayBadge = l.display
+                ? '<span class="badge bg-secondary ms-1">display</span>'
+                : '';
             const volHtml = vol != null ? `
                 <div class="d-flex align-items-center gap-2 mt-1">
                     <small class="text-secondary" style="width:3rem">Vol ${vol}%</small>
@@ -571,7 +579,7 @@ ADMIN_HTML = """<!DOCTYPE html>
             <div class="card">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start gap-2">
-                        <div class="listener-name">${esc(l.name || 'Anonymous')} ${skipBadge} ${bannedBadge}</div>
+                        <div class="listener-name">${esc(l.name || 'Anonymous')} ${displayBadge} ${skipBadge} ${bannedBadge}</div>
                         <div class="d-flex gap-1">
                             <button class="btn btn-outline-info btn-sm" title="Send popup message to this listener"
                                     onclick="sendMessage('${esc(l.uuid || '')}')">Msg</button>
@@ -613,7 +621,10 @@ ADMIN_HTML = """<!DOCTYPE html>
 
         document.getElementById('pending-count').textContent = pending.length;
         document.getElementById('approved-count').textContent = approved.length;
-        document.getElementById('listener-count').textContent = listenersData.length;
+        // Match the public count (people only), noting kiosks separately.
+        const displays = listenersData.filter(l => l.display).length;
+        document.getElementById('listener-count').textContent =
+            (listenersData.length - displays) + (displays ? ` +${displays} display` : '');
 
         document.getElementById('pending-list').innerHTML = renderRequests(pending, true);
         document.getElementById('approved-list').innerHTML = renderRequests(approved, false);
