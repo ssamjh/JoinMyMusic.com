@@ -1,3 +1,8 @@
+// Backend origin. The frontend is static-hosted (Cloudflare Pages) so every
+// API call and the SSE stream are cross-origin; the backend allows this origin
+// via CORS. Point at http://localhost:8080 for local backend work.
+const API_BASE = "https://api.joinmymusic.com";
+
 const audioStream = document.getElementById("audio-stream");
 const buttonToggle = document.getElementById("button-toggle");
 const playingImage = document.getElementById("playing-image");
@@ -390,7 +395,7 @@ function pollServer() {
   // Kiosks still heartbeat so the admin panel can see and control them, but
   // the flag keeps them out of the "listening now" count — a screen in the
   // corner isn't a person.
-  fetch("/api/listener", {
+  fetch(API_BASE + "/api/listener", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1413,7 +1418,7 @@ function renderHistory(history) {
 
 function connectSSE() {
   const evtSource = new EventSource(
-    DISPLAY_NO_AUDIO ? "/api/events-realtime" : "/api/events"
+    API_BASE + (DISPLAY_NO_AUDIO ? "/api/events-realtime" : "/api/events")
   );
 
   evtSource.addEventListener("metadata", (e) => {
@@ -2013,7 +2018,7 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
-    fetch("/api/search", {
+    fetch(API_BASE + "/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, uuid: getOrCreateUUID() }),
@@ -2116,7 +2121,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     const requesterName = requesterNameInput.value.trim();
 
-    fetch("/api/request", {
+    fetch(API_BASE + "/api/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2172,7 +2177,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const userUUID = getOrCreateUUID();
 
-      fetch("/api/skip", {
+      fetch(API_BASE + "/api/skip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ uuid: userUUID, songid: songId, turnstile: turnstileToken }),

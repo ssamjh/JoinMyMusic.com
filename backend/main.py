@@ -15,6 +15,10 @@ import os
 
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
+# Comma-separated list of frontend origins allowed to call this API.
+ALLOWED_ORIGINS = os.environ.get(
+    "ALLOWED_ORIGINS", "https://joinmymusic.com,https://www.joinmymusic.com"
+)
 from spotify import SpotifyClient
 from sse import (
     broadcast_both,
@@ -68,9 +72,21 @@ async def lifespan(app: FastAPI):
 
 
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# The frontend is static-hosted on its own origin and talks to this API at
+# api.joinmymusic.com, so every browser call is cross-origin. No credentials:
+# the admin pages are served from this origin and keep using their cookie,
+# while the public frontend authenticates with nothing at all.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
