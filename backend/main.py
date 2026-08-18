@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -19,7 +19,7 @@ TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
 ALLOWED_ORIGINS = os.environ.get(
     "ALLOWED_ORIGINS", "https://joinmymusic.com,https://www.joinmymusic.com"
 )
-from spotify import SpotifyClient
+from spotify import COVER_ID_RE, SpotifyClient
 from sse import (
     broadcast_both,
     broadcaster,
@@ -453,6 +453,30 @@ async def skip_stats():
     total_listeners = active_listener_count()
     needed = max(2, -(-total_listeners // 2))
     return {"song": song_id, "count": count, "needed": needed}
+
+# ─── Album art ───────────────────────────────────────────────────────────────
+
+@app.get("/api/cover/{image_id}")
+async def cover(image_id: str):
+    """Proxy album art so the browser never requests anything from Spotify.
+
+    Art is content-addressed and immutable, so this is cached hard at the edge
+    and the origin only ever fetches each image once.
+    """
+    if not COVER_ID_RE.match(image_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"https://i.scdn.co/image/{image_id}")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Upstream image fetch failed")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("content-type", "image/jpeg"),
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 # ─── Spotify OAuth ───────────────────────────────────────────────────────────
 

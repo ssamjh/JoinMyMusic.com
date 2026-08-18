@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Optional
 
 import spotipy
@@ -14,8 +15,30 @@ SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_DEVICE_NAME = os.environ.get("SPOTIFY_DEVICE_NAME", "")
 SPOTIFY_REDIRECT_URI = os.environ.get("SPOTIFY_REDIRECT_URI", "http://localhost:8080/api/callback")
 TOKEN_CACHE_FILE = os.environ.get("TOKEN_CACHE_FILE", "/data/token_cache.json")
+# Public origin of this API. Cover art is rewritten to point here rather than
+# at Spotify's CDN, so nothing the browser loads names Spotify.
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.joinmymusic.com").rstrip("/")
 
 logger = logging.getLogger(__name__)
+
+
+# Spotify image ids are hex, but keep the check to "alphanumeric, bounded" so a
+# format tweak upstream doesn't break art — it still pins the proxy fetch to a
+# single path segment under i.scdn.co, so it can't become an open proxy.
+COVER_ID_RE = re.compile(r"^[a-zA-Z0-9]{1,64}$")
+
+
+def cover_proxy_url(url: Optional[str]) -> Optional[str]:
+    """Rewrite an i.scdn.co album-art URL to our own /api/cover/<id> proxy.
+
+    Spotify's art URLs are content-addressed -- the last path segment is the
+    image id and is all the proxy needs. Anything else (empty, already
+    rewritten, an unexpected host) is passed through untouched.
+    """
+    if not url or not url.startswith("https://i.scdn.co/image/"):
+        return url
+    return f"{API_BASE_URL}/api/cover/{url.rsplit('/', 1)[-1]}"
+
 
 SCOPE = "user-read-playback-state app-remote-control user-modify-playback-state"
 
@@ -66,10 +89,10 @@ class SpotifyClient:
             track = playback["item"]
             album = track["album"]
             artists = [{"name": a["name"], "id": a["id"]} for a in track["artists"]]
-            cover = next(
+            cover = cover_proxy_url(next(
                 (img["url"] for img in album["images"] if img.get("height") == 300),
                 album["images"][0]["url"] if album["images"] else "",
-            )
+            ))
             return {
                 "current": {
                     "artist": artists,
@@ -98,7 +121,9 @@ class SpotifyClient:
                 "name": t["name"],
                 "artist": t["artists"][0]["name"],
                 "album": t["album"]["name"],
-                "cover": t["album"]["images"][0]["url"] if t["album"]["images"] else None,
+                "cover": cover_proxy_url(
+                    t["album"]["images"][0]["url"] if t["album"]["images"] else None
+                ),
             }
             for t in tracks
         ]
@@ -123,10 +148,10 @@ class SpotifyClient:
         track = await asyncio.to_thread(self.sp.track, track_id)
         artists = [{"id": a["id"], "name": a["name"]} for a in track["artists"]]
         album = track["album"]
-        cover = next(
+        cover = cover_proxy_url(next(
             (img["url"] for img in album["images"] if img.get("height") == 300),
             album["images"][0]["url"] if album["images"] else "",
-        )
+        ))
         return {
             "song": track["name"],
             "songid": track["id"],

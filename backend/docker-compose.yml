@@ -11,6 +11,7 @@ services:
       SPOTIFY_DEVICE_NAME: ""
       SPOTIFY_REDIRECT_URI: "https://api.joinmymusic.com/api/callback"
       ALLOWED_ORIGINS: "https://joinmymusic.com,https://www.joinmymusic.com"
+      API_BASE_URL: "https://api.joinmymusic.com"
       AUTH_KEY: "change_me"
       TURNSTILE_SECRET: ""
       TURNSTILE_SITE_KEY: ""
