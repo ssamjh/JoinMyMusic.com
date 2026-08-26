@@ -1,0 +1,43 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+  </head>
+  <body class="theme-dark">
+    <slot />
+
+    <noscript>
+      <img
+        src="https://stats.sjh.at/ingress/f843459e-231c-4d54-902d-5618ed0cb73d/pixel.gif"
+      />
+    </noscript>
+    <script
+      is:inline
+      defer
+      src="https://stats.sjh.at/ingress/f843459e-231c-4d54-902d-5618ed0cb73d/script.js"></script>
+  </body>
+</html>

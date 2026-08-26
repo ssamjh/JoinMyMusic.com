@@ -1,0 +1,56 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Icon from "../components/Icon.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import NowPlaying from "../components/NowPlaying.astro";
+import Dock from "../components/Dock.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import RequestModal from "../components/RequestModal.astro";
+import ConfirmRequestModal from "../components/ConfirmRequestModal.astro";
+import VoteSkipModal from "../components/VoteSkipModal.astro";
+import AnnounceModal from "../components/AnnounceModal.astro";
+
+const description =
+  "Listen along live to what ssamjh is playing — synced music with song requests, skip votes and a scratchable record.";
+---
+
+<BaseLayout title="ssamjh's Music Sync" description={description}>
+  {/* Audio-reactive canvases; app.js paints these. #color-canvas is offscreen. */}
+  <canvas id="color-canvas"></canvas>
+  <canvas id="bg-canvas"></canvas>
+  <canvas id="viz-canvas"></canvas>
+  <div class="vignette"></div>
+
+  <div class="app">
+    <SiteHeader />
+    <NowPlaying />
+    <Dock />
+    <SiteFooter />
+  </div>
+
+  <audio id="audio-stream" preload="none" crossorigin="anonymous"></audio>
+
+  <div id="toast" class="toast">
+    <Icon name="check" size={18} stroke="var(--accent)" strokeWidth={2.2} />
+    <span id="toast-text"></span>
+  </div>
+
+  <RequestModal />
+  <ConfirmRequestModal />
+  <VoteSkipModal />
+  <AnnounceModal />
+
+  {/*
+    app.js is a classic (non-module) script: it defines the handlers the inline
+    onclick attributes above call, plus onTurnstileLoad, on `window`. It is
+    served from public/ and loaded with is:inline so Astro does not turn it into
+    a deferred ES module — the Turnstile API script below is async and calls
+    onTurnstileLoad as soon as it is ready, so app.js has to have run first.
+  */}
+  <script is:inline src="/js/app.js"></script>
+  <script
+    is:inline
+    src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad"
+    async
+    defer></script>
+</BaseLayout>

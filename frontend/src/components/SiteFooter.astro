@@ -1,0 +1,34 @@
+---
+import Icon from "./Icon.astro";
+import { commit, commitUrl } from "../lib/build-info";
+
+const linkClass =
+  "inline-flex items-center gap-1.5 text-muted no-underline transition-colors duration-200 hover:text-fg";
+---
+
+<footer
+  class="relative z-[2] flex flex-wrap items-center justify-center gap-4 px-5 pb-[max(14px,env(safe-area-inset-bottom))] text-xs text-muted"
+>
+  <a href="https://ssamjh.nz/" target="_blank" class={linkClass}>Primary Website</a>
+  <span class="opacity-40">·</span>
+  <a
+    href="https://github.com/ssamjh/JoinMyMusic.com"
+    target="_blank"
+    class={linkClass}
+  >
+    <Icon name="github" size={15} />
+    GitHub
+  </a>
+  {
+    commit && (
+      <>
+        <span class="opacity-40">·</span>
+        <a href={commitUrl} target="_blank" class={linkClass} title="Build commit">
+          <code class="font-mono">{commit}</code>
+        </a>
+      </>
+    )
+  }
+  <span class="opacity-40">·</span>
+  <span>© 2026 ssamjh</span>
+</footer>

@@ -1,0 +1,84 @@
+---
+import Icon from "./Icon.astro";
+---
+
+{/*
+  The dock is lifted with a negative margin, NOT `top`: an offset via `top` makes
+  iOS Safari paint the play button's box-shadow glow at the un-offset position,
+  leaving the glow detached from the button. A negative margin moves the real box.
+  On narrow screens it sits flush so it does not cover the scrollable content.
+*/}
+<div
+  class="dock relative z-[3] -mt-[7vh] flex flex-col items-center gap-[18px] px-5 pt-0 pb-[max(14px,env(safe-area-inset-bottom))] max-stack:mt-0"
+>
+  <div class="flex items-center gap-4">
+    <button
+      class="ctrl-btn"
+      title="Request a song"
+      aria-label="Request a song"
+      onclick="openRequestModal()"
+    >
+      <Icon name="search" size={22} />
+    </button>
+    <button
+      id="muteSongBtn"
+      class="ctrl-btn"
+      title="Mute until song ends"
+      aria-label="Mute until song ends"
+      disabled
+    >
+      <span class="mute-icon-on">
+        <Icon name="mute-on" size={22} />
+      </span>
+      <span class="mute-icon-off" style="display:none">
+        <Icon name="mute-off" size={22} />
+      </span>
+    </button>
+    <button
+      id="button-toggle"
+      class="play-btn"
+      title="Play / Stop"
+      aria-label="Play or stop"
+      onclick="onPlayClick()"
+    >
+      <span class="play-icon">
+        <Icon name="play" size={30} />
+      </span>
+      <span class="stop-icon" style="display:none">
+        <Icon name="stop" size={30} />
+      </span>
+    </button>
+    <button
+      id="voteSkipBtn"
+      class="ctrl-btn"
+      title="Vote to skip"
+      aria-label="Vote to skip this song"
+      onclick="openVoteModal()"
+      disabled
+    >
+      <Icon name="skip" size={22} />
+    </button>
+  </div>
+
+  {/* A drag that strays off the 6px track must not start selecting text. */}
+  <div
+    class="flex w-[min(420px,82vw)] items-center gap-[13px] text-muted select-none"
+    id="div-volume"
+  >
+    <Icon name="volume-low" size={18} strokeWidth={1.8} />
+    <div
+      id="vol-track"
+      class="vol-track"
+      role="slider"
+      tabindex="0"
+      aria-label="Volume"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-valuenow="50"
+    >
+      <div id="vol-fill" class="vol-fill"></div>
+      <div id="vol-thumb" class="vol-thumb"></div>
+    </div>
+    <Icon name="volume-high" size={18} strokeWidth={1.8} />
+  </div>
+</div>

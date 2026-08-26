@@ -1,0 +1,43 @@
+---
+import Icon from "./Icon.astro";
+---
+
+<header
+  class="relative z-[3] flex items-center justify-between px-7 py-4 pt-[max(1rem,env(safe-area-inset-top))]"
+>
+  <div>
+    <div class="text-[15px] font-semibold tracking-[-0.01em]">Music Sync</div>
+    <div class="mt-0.5 text-xs tracking-[0.02em] text-muted">JoinMyMusic.com</div>
+  </div>
+  {/* .header-actions is the hook body.display-mode uses to strip the controls. */}
+  <div class="header-actions flex items-center gap-2.5">
+    <button
+      id="bgToggleBtn"
+      class="icon-btn"
+      title="Toggle background effects"
+      aria-label="Toggle background effects"
+      onclick="toggleBgAnimation()"
+    >
+      <Icon
+        name="sparkles"
+        size={18}
+        strokeWidth={1.7}
+        style="transform:translateX(-2px)"
+      />
+    </button>
+    <button
+      id="themeToggleBtn"
+      class="icon-btn"
+      title="Toggle light/dark"
+      aria-label="Toggle light/dark theme"
+      onclick="toggleTheme()"
+    >
+      <span class="theme-icon-dark">
+        <Icon name="sun" size={18} strokeWidth={1.7} />
+      </span>
+      <span class="theme-icon-light" style="display:none">
+        <Icon name="moon" size={18} strokeWidth={1.7} />
+      </span>
+    </button>
+  </div>
+</header>

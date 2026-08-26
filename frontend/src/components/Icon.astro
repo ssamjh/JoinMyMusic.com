@@ -1,0 +1,166 @@
+---
+/**
+ * The inline SVG icon set, kept in one place so the markup stays readable.
+ * Every path is the same geometry the hand-written index.html shipped, so the
+ * rendered icons are pixel-identical.
+ *
+ * `stroke` icons inherit `currentColor` unless a caller overrides it; `fill`
+ * icons (play/stop/github) declare their own paint.
+ */
+export type IconName =
+  | "sparkles"
+  | "sun"
+  | "moon"
+  | "search"
+  | "mute-on"
+  | "mute-off"
+  | "play"
+  | "stop"
+  | "skip"
+  | "volume-low"
+  | "volume-high"
+  | "github"
+  | "check"
+  | "close"
+  | "plus";
+
+interface Props {
+  name: IconName;
+  size?: number;
+  stroke?: string;
+  strokeWidth?: number;
+  class?: string;
+  style?: string;
+}
+
+const {
+  name,
+  size = 24,
+  stroke = "currentColor",
+  strokeWidth,
+  class: className,
+  style,
+} = Astro.props;
+
+/** Icons drawn with fills rather than strokes. */
+const FILLED = new Set<IconName>(["play", "stop", "github"]);
+const isFilled = FILLED.has(name);
+
+const strokeAttrs = isFilled
+  ? { fill: "currentColor" }
+  : {
+      fill: "none",
+      stroke,
+      "stroke-width": strokeWidth ?? 1.9,
+      "stroke-linecap": "round" as const,
+      "stroke-linejoin": "round" as const,
+    };
+---
+
+<svg
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  class={className}
+  style={style}
+  {...strokeAttrs}
+>
+  {
+    name === "sparkles" && (
+      <>
+        <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
+        <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z" />
+      </>
+    )
+  }
+  {
+    name === "sun" && (
+      <>
+        <circle cx="12" cy="12" r="4.2" />
+        <path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4l1.4-1.4M18 6l1.4-1.4" />
+      </>
+    )
+  }
+  {name === "moon" && <path d="M20 14.5A8 8 0 1 1 9.5 4 6.3 6.3 0 0 0 20 14.5z" />}
+  {
+    name === "search" && (
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </>
+    )
+  }
+  {
+    name === "mute-on" && (
+      <>
+        <path d="M9 5L5 8.5H2v7h3L9 19V5z" />
+        <circle cx="17.5" cy="7" r="4.3" />
+        <path d="M17.5 4.9V7l1.5 1" />
+      </>
+    )
+  }
+  {
+    name === "mute-off" && (
+      <>
+        <path d="M9 5L5 8.5H2v7h3L9 19V5z" />
+        <line x1="11.5" y1="10" x2="16" y2="14.5" />
+        <line x1="16" y1="10" x2="11.5" y2="14.5" />
+        <circle cx="17.5" cy="7" r="4.3" />
+        <path d="M17.5 4.9V7l1.5 1" />
+      </>
+    )
+  }
+  {
+    name === "play" && (
+      <path d="M8 5.2v13.6c0 .9 1 1.4 1.7.9l10-6.8c.7-.5.7-1.4 0-1.9l-10-6.8C9 3.8 8 4.3 8 5.2z" />
+    )
+  }
+  {
+    name === "stop" && (
+      <>
+        <rect x="6.5" y="5" width="4" height="14" rx="1.3" />
+        <rect x="13.5" y="5" width="4" height="14" rx="1.3" />
+      </>
+    )
+  }
+  {
+    name === "skip" && (
+      <>
+        <path d="M5 4l10 8-10 8V4z" />
+        <line x1="19" y1="5" x2="19" y2="19" />
+      </>
+    )
+  }
+  {name === "volume-low" && <path d="M11 5L6 9H2v6h4l5 4V5z" />}
+  {
+    name === "volume-high" && (
+      <>
+        <path d="M11 5L6 9H2v6h4l5 4V5z" />
+        <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+        <path d="M18.5 6a9 9 0 0 1 0 12" />
+      </>
+    )
+  }
+  {
+    name === "github" && (
+      <path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.5 2.87 8.32 6.84 9.67.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.36-3.37-1.36-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.05 1.53 1.05.9 1.57 2.34 1.12 2.91.86.09-.66.35-1.12.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.7 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0 1 12 6.84c.85 0 1.71.12 2.51.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.4.2 2.44.1 2.7.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9v2.82c0 .27.18.59.69.49A10.02 10.02 0 0 0 22 12.26C22 6.58 17.52 2 12 2z" />
+    )
+  }
+  {name === "check" && <path d="M20 6L9 17l-5-5" />}
+  {
+    name === "close" && (
+      <>
+        <line x1="6" y1="6" x2="18" y2="18" />
+        <line x1="18" y1="6" x2="6" y2="18" />
+      </>
+    )
+  }
+  {
+    name === "plus" && (
+      <>
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </>
+    )
+  }
+</svg>

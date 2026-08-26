@@ -1,0 +1,26 @@
+{
+  "name": "music-sync-web-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for JoinMyMusic.com — Astro + Tailwind, static-hosted against the FastAPI backend.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "check": "astro check"
+  },
+  "type": "module",
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.2.7",
+    "tailwindcss": "^4.3.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  },
+  "private": true,
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "^6.0.3"
+  }
+}

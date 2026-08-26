@@ -1,0 +1,46 @@
+---
+import Icon from "./Icon.astro";
+---
+
+{/* Search + pick a song. Result rows are built as innerHTML by app.js. */}
+<div
+  id="songRequestModal"
+  class="modal-overlay"
+  onclick="closeModalsFromOverlay(event)"
+>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="requestModalTitle"
+    onclick="event.stopPropagation()"
+  >
+    <div class="flex items-center justify-between px-6 pt-[22px] pb-4">
+      <h2 id="requestModalTitle" class="m-0 text-xl font-bold tracking-[-0.02em]">
+        Request a song
+      </h2>
+      <button
+        class="flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-elev text-fg transition-colors duration-200 hover:bg-line"
+        onclick="closeModals()"
+        aria-label="Close"
+      >
+        <Icon name="close" size={17} strokeWidth={2.1} />
+      </button>
+    </div>
+    <div class="flex flex-col gap-3 px-6 pb-2">
+      <input id="requesterName" class="field" placeholder="Your name" />
+      <div class="search-wrap">
+        <Icon name="search" size={18} stroke="var(--muted)" />
+        <input
+          id="songSearchInput"
+          class="field"
+          placeholder="Search for a song or artist…"
+          autocomplete="off"
+        />
+      </div>
+    </div>
+    <div id="searchResults" class="results">
+      <div class="results-msg">Start typing to search for a song.</div>
+    </div>
+  </div>
+</div>

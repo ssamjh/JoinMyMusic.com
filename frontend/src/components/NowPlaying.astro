@@ -1,0 +1,105 @@
+---
+/**
+ * The turntable: album art rendered as a spinning vinyl on a platter, with a
+ * tonearm that tracks playback progress, plus the track metadata beneath it and
+ * the recently-played panel beside it.
+ *
+ * Everything with a bare class name here (#art-card, .platter, .tonearm-*, …) is
+ * driven by app.js and/or the 3D CSS in global.css — see the "3D turntable"
+ * section there. Layout and typography around it are Tailwind utilities.
+ *
+ * On <821px .stage collapses to `display: contents` so the art, metadata and
+ * history stack in a single column, with `order` placing the text in between.
+ */
+---
+
+<main
+  class="relative z-[2] flex min-h-0 flex-1 flex-col items-center justify-start overflow-y-auto px-6"
+>
+  <div
+    class="mx-0 my-auto flex max-w-full flex-col items-center gap-[clamp(14px,2vh,30px)] max-stack:my-6 max-stack:gap-6"
+  >
+    <div
+      class="flex max-w-full items-start justify-center gap-[34px] max-stack:contents"
+    >
+      <div class="now-playing flex min-w-0 flex-col items-center p-0 max-stack:order-0">
+        <a id="playing-link" target="_blank" style="display:block;">
+          <div class="platter" aria-hidden="true"></div>
+          <div id="art-card">
+            <div class="art-placeholder"></div>
+            <img
+              id="playing-image"
+              crossorigin="anonymous"
+              draggable="false"
+              src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+              alt=""
+              width="400"
+              height="400"
+            />
+            <div class="record-overlay"></div>
+            <svg
+              id="record-label"
+              class="record-label"
+              viewBox="0 0 100 100"
+              aria-hidden="true"
+            >
+              <defs>
+                <path id="label-arc-top" d="M 12.5 50 A 37.5 37.5 0 0 1 87.5 50" />
+                <path id="label-arc-bottom" d="M 6 50 A 44 44 0 0 0 94 50" />
+                <radialGradient id="label-shade" cx="50%" cy="40%" r="70%">
+                  <stop offset="0%" stop-color="#fff" stop-opacity="0.16" />
+                  <stop offset="55%" stop-color="#fff" stop-opacity="0.03" />
+                  <stop offset="100%" stop-color="#000" stop-opacity="0.28" />
+                </radialGradient>
+              </defs>
+              <circle class="label-paper" cx="50" cy="50" r="50" />
+              <circle cx="50" cy="50" r="50" fill="url(#label-shade)" />
+              <circle class="label-ring" cx="50" cy="50" r="47" />
+              <circle class="label-ring" cx="50" cy="50" r="29" />
+              <text id="label-title" class="label-text">
+                <textPath href="#label-arc-top" startOffset="50%"></textPath>
+              </text>
+              <text id="label-artist" class="label-text">
+                <textPath href="#label-arc-bottom" startOffset="50%"></textPath>
+              </text>
+              <text id="label-year" class="label-text label-year" x="50" y="41"></text>
+              <text class="label-text label-rpm" x="50" y="62">33&#8531; RPM</text>
+              <text class="label-text label-rpm" x="50" y="66.6">STEREO</text>
+              <circle class="label-hole" cx="50" cy="50" r="3.6" />
+            </svg>
+            <div class="art-sheen"></div>
+          </div>
+          <div class="spindle" aria-hidden="true"></div>
+          <div class="tonearm-mount" aria-hidden="true">
+            <div class="tonearm" id="tonearm">
+              <div class="tonearm-cw"></div>
+              <div class="tonearm-arm"></div>
+              <div class="tonearm-pivot"></div>
+              <div class="tonearm-head"></div>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <aside
+        class="history-panel max-stack:order-2 max-stack:h-auto max-stack:w-[min(92vw,360px)]"
+        id="history-panel"
+        style="display:none"
+      >
+        <div class="history-head">Recently played</div>
+        <div class="history-list max-stack:flex-none" id="history-list"></div>
+      </aside>
+    </div>
+
+    <div class="max-w-[min(92vw,400px)] text-center max-stack:order-1">
+      <div class="div-playing-title"></div>
+      <div class="div-playing-artist"></div>
+      <div
+        class="live-row mt-[18px] flex items-center justify-center gap-2 text-[13px] text-muted"
+      >
+        <span class="live-dot"></span>
+        <span><span id="listener-count">0</span> listening now</span>
+      </div>
+    </div>
+  </div>
+</main>

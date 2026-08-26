@@ -1,0 +1,51 @@
+---
+import { btnGhost, btnAccent, modalActions, turnstileWrap } from "../lib/ui";
+---
+
+{/* Step two of a request: preview the picked track, pass Turnstile, confirm. */}
+<div
+  id="songConfirmModal"
+  class="modal-overlay"
+  style="z-index:52"
+  onclick="closeModalsFromOverlay(event)"
+>
+  <div
+    class="modal-card narrow text-center"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Confirm song request"
+    onclick="event.stopPropagation()"
+  >
+    <div class="px-7 pt-7 pb-2 text-center">
+      <img
+        id="confirm-song-image"
+        src=""
+        alt="Album Cover"
+        class="mx-auto block size-[150px] rounded-[20px] object-cover shadow-[0_20px_50px_-16px_rgba(0,0,0,0.6)]"
+      />
+      <div
+        id="confirm-song-title"
+        class="mt-[22px] text-xl font-bold tracking-[-0.02em]"
+      >
+      </div>
+      <div id="confirm-song-artist" class="mt-[5px] text-[15px] text-muted"></div>
+      <div class="mt-4 flex justify-center">
+        <iframe
+          id="spotify-preview"
+          title="Song preview"
+          src="about:blank"
+          height="80"
+          allow="encrypted-media"
+          class="w-full max-w-[320px] rounded-xl border-none bg-transparent"></iframe>
+      </div>
+      <div class={turnstileWrap}>
+        <div id="turnstile-request"></div>
+      </div>
+      <div class="mt-[18px] text-sm text-muted">Add this to the queue?</div>
+    </div>
+    <div class={modalActions}>
+      <button class={btnGhost} onclick="backToRequest()">Back</button>
+      <button id="confirmRequestBtn" class={btnAccent} disabled>Request</button>
+    </div>
+  </div>
+</div>

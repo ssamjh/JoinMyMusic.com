@@ -15,19 +15,19 @@ let selectedSongData = null;
 let hlsFailed = false;
 let hlsInstance = null;
 
-// Display-only mode: index.html?display — strip controls/footer, force dark
+// Display-only mode: /?display — strip controls/footer, force dark
 // theme + effects on, and autoplay. Used for unattended screens/kiosks.
 const DISPLAY_MODE = /[?&]display\b/i.test(location.search);
 if (DISPLAY_MODE) document.body.classList.add("display-mode");
 
-// index.html?display&noaudio — visuals only, the <audio> element never plays
+// /?display&noaudio — visuals only, the <audio> element never plays
 // (e.g. a screen showing now-playing while the room's actual audio comes from
 // elsewhere). With no local audio to stay in sync with, this also switches the
 // metadata feed to the realtime SSE stream (see connectSSE) so the display
 // isn't held back by the normal stream's audio-sync delay.
 const DISPLAY_NO_AUDIO = DISPLAY_MODE && /[?&]noaudio\b/i.test(location.search);
 
-// index.html?display&volume=60 — output level for unattended screens, 0–100.
+// /?display&volume=60 — output level for unattended screens, 0–100.
 // The dock (and with it the volume slider) is hidden in display mode, so there
 // is no way to set the level from the screen itself — this is the knob. Unlike
 // the slider this is a direct output gain with no ceiling applied, since a kiosk
@@ -41,7 +41,7 @@ const DISPLAY_VOLUME = (function () {
   return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100;
 })();
 
-// index.html?zoom=1.2 — scale the whole page up (CSS zoom, not a transform) so
+// /?zoom=1.2 — scale the whole page up (CSS zoom, not a transform) so
 // it fills more of the screen on displays with a lot of unused border. Zoom
 // re-flows layout at the new scale rather than stretching a fixed-size render,
 // so nothing clips or gets a scrollbar. Silently ignored where unsupported.
