@@ -6,6 +6,7 @@ from typing import Optional
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from spotipy.exceptions import SpotifyException
+from spotipy.oauth2 import SpotifyOauthError
 import requests as req_lib
 
 import os
@@ -75,6 +76,13 @@ class SpotifyClient:
     async def get_current_playback(self) -> dict:
         try:
             playback = await asyncio.to_thread(self.sp.current_playback)
+        except SpotifyOauthError as e:
+            # Cached refresh token is dead (revoked, credentials rotated, app
+            # access removed). Nothing recovers this but re-running /api/setup --
+            # degrade to "nothing playing" rather than tearing down every SSE
+            # stream with a 500.
+            logger.error(f"Spotify auth failed, re-authenticate at /api/setup: {e}")
+            return _EMPTY_METADATA
         except (SpotifyException, req_lib.exceptions.Timeout, req_lib.exceptions.ConnectionError) as e:
             logger.error(f"Error getting playback: {e}")
             return _EMPTY_METADATA
@@ -131,6 +139,8 @@ class SpotifyClient:
     async def add_to_queue(self, track_id: str) -> None:
         try:
             playback = await asyncio.to_thread(self.sp.current_playback)
+        except SpotifyOauthError as e:
+            raise ValueError(f"Spotify authentication expired: {e}")
         except (SpotifyException, req_lib.exceptions.Timeout) as e:
             raise ValueError(f"Failed to get playback state: {e}")
 
