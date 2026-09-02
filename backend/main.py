@@ -81,8 +81,29 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # api.joinmymusic.com, so every browser call is cross-origin. No credentials:
 # the admin pages are served from this origin and keep using their cookie,
 # while the public frontend authenticates with nothing at all.
+
+
+class CoverExemptCORSMiddleware(CORSMiddleware):
+    """CORS for the API, but hands-off for /api/cover.
+
+    Cover responses are cached for a year, and the same URL is loaded both as a
+    plain <img> (no Origin header, so this middleware would add no CORS headers
+    at all) and with crossorigin="anonymous" for canvas colour extraction. If
+    the middleware reflected the origin, the two would be different cache
+    variants of an immutable resource and whichever landed in the browser/edge
+    cache first would win — intermittently breaking the CORS one. The route
+    instead answers with a constant `Access-Control-Allow-Origin: *`, which is
+    correct for every caller and leaves exactly one variant to cache.
+    """
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/api/cover/"):
+            return await self.app(scope, receive, send)
+        await super().__call__(scope, receive, send)
+
+
 app.add_middleware(
-    CORSMiddleware,
+    CoverExemptCORSMiddleware,
     allow_origins=[o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()],
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
@@ -475,7 +496,11 @@ async def cover(image_id: str):
     return Response(
         content=resp.content,
         media_type=resp.headers.get("content-type", "image/jpeg"),
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            # Constant, origin-independent: see CoverExemptCORSMiddleware.
+            "Access-Control-Allow-Origin": "*",
+        },
     )
 
 # ─── Spotify OAuth ───────────────────────────────────────────────────────────
