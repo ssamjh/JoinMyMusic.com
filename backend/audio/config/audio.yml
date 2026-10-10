@@ -2,7 +2,7 @@
 # with the VBAN input and reaches the AGC (-40 to 12; default -12). Lower it to leave
 # more room for the VBAN input; the AGC levels the result either way.
 spotify:
-  trim_db: -2
+  trim_db: 3
 
 # Optional VBAN output. Set enabled: true and replace ip_address with the
 # receiver's IPv4 address to send the processed radio stream over UDP.
@@ -24,8 +24,8 @@ vban:
 vban_receiver:
   enabled: false
   quality: medium
-  trim_db: -1
-  duck_db: -10
+  trim_db: 4
+  duck_db: -14
   sender_ip: 192.168.1.50
   port: 6980
   stream_name: Stream1
