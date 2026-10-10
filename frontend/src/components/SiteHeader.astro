@@ -11,6 +11,13 @@ import Icon from "./Icon.astro";
   </div>
   {/* .header-actions is the hook body.display-mode uses to strip the controls. */}
   <div class="header-actions flex items-center gap-2.5">
+    {/* The only listener count on the page; app.js updates every .listener-count. */}
+    <div
+      class="header-listeners flex h-10 items-center gap-2 rounded-full border border-line bg-elev px-3.5 text-[13px] text-muted"
+    >
+      <span class="live-dot"></span>
+      <span><span class="listener-count inline-block min-w-[2ch] text-center tabular-nums">0</span> listening</span>
+    </div>
     <button
       id="bgToggleBtn"
       class="icon-btn"
@@ -18,12 +25,7 @@ import Icon from "./Icon.astro";
       aria-label="Toggle background effects"
       onclick="toggleBgAnimation()"
     >
-      <Icon
-        name="sparkles"
-        size={18}
-        strokeWidth={1.7}
-        style="transform:translateX(-2px)"
-      />
+      <Icon name="waveform" size={18} strokeWidth={1.7} />
     </button>
     <button
       id="themeToggleBtn"

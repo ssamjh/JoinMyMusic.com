@@ -1,0 +1,105 @@
+/* Audio monitor styles. Every rule is scoped to .jmm-monitor so the monitor can sit
+   inside another page (the admin panel) without affecting it. */
+.jmm-monitor {
+  --bg: #0b0d10; --panel: #131720; --panel2: #181d27; --line: #262c38;
+  --text: #d9dfe8; --muted: #7f8a9b; --red: #ef4444; --amber: #f59e0b;
+  --ok: #22c55e; --err: #f87171;
+  --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  color-scheme: dark;
+}
+.jmm-monitor, .jmm-monitor * { box-sizing: border-box; }
+.jmm-monitor { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.jmm-monitor button, .jmm-monitor input, .jmm-monitor textarea { font: inherit; color: inherit; }
+.jmm-monitor:not(.embedded) button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.jmm-monitor:not(.embedded) button:hover:not(:disabled) { border-color: #3a4252; }
+.jmm-monitor:not(.embedded) button:disabled { opacity: .45; cursor: not-allowed; }
+.jmm-monitor button:focus-visible, .jmm-monitor input:focus-visible, .jmm-monitor textarea:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+.jmm-monitor button.danger { border-color: #7f1d1d; color: #fca5a5; }
+.jmm-monitor .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.jmm-monitor .muted { color: var(--muted); }
+.jmm-monitor .spacer { flex: 1; }
+.jmm-monitor header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.jmm-monitor h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+.jmm-monitor .sub { color: var(--muted); font-size: 12px; }
+.jmm-monitor .conn { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.jmm-monitor .dot { width: 10px; height: 10px; border-radius: 50%; background: #6b7280; }
+.jmm-monitor .conn[data-state=live] .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.jmm-monitor .conn[data-state=reconnecting] .dot, .jmm-monitor .conn[data-state=nodata] .dot { background: var(--amber); }
+.jmm-monitor .conn[data-state=offline] .dot { background: var(--red); }
+.jmm-monitor .bypass { min-width: 240px; padding: 10px 16px; font-weight: 600; font-size: 15px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-width: 2px; }
+.jmm-monitor .bypass .state { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #222836; color: var(--muted); }
+.jmm-monitor:not(.embedded) .bypass[aria-pressed=true] { background: #7f1d1d; border-color: var(--red); color: #fff; }
+.jmm-monitor:not(.embedded) .bypass[aria-pressed=true] .state { background: var(--red); color: #fff; }
+.jmm-monitor main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+.jmm-monitor .notice { display: none; padding: 10px 14px; border: 1px solid #78350f; background: #2a1d08; color: #fcd34d; border-radius: 6px; }
+.jmm-monitor .notice.show { display: block; }
+.jmm-monitor .channel, .jmm-monitor .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.jmm-monitor .channel h2, .jmm-monitor .panel h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.jmm-monitor .channel h2 span { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
+.jmm-monitor .wave-row { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 12px; }
+.jmm-monitor .wave { border-radius: 6px; background: #0a0c10; border: 1px solid var(--line); transition: background .3s; overflow: hidden; }
+.jmm-monitor .wave.bypassed { background: #1c1408; border-color: #5b3b0c; }
+.jmm-monitor .wave canvas { display: block; width: 100%; height: 170px; }
+.jmm-monitor .meters { display: grid; gap: 10px; align-content: start; }
+.jmm-monitor .m { display: grid; grid-template-columns: 14px 1fr 74px; align-items: center; gap: 8px; }
+.jmm-monitor .lbl { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+.jmm-monitor .track { position: relative; height: 14px; background: #0a0c10; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.jmm-monitor .track > div { position: absolute; top: 0; bottom: 0; left: 0; width: 0; }
+.jmm-monitor .track .pk { background: var(--c); opacity: .3; }
+.jmm-monitor .track .rms { background: var(--c); opacity: .95; }
+.jmm-monitor .track .hold { width: 2px; background: #f8fafc; }
+.jmm-monitor .rd { display: flex; flex-direction: column; font-family: var(--mono); font-size: 11px; line-height: 1.25; text-align: right; font-variant-numeric: tabular-nums; }
+.jmm-monitor .rd .pv { color: var(--muted); }
+.jmm-monitor .scale { position: relative; height: 14px; margin-left: 22px; font-size: 10px; color: var(--muted); font-family: var(--mono); }
+.jmm-monitor .scale span { position: absolute; transform: translateX(-50%); }
+.jmm-monitor .diffbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 4px 4px; color: var(--muted); font-size: 13px; }
+.jmm-monitor .diffbar b { color: var(--text); font-size: 16px; }
+.jmm-monitor .diffbar small { color: var(--muted); }
+.jmm-monitor .seg { display: inline-flex; margin-left: auto; }
+.jmm-monitor:not(.embedded) .seg button { border-radius: 0; padding: 4px 12px; font-size: 12px; }
+.jmm-monitor:not(.embedded) .seg button:first-child { border-radius: 6px 0 0 6px; }
+.jmm-monitor:not(.embedded) .seg button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+.jmm-monitor:not(.embedded) .seg button[aria-pressed=true] { background: #223047; border-color: #38bdf8; color: #fff; }
+.jmm-monitor .st { font-size: 11px; color: var(--muted); min-height: 1em; }
+.jmm-monitor .st.pending { color: var(--amber); }
+.jmm-monitor .st.ok { color: var(--ok); }
+.jmm-monitor .st.err { color: var(--err); }
+.jmm-monitor footer { max-width: 1200px; margin: 0 auto; padding: 4px 16px 24px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.jmm-monitor footer .note { color: var(--muted); font-size: 12px; margin-left: auto; }
+.jmm-monitor #jm-toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 20; max-width: min(340px, calc(100vw - 32px)); }
+.jmm-monitor .toast { background: #222836; border: 1px solid var(--line); border-left: 3px solid var(--amber); padding: 8px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+.jmm-monitor .toast.err { border-left-color: var(--err); }
+.jmm-monitor details.panel > summary { cursor: pointer; list-style: none; }
+.jmm-monitor details.panel > summary::-webkit-details-marker { display: none; }
+.jmm-monitor details.panel > summary h2 { display: inline-block; margin: 0; }
+.jmm-monitor details.panel > summary h2::before { content: "\25B8"; display: inline-block; width: 1.2em; }
+.jmm-monitor details.panel[open] > summary h2::before { content: "\25BE"; }
+.jmm-monitor details.panel[open] > summary { margin-bottom: 10px; }
+.jmm-monitor #jm-graphText { width: 100%; height: 420px; background: #0a0c10; border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: 12px/1.4 var(--mono); resize: vertical; white-space: pre; tab-size: 4; }
+.jmm-monitor .graphbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; font-size: 13px; }
+.jmm-monitor .graphbar .st-line { font-size: 12px; }
+.jmm-monitor .graphbar .st-line.err { color: var(--err); }
+@media (max-width: 720px) {
+  .jmm-monitor .wave-row { grid-template-columns: 1fr; }
+  .jmm-monitor .meters { grid-template-columns: 1fr; }
+  .jmm-monitor .bypass { min-width: 0; flex: 1; }
+  .jmm-monitor header { gap: 10px; }
+}
+
+/* Inside the admin panel: follow its Bootstrap theme. The admin section header names the
+   monitor, so its own title is hidden; buttons use Bootstrap's classes (set in monitor.js). */
+.jmm-monitor.embedded {
+  --bg: transparent; --panel: var(--bs-body-bg); --panel2: var(--bs-tertiary-bg);
+  --line: var(--bs-border-color); --text: var(--bs-body-color); --muted: var(--bs-secondary-color);
+  font: inherit;
+}
+.jmm-monitor.embedded header { background: none; border: 0; padding: 0 0 4px; }
+.jmm-monitor.embedded header > div:first-child { display: none; }
+.jmm-monitor.embedded main { max-width: none; padding: 8px 0 0; gap: 10px; }
+.jmm-monitor.embedded .channel, .jmm-monitor.embedded .panel { border-radius: var(--bs-border-radius); padding: 0.6rem 0.75rem; }
+.jmm-monitor.embedded .channel h2, .jmm-monitor.embedded .panel h2 { font-size: 0.8rem; color: var(--bs-secondary-color); }
+.jmm-monitor.embedded .bypass { font-size: 0.9rem; padding: 6px 12px; min-width: 200px; border-width: 1px; }
+.jmm-monitor.embedded .bypass .state { background: rgba(0,0,0,.25); color: inherit; }
+.jmm-monitor.embedded .seg button { border-radius: var(--bs-border-radius-sm); }
+.jmm-monitor.embedded #jm-graphText { background: var(--bs-tertiary-bg); font: 12px/1.4 var(--mono); }
+.jmm-monitor.embedded footer { max-width: none; padding: 4px 0 0; }

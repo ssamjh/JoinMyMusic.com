@@ -1,0 +1,49 @@
+# Five-band broadcast-style radio processing for FFmpeg 5.1. Read by scripts/run.py.
+# Comment lines start with '#'; run.py drops whole-line comments and blank lines before
+# passing the graph to FFmpeg, so comments must stay on their own lines.
+#
+# Contract: the graph reads the Liquidsoap PCM as [0:a:0] (44.1 kHz stereo s16)
+# and must end with the label [proc]. It runs in the processor, an FFmpeg process that
+# writes float frames. The encoder then applies RADIO_FILTER (optional), the 0.95 safety
+# limiter, the AAC split and VBAN if enabled.
+# Changes to this file apply live: the processor is replaced without restarting the stream.
+# Filters named name@label appear in the control UI, where their values can be changed live.
+# volume=12dB (link headroom), acrossover and amix stay unnamed.
+#
+# Crossovers: 100 / 400 / 1600 / 6000 Hz, 4th-order Linkwitz-Riley (five bands).
+# The values below were tuned by ear and by measurement.
+
+# Undo the -12 dB headroom that Liquidsoap applies upstream, in floating point first.
+# Noise gate: expands (4:1) signal below about -50 dBFS, by up to 24 dB, with a 10 ms
+# attack and 250 ms release.
+[0:a:0]volume=12dB,
+agate@gate=threshold=0.00316:ratio=4:range=0.063:attack=10:release=250,
+# The slow gated input AGC runs before this graph, in config/processing.liq.
+# Wideband compressor: threshold -10 dBFS, 4:1, 50 ms attack, 435 ms release, 2.5 dB knee.
+acompressor@wide=threshold=0.316:ratio=4:attack=50:release=435:knee=2.5:makeup=1,
+# Two peaking EQ bands (Q 1): +4.2 dB at 26 Hz and +3.8 dB at 10.7 kHz.
+equalizer@sub=f=26:t=q:w=1:g=4.2,
+equalizer@air=f=10700:t=q:w=1:g=3.8,
+# High shelf: -1.9 dB from 3 kHz up.
+treble@shelf=g=-1.9:f=3000,
+# Five-band split, fourth-order Linkwitz-Riley.
+acrossover=split=100|400|1600|6000:order=4th[b0][b1][b2][b3][b4];
+
+# Per-band compression: 4.75:1 with a 4 dB knee, attacks of 39-51 ms, releases of 375-425 ms.
+# Each band has a fast limiter (5 ms attack, 50 ms release) at about -14 to -15 dBFS.
+# Band 0 also gets a soft clipper (about -7.5 dB threshold, 4x oversampling) for bass.
+# Band gains: +6.8, +1.6, -1.3, -0.1 and 0 dB.
+[b0]acompressor@band0=threshold=0.1738:ratio=4.75:attack=39:release=375:knee=4,asoftclip@band0clip=threshold=0.42:oversample=4,alimiter@band0lim=limit=0.2046:attack=5:release=50:level=false,volume@band0gain=6.8dB[c0];
+[b1]acompressor@band1=threshold=0.1318:ratio=4.75:attack=44:release=425:knee=4,alimiter@band1lim=limit=0.1862:attack=5:release=50:level=false,volume@band1gain=1.6dB[c1];
+[b2]acompressor@band2=threshold=0.1:ratio=4.75:attack=48:release=425:knee=4,alimiter@band2lim=limit=0.1905:attack=5:release=50:level=false,volume@band2gain=-1.3dB[c2];
+[b3]acompressor@band3=threshold=0.1202:ratio=4.75:attack=48:release=425:knee=4,alimiter@band3lim=limit=0.1950:attack=5:release=50:level=false,volume@band3gain=-0.1dB[c3];
+[b4]acompressor@band4=threshold=0.1202:ratio=4.75:attack=51:release=410:knee=4,alimiter@band4lim=limit=0.1738:attack=5:release=50:level=false[c4];
+
+# Sum the five bands at unity gain.
+[c0][c1][c2][c3][c4]amix=inputs=5:normalize=0:duration=longest,
+
+# Output makeup gain (+11 dB, sets loudness), soft clipper, then the final peak limiter
+# (-0.45 dBFS ceiling, matching the safety limiter; 1 ms attack, 60 ms release). The limiter works on sample
+# peaks, so true peaks can sit slightly above its ceiling.
+volume@makeup=11dB,asoftclip@clip=threshold=0.95:oversample=4,
+alimiter@final=limit=0.95:attack=1:release=60:level=false[proc]

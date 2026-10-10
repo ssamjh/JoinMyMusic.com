@@ -1,0 +1,38 @@
+# go-librespot v0.10.2: Spotify Connect player with raw PCM output to the
+# container supervisor. The supervisor must create this FIFO before playback.
+log_level: info
+device_name: JMM Audio
+device_type: speaker
+
+audio_backend: pipe
+audio_output_pipe: /run/audio/spotify.pcm
+audio_output_pipe_format: s16le
+audio_output_pipe_wait_for_reader: true
+zeroconf_enabled: false
+
+# Pair once at the Spotify URL/code reported by the logs.
+# Credentials persist in the spotify-state volume for subsequent starts.
+credentials:
+  type: device_auth
+
+# REST API. Binds all interfaces inside the container; docker-compose.yml publishes it
+# on the host's loopback only (127.0.0.1:3678). It has no authentication.
+server:
+  enabled: true
+  address: 0.0.0.0
+  port: 3678
+  allow_origin: ''
+
+bitrate: 320
+volume_steps: 100
+initial_volume: 100
+
+# Smooth transitions and Spotify's recommended tracks after the context ends.
+crossfade_duration: 5000
+disable_autoplay: false
+
+# Cache metadata around the current playback position so /status includes next_track.
+# Keep context_sweep off; the API only displays the one upcoming track.
+metadata:
+  enabled: true
+  context_sweep: false

@@ -8,6 +8,8 @@ interface Props {
 
 const { title, description } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
+const ogImage = new URL("/og.png", Astro.site).href;
+const ogImageAlt = "A vinyl record beside the ssamjh's Music Sync name";
 ---
 
 <!doctype html>
@@ -24,8 +26,27 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonical} />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:site_name" content={title} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={ogImageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content={ogImageAlt} />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#edecee"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#070708"
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body class="theme-dark">
     <slot />
@@ -33,6 +54,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
     <noscript>
       <img
         src="https://stats.sjh.at/ingress/f843459e-231c-4d54-902d-5618ed0cb73d/pixel.gif"
+        alt=""
       />
     </noscript>
     <script

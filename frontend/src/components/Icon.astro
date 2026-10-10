@@ -1,14 +1,13 @@
 ---
 /**
  * The inline SVG icon set, kept in one place so the markup stays readable.
- * Every path is the same geometry the hand-written index.html shipped, so the
- * rendered icons are pixel-identical.
+ * Every icon is drawn on a 24×24 viewBox.
  *
  * `stroke` icons inherit `currentColor` unless a caller overrides it; `fill`
  * icons (play/stop/github) declare their own paint.
  */
 export type IconName =
-  | "sparkles"
+  | "waveform"
   | "sun"
   | "moon"
   | "search"
@@ -65,14 +64,7 @@ const strokeAttrs = isFilled
   style={style}
   {...strokeAttrs}
 >
-  {
-    name === "sparkles" && (
-      <>
-        <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-        <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z" />
-      </>
-    )
-  }
+  {name === "waveform" && <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3" />}
   {
     name === "sun" && (
       <>

@@ -8,5 +8,18 @@ export default defineConfig({
   site: 'https://joinmymusic.com',
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      // Keep browser requests same-origin during local development. This lets
+      // localhost reach the live API without changing its production CORS rules.
+      proxy: {
+        '/api': {
+          target: 'https://api.joinmymusic.com',
+          changeOrigin: true,
+          // SSE responses stay open for the lifetime of the EventSource.
+          timeout: 0,
+          proxyTimeout: 0,
+        },
+      },
+    },
   },
 });

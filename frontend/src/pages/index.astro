@@ -47,6 +47,9 @@ const description =
     a deferred ES module — the Turnstile API script below is async and calls
     onTurnstileLoad as soon as it is ready, so app.js has to have run first.
   */}
+  {import.meta.env.DEV && (
+    <script is:inline>window.__JMM_API_BASE__ = "";</script>
+  )}
   <script is:inline src="/js/app.js"></script>
   <script
     is:inline

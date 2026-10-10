@@ -1,14 +1,22 @@
+# Two separate containers in one stack. Run from backend/:
+#   docker compose up -d --build          # both
+#   docker compose up -d --build api      # just one
 services:
-  backend:
-    build: .
+  api:
+    build: ./api
     ports:
-      - "8080:8080"
+      - "8080:8080"  # container listens on PORT below
+    depends_on:
+      - audio
     volumes:
       - ./data:/data  # SQLite DB + Spotify token cache
     environment:
       SPOTIFY_CLIENT_ID: ""
       SPOTIFY_CLIENT_SECRET: ""
-      SPOTIFY_DEVICE_NAME: ""
+      # Playback control and now-playing come from the audio container's go-librespot API.
+      LIBRESPOT_API_URL: "http://audio:3678"
+      # The audio container's control API, shown in the admin panel's Audio section.
+      AUDIO_CONTROL_URL: "http://audio:8090"
       SPOTIFY_REDIRECT_URI: "https://api.joinmymusic.com/api/callback"
       ALLOWED_ORIGINS: "https://joinmymusic.com,https://www.joinmymusic.com"
       API_BASE_URL: "https://api.joinmymusic.com"
@@ -23,3 +31,42 @@ services:
     stop_grace_period: 5s
     stop_signal: SIGTERM
     restart: unless-stopped
+
+  audio:
+    build: ./audio
+    restart: unless-stopped
+    init: true
+    ports:
+      # go-librespot control API, unauthenticated: publish on the host's loopback only.
+      - "127.0.0.1:3678:3678"
+      # VBAN input (only used when vban_receiver is enabled); must match its port in audio/config/audio.yml.
+      - "6980:6980/udp"
+    environment:
+      # Destination servers must already exist. RTMP is audio-only AAC in FLV.
+      RTMP_URL: ""  # rtmp://your-rtmp-server/live/your-stream-key
+      # Percent-encode reserved characters in the Icecast password.
+      ICECAST_URL: ""  # icecast://source:your-password@your-icecast-server:8000/spotify.aac
+      # Both outputs are stereo AAC at this bitrate.
+      STREAM_BITRATE: "256k"
+      # Optional extra FFmpeg filter chain after the radio processing, before the safety limiter.
+      RADIO_FILTER: ""
+      FFMPEG_LOGLEVEL: "warning"
+      # Port of the control API (meters, bypass, processing graph) on the Compose network only;
+      # the api service's admin panel uses it. Not published. 0 disables it.
+      CONTROL_PORT: "8090"
+    volumes:
+      - spotify-state:/var/lib/go-librespot
+      # The directory, not single files: editors replace a file on save, and a single-file
+      # bind mount keeps the old inode. processing.ffmpeg is watched and applied live.
+      - ./audio/config:/etc/jmm:ro
+    tmpfs:
+      - /run/audio:size=1m,mode=1777
+    stop_grace_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+volumes:
+  spotify-state:  # Spotify login; `docker compose down -v` erases it

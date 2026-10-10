@@ -4,31 +4,39 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from pathlib import Path
+from typing import Literal, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 import os
 
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
+# The audio container's control page (meters, bypass, processing graph), reached over the
+# Compose network and served to admins under /api/admin/audio/.
+AUDIO_CONTROL_URL = os.environ.get("AUDIO_CONTROL_URL", "http://audio:8090").rstrip("/")
 # Comma-separated list of frontend origins allowed to call this API.
 ALLOWED_ORIGINS = os.environ.get(
     "ALLOWED_ORIGINS", "https://joinmymusic.com,https://www.joinmymusic.com"
 )
+from librespot import LibrespotClient
 from spotify import COVER_ID_RE, SpotifyClient
 from sse import (
     broadcast_both,
     broadcaster,
     cleanup_listeners,
     cleanup_old_requests,
+    live_input_state,
     live_metadata_for_clients,
-    metadata_for_clients,
+    committed_metadata_for_clients,
+    poll_live_input,
     poll_spotify,
     realtime_broadcaster,
+    refresh_queue_now,
     refresh_token_loop,
 )
 from storage import (
@@ -44,20 +52,25 @@ from storage import (
     normalize_songid,
     listeners,
     submission_ids,
+    upcoming_queue,
     vote_skips,
 )
 
 logging.basicConfig(level=logging.INFO)
+# httpx logs every request at INFO; the playback poll makes one each second.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 spotify_client = SpotifyClient()
+librespot = LibrespotClient(spotify_client)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     tasks = [
-        asyncio.create_task(poll_spotify(spotify_client, listeners, vote_skips)),
+        asyncio.create_task(poll_spotify(librespot, listeners, vote_skips)),
+        asyncio.create_task(poll_live_input()),
         asyncio.create_task(cleanup_listeners(listeners)),
         asyncio.create_task(refresh_token_loop(spotify_client)),
         asyncio.create_task(cleanup_old_requests()),
@@ -160,10 +173,11 @@ async def sse_events(request: Request):
         queue = broadcaster.subscribe()
         try:
             # Send current state immediately on connect
-            metadata = await spotify_client.get_current_playback()
-            yield f"event: metadata\ndata: {json.dumps(metadata_for_clients(metadata.get('current', {})))}\n\n"
+            yield f"event: metadata\ndata: {json.dumps(committed_metadata_for_clients())}\n\n"
             yield f"event: listeners\ndata: {json.dumps({'count': active_listener_count()})}\n\n"
             yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
+            yield f"event: queue\ndata: {json.dumps({'queue': upcoming_queue})}\n\n"
+            yield f"event: source\ndata: {json.dumps({'live': live_input_state['live']})}\n\n"
 
             while True:
                 try:
@@ -192,16 +206,19 @@ async def sse_events(request: Request):
 # Spotify reports a change rather than delayed to line up with the audio
 # stream. Filter which categories to receive with query flags, e.g.
 # /api/events-realtime?music=1 for only now-playing/history updates.
-# Recognized flags: music (metadata, history), listeners, skipvotes, control
+# Recognized flags: music (metadata, history, queue, source), listeners, skipvotes, control
 # (stop, announce). Omit all flags to receive every category.
 
 _REALTIME_EVENT_CATEGORY = {
     "metadata": "music",
     "history": "music",
+    "queue": "music",
+    "source": "music",
     "listeners": "listeners",
     "skipvotes": "skipvotes",
     "stop": "control",
     "announce": "control",
+    "preferences": "control",
 }
 _REALTIME_CATEGORIES = ("music", "listeners", "skipvotes", "control")
 
@@ -222,10 +239,12 @@ async def sse_events_realtime(request: Request):
     async def event_generator():
         queue = realtime_broadcaster.subscribe()
         try:
-            metadata = await spotify_client.get_current_playback()
+            metadata = await librespot.get_current_playback()
             if "music" in allowed:
                 yield f"event: metadata\ndata: {json.dumps(live_metadata_for_clients(metadata.get('current', {})))}\n\n"
                 yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
+                yield f"event: queue\ndata: {json.dumps({'queue': upcoming_queue})}\n\n"
+                yield f"event: source\ndata: {json.dumps({'live': live_input_state['realtime']})}\n\n"
             if "listeners" in allowed:
                 yield f"event: listeners\ndata: {json.dumps({'count': active_listener_count()})}\n\n"
 
@@ -257,13 +276,17 @@ async def sse_events_realtime(request: Request):
 
 @app.get("/api/metadata")
 async def get_metadata():
-    metadata = await spotify_client.get_current_playback()
-    return {"current": metadata_for_clients(metadata.get("current", {}))}
+    return {"current": committed_metadata_for_clients()}
 
 
 @app.get("/api/history")
 async def get_play_history():
     return {"history": get_history()}
+
+
+@app.get("/api/queue")
+async def get_upcoming_queue():
+    return {"queue": list(upcoming_queue)}
 
 # ─── Auth status ─────────────────────────────────────────────────────────────
 
@@ -291,6 +314,8 @@ class ListenerPayload(BaseModel):
     name: Optional[str] = None
     volume: Optional[int] = None  # 0–100
     display: bool = False         # display/kiosk screen — not a person in the room
+    theme: Optional[Literal["light", "dark"]] = None
+    effects: Optional[bool] = None
 
 
 @app.post("/api/listener", status_code=204)
@@ -306,6 +331,8 @@ async def register_listener(payload: ListenerPayload, request: Request):
         "volume": volume,
         "uuid": payload.uuid,
         "display": payload.display,
+        "theme": payload.theme,
+        "effects": payload.effects,
     }
 
 
@@ -383,7 +410,8 @@ async def add_request(payload: RequestPayload, request: Request):
         auto_approve = row["value"] == "true" if row else False
 
         if auto_approve:
-            await spotify_client.add_to_queue(payload.uri)
+            await librespot.add_to_queue(payload.uri)
+            await refresh_queue_now(librespot)
             status = "approved"
             message = "Your request has been automatically approved and added to the queue!"
         else:
@@ -435,8 +463,8 @@ async def vote_skip(payload: SkipPayload, request: Request):
     if not check_rate_limit("vote", ip, 5, 60):
         raise HTTPException(status_code=429, detail="Too many vote attempts. Please wait before trying again.")
 
-    metadata = await spotify_client.get_current_playback()
-    current_song_id = metadata.get("current", {}).get("songid", "")
+    metadata = await librespot.get_current_playback()
+    current_song_id =metadata.get("current", {}).get("songid", "")
     if payload.songid != current_song_id:
         raise HTTPException(status_code=400, detail="Voted song does not match currently playing song")
 
@@ -455,7 +483,7 @@ async def vote_skip(payload: SkipPayload, request: Request):
 
     if count >= needed:
         try:
-            await spotify_client.skip()
+            await librespot.skip()
             vote_skips.pop(song_id, None)
             await broadcast_both("skipvotes", {"song": song_id, "count": 0, "needed": needed})
             return {"success": True, "message": "Song skipped successfully"}
@@ -468,9 +496,9 @@ async def vote_skip(payload: SkipPayload, request: Request):
 
 @app.get("/api/skip/stats")
 async def skip_stats():
-    metadata = await spotify_client.get_current_playback()
+    metadata = await librespot.get_current_playback()
     song_id = metadata.get("current", {}).get("songid", "")
-    count = len(vote_skips.get(song_id, set()))
+    count =len(vote_skips.get(song_id, set()))
     total_listeners = active_listener_count()
     needed = max(2, -(-total_listeners // 2))
     return {"song": song_id, "count": count, "needed": needed}
@@ -544,6 +572,8 @@ ADMIN_HTML = """<!DOCTYPE html>
         .track-title { font-weight: 600; margin-bottom: 0.1rem; }
         .track-meta { color: var(--bs-secondary-color); margin-bottom: 0.1rem; }
         .listener-name { font-weight: 600; }
+        .private-ip { display: inline-block; filter: blur(5px); }
+        .private-ip:hover, .private-ip:focus { filter: none; }
         .volume-bar { height: 6px; border-radius: 3px; background: var(--bs-border-color); overflow: hidden; }
         .volume-fill { height: 100%; background: #0d6efd; border-radius: 3px; transition: width 0.3s; }
         .section-header { font-size: 1rem; font-weight: 600; text-transform: uppercase;
@@ -566,6 +596,15 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Audio monitor: collapsed by default; it loads and streams meters only while shown. -->
+    <div class="section-header d-flex align-items-center justify-content-between mt-0">
+        <span>Audio</span>
+        <button id="audioToggle" type="button" class="btn btn-outline-secondary btn-sm"
+                style="text-transform:none;letter-spacing:normal"
+                aria-expanded="false" aria-controls="audioMonitor">Show</button>
+    </div>
+    <div id="audioMonitor" data-jmm-monitor data-embedded data-base="/api/admin/audio/" hidden></div>
+
     <div class="row g-3">
         <!-- Requests column -->
         <div class="col-lg-8">
@@ -582,12 +621,45 @@ ADMIN_HTML = """<!DOCTYPE html>
             <div id="listener-list"></div>
         </div>
     </div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 <script>
     const authKey = new URLSearchParams(window.location.search).get('key') || '';
     let requestsById = {};
+
+    // Audio monitor (meters, bypasses, processing graph) from the audio container, through
+    // the admin proxy. Nothing is fetched until it is first shown, and hiding it stops the
+    // meter stream and polling. Its calls carry the admin key like the rest of this page.
+    (() => {
+        const box = document.getElementById('audioMonitor');
+        const toggle = document.getElementById('audioToggle');
+        let requested = false;
+        toggle.addEventListener('click', () => {
+            const show = box.hidden;
+            box.hidden = !show;
+            toggle.textContent = show ? 'Hide' : 'Show';
+            toggle.setAttribute('aria-expanded', String(show));
+            if (box.jmmMonitor) {
+                if (show) box.jmmMonitor.start(); else box.jmmMonitor.stop();
+                return;
+            }
+            if (!show || requested) return;
+            requested = true;
+            const q = authKey ? '?key=' + encodeURIComponent(authKey) : '';
+            box.dataset.key = authKey;
+            const css = document.createElement('link');
+            css.rel = 'stylesheet';
+            css.href = '/api/admin/audio/monitor.css' + q;
+            document.head.append(css);
+            const js = document.createElement('script');
+            js.src = '/api/admin/audio/monitor.js' + q;
+            // Hidden again before the script arrived: start, then stop at once.
+            js.onload = () => { if (box.hidden && box.jmmMonitor) box.jmmMonitor.stop(); };
+            document.body.append(js);
+        });
+    })();
 
     function esc(s) {
         return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -607,7 +679,7 @@ ADMIN_HTML = """<!DOCTYPE html>
                         <div class="track-meta text-truncate">${esc(r.artist_name || '')}${r.album_name ? ' &mdash; ' + esc(r.album_name) : ''}</div>
                         <div class="track-meta">From <strong>${esc(r.requester_name || 'Anonymous')}</strong>
                             ${r.requester_banned ? '<span class="badge bg-danger">banned</span>' : ''}
-                            &middot; ${esc(r.requester_ip || '')} &middot; ${r.created_at}</div>
+                            &middot; <span class="private-ip" tabindex="0" aria-label="IP address; hover or focus to reveal">${esc(r.requester_ip || '')}</span> &middot; ${r.created_at}</div>
                     </div>
                     <div class="d-flex flex-column gap-1">
                         ${pending ? `
@@ -654,7 +726,12 @@ ADMIN_HTML = """<!DOCTYPE html>
                                     onclick="banUser('${esc(l.ip || '')}', '${esc(l.uuid || '')}')">Ban</button>
                         </div>
                     </div>
-                    <div class="track-meta">${esc(l.ip)} &middot; ${new Date(l.last_seen * 1000).toLocaleTimeString()}</div>
+                    <div class="track-meta"><span class="private-ip" tabindex="0" aria-label="IP address; hover or focus to reveal">${esc(l.ip)}</span> &middot; ${new Date(l.last_seen * 1000).toLocaleTimeString()}</div>
+                    <div class="track-meta">${l.theme === 'light' ? 'Light' : l.theme === 'dark' ? 'Dark' : 'Unknown'} theme &middot; ${l.effects === true ? 'FX on' : l.effects === false ? 'FX off' : 'FX unknown'}</div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="setListenerPreference('${esc(l.uuid)}', 'theme', '${l.theme === 'light' ? 'dark' : 'light'}')">${l.theme === 'light' ? 'Use dark' : 'Use light'}</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="setListenerPreference('${esc(l.uuid)}', 'effects', ${l.effects !== true})">${l.effects === true ? 'Turn FX off' : 'Turn FX on'}</button>
+                    </div>
                     <div class="track-meta text-truncate" style="max-width:100%">${esc(l.user_agent)}</div>
                     ${volHtml}
                 </div>
@@ -755,6 +832,19 @@ ADMIN_HTML = """<!DOCTYPE html>
         loadData();
     }
 
+    async function setListenerPreference(uuid, field, value) {
+        const res = await fetch('/api/admin/listener/preferences?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({uuid, [field]: value})
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.detail || 'Could not update listener preferences');
+        }
+        loadData();
+    }
+
     async function stopPlayback(uuid) {
         const who = uuid ? 'this listener' : 'ALL listeners';
         if (!confirm('Stop playback for ' + who + '?')) return;
@@ -805,6 +895,8 @@ BANS_HTML = """<!DOCTYPE html>
     <style>
         body { font-size: 0.9rem; }
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; word-break: break-all; }
+        .private-ip { display: inline-block; filter: blur(5px); }
+        .private-ip:hover, .private-ip:focus { filter: none; }
     </style>
 </head>
 <body>
@@ -879,7 +971,7 @@ BANS_HTML = """<!DOCTYPE html>
                 <thead><tr><th>IP</th><th>Listener ID</th><th>Reason</th><th>Expires</th><th>Banned at</th><th></th></tr></thead>
                 <tbody>${bans.map(b => `
                     <tr>
-                        <td class="mono">${esc(b.ip) || '<span class="text-secondary">&mdash;</span>'}</td>
+                        <td class="mono"><span class="private-ip" tabindex="0" aria-label="IP address; hover or focus to reveal">${esc(b.ip) || '&mdash;'}</span></td>
                         <td class="mono">${esc(b.uuid) || '<span class="text-secondary">&mdash;</span>'}</td>
                         <td>${esc(b.reason)}</td>
                         <td>${b.expires_at ? esc(b.expires_at) + ' UTC' : '<span class="badge bg-danger">permanent</span>'}</td>
@@ -952,6 +1044,75 @@ BANS_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+# The audio monitor drawn in the admin panel. Its script and styles live here; its data
+# comes from the audio container's control API, which is reachable only over the Compose
+# network. Only admins reach either, and only these control paths, by method.
+AUDIO_MONITOR_FILES = {
+    "monitor.js": ("audio-monitor.js", "text/javascript; charset=utf-8"),
+    "monitor.css": ("audio-monitor.css", "text/css; charset=utf-8"),
+}
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+AUDIO_CONTROL_ROUTES = {
+    "GET": {"api/state", "api/graph", "api/meters"},
+    "POST": {"api/bypass", "api/agc", "api/graph", "api/graph/reload"},
+}
+
+
+@app.get("/api/admin/audio/{name}")
+async def admin_audio_asset(name: str, _: None = Depends(require_admin)):
+    if name not in AUDIO_MONITOR_FILES:
+        raise HTTPException(status_code=404, detail="Not found")
+    filename, media_type = AUDIO_MONITOR_FILES[name]
+    return FileResponse(STATIC_DIR / filename, media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
+@app.api_route("/api/admin/audio/{path:path}", methods=["GET", "POST"])
+async def admin_audio_proxy(path: str, request: Request, _: None = Depends(require_admin)):
+    if path not in AUDIO_CONTROL_ROUTES.get(request.method, set()):
+        raise HTTPException(status_code=404, detail="Not found")
+    url = f"{AUDIO_CONTROL_URL}/{path}"
+    if path == "api/meters":
+        # Server-sent events: relay the stream as it arrives.
+        client = httpx.AsyncClient(timeout=httpx.Timeout(10, read=None))
+        try:
+            upstream = await client.send(client.build_request("GET", url), stream=True)
+        except httpx.HTTPError:
+            await client.aclose()
+            return JSONResponse({"error": "audio control is unreachable"}, status_code=502)
+
+        async def relay():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            relay(),
+            status_code=upstream.status_code,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+    headers = {}
+    body = None
+    if request.method == "POST":
+        body = await request.body()
+        headers["Content-Type"] = request.headers.get("content-type", "application/json")
+    try:
+        # Applying a graph waits for the new processor to warm up and take over.
+        async with httpx.AsyncClient(timeout=30) as client:
+            upstream = await client.request(request.method, url, content=body, headers=headers)
+    except httpx.HTTPError:
+        return JSONResponse({"error": "audio control is unreachable"}, status_code=502)
+    return Response(
+        upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/admin", response_class=HTMLResponse)
 async def admin_panel(request: Request):
     return admin_page_response(request, ADMIN_HTML)
@@ -982,7 +1143,8 @@ async def admin_approve_request(request_id: int, _: None = Depends(require_admin
         row = db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Request not found")
-        await spotify_client.add_to_queue(row["spotify_uri"])
+        await librespot.add_to_queue(row["spotify_uri"])
+        await refresh_queue_now(librespot)
         db.execute("UPDATE requests SET status='approved' WHERE id=?", (request_id,))
         db.commit()
         return {"success": True}
@@ -1053,6 +1215,30 @@ async def admin_set_auto_approve(payload: AutoApprovePayload, _: None = Depends(
 # Push commands to connected clients over SSE. Targeting is best-effort: SSE is
 # broadcast-to-all, so a uuid in the payload just tells non-matching clients to
 # ignore it. uuid of None/"" means everyone.
+
+class ListenerPreferencesPayload(BaseModel):
+    uuid: str
+    theme: Optional[Literal["light", "dark"]] = None
+    effects: Optional[bool] = None
+
+
+@app.post("/api/admin/listener/preferences")
+async def admin_set_listener_preferences(payload: ListenerPreferencesPayload, _: None = Depends(require_admin)):
+    if not UUID_RE.match(payload.uuid):
+        raise HTTPException(status_code=400, detail="Invalid UUID")
+    if payload.uuid not in listeners:
+        raise HTTPException(status_code=404, detail="Listener is no longer connected")
+    changes = {}
+    if payload.theme is not None:
+        changes["theme"] = payload.theme
+    if payload.effects is not None:
+        changes["effects"] = payload.effects
+    if not changes:
+        raise HTTPException(status_code=400, detail="Provide a theme or effects setting")
+    listeners[payload.uuid].update(changes)
+    await broadcast_both("preferences", {"uuid": payload.uuid, **changes})
+    return {"success": True}
+
 
 class StopPayload(BaseModel):
     uuid: Optional[str] = None

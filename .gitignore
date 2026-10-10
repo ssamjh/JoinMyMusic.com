@@ -1,4 +1,19 @@
-/backend/__pycache__
-frontend/node_modules
-frontend/dist
-frontend/.astro
+# Secrets and local environment files
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.astro/
+
+# API runtime data (SQLite DB + Spotify token cache)
+/backend/data/
+
+# Audio: deploy rollback copies, processing-lab outputs
+/backend/audio/.rollback/
+/backend/audio/.lab/
+/backend/audio/examples

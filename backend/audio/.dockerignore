@@ -1,0 +1,7 @@
+.git
+.rollback
+.env
+tests
+__pycache__
+*.pyc
+.lab

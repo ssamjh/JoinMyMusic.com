@@ -5,15 +5,11 @@ from typing import Optional
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-from spotipy.exceptions import SpotifyException
-from spotipy.oauth2 import SpotifyOauthError
-import requests as req_lib
 
 import os
 
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
-SPOTIFY_DEVICE_NAME = os.environ.get("SPOTIFY_DEVICE_NAME", "")
 SPOTIFY_REDIRECT_URI = os.environ.get("SPOTIFY_REDIRECT_URI", "http://localhost:8080/api/callback")
 TOKEN_CACHE_FILE = os.environ.get("TOKEN_CACHE_FILE", "/data/token_cache.json")
 # Public origin of this API. Cover art is rewritten to point here rather than
@@ -43,20 +39,14 @@ def cover_proxy_url(url: Optional[str]) -> Optional[str]:
 
 SCOPE = "user-read-playback-state app-remote-control user-modify-playback-state"
 
-_EMPTY_METADATA = {
-    "current": {
-        "artist": [],
-        "song": "",
-        "album": "",
-        "songid": "",
-        "albumid": "",
-        "cover": "",
-        "year": "",
-        "playing": False,
-        "duration_ms": 0,
-        "progress_ms": 0,
-    }
-}
+
+def album_cover_url(album: dict) -> Optional[str]:
+    """Prefer the 300px image; fall back to the first one, then nothing."""
+    images = album.get("images") or []
+    url = next((img["url"] for img in images if img.get("height") == 300), None)
+    if url is None and images:
+        url = images[0]["url"]
+    return cover_proxy_url(url) or ""
 
 
 class SpotifyClient:
@@ -72,53 +62,6 @@ class SpotifyClient:
             ),
             requests_timeout=5,
         )
-
-    async def get_current_playback(self) -> dict:
-        try:
-            playback = await asyncio.to_thread(self.sp.current_playback)
-        except SpotifyOauthError as e:
-            # Cached refresh token is dead (revoked, credentials rotated, app
-            # access removed). Nothing recovers this but re-running /api/setup --
-            # degrade to "nothing playing" rather than tearing down every SSE
-            # stream with a 500.
-            logger.error(f"Spotify auth failed, re-authenticate at /api/setup: {e}")
-            return _EMPTY_METADATA
-        except (SpotifyException, req_lib.exceptions.Timeout, req_lib.exceptions.ConnectionError) as e:
-            logger.error(f"Error getting playback: {e}")
-            return _EMPTY_METADATA
-
-        if not playback:
-            return _EMPTY_METADATA
-
-        if SPOTIFY_DEVICE_NAME and playback.get("device", {}).get("name") != SPOTIFY_DEVICE_NAME:
-            return _EMPTY_METADATA
-
-        try:
-            track = playback["item"]
-            album = track["album"]
-            artists = [{"name": a["name"], "id": a["id"]} for a in track["artists"]]
-            cover = cover_proxy_url(next(
-                (img["url"] for img in album["images"] if img.get("height") == 300),
-                album["images"][0]["url"] if album["images"] else "",
-            ))
-            return {
-                "current": {
-                    "artist": artists,
-                    "song": track["name"],
-                    "album": album["name"],
-                    "songid": track["id"],
-                    "albumid": album["id"],
-                    "cover": cover,
-                    # release_date is YYYY, YYYY-MM or YYYY-MM-DD depending on precision
-                    "year": (album.get("release_date") or "")[:4],
-                    "playing": playback["is_playing"],
-                    "duration_ms": track.get("duration_ms", 0),
-                    "progress_ms": playback.get("progress_ms", 0),
-                }
-            }
-        except (KeyError, TypeError, AttributeError) as e:
-            logger.error(f"Error parsing playback data: {e}")
-            return _EMPTY_METADATA
 
     async def search(self, query: str) -> list:
         results = await asyncio.to_thread(self.sp.search, q=query, type="track", limit=10)
@@ -136,39 +79,17 @@ class SpotifyClient:
             for t in tracks
         ]
 
-    async def add_to_queue(self, track_id: str) -> None:
-        try:
-            playback = await asyncio.to_thread(self.sp.current_playback)
-        except SpotifyOauthError as e:
-            raise ValueError(f"Spotify authentication expired: {e}")
-        except (SpotifyException, req_lib.exceptions.Timeout) as e:
-            raise ValueError(f"Failed to get playback state: {e}")
-
-        if SPOTIFY_DEVICE_NAME and (
-            not playback or playback.get("device", {}).get("name") != SPOTIFY_DEVICE_NAME
-        ):
-            raise ValueError("Music is not playing from the specified device")
-
-        await asyncio.to_thread(self.sp.add_to_queue, uri=f"spotify:track:{track_id}")
-
-    async def skip(self) -> None:
-        await asyncio.to_thread(self.sp.next_track)
-
     async def get_track_info(self, track_id: str) -> dict:
         track = await asyncio.to_thread(self.sp.track, track_id)
         artists = [{"id": a["id"], "name": a["name"]} for a in track["artists"]]
         album = track["album"]
-        cover = cover_proxy_url(next(
-            (img["url"] for img in album["images"] if img.get("height") == 300),
-            album["images"][0]["url"] if album["images"] else "",
-        ))
         return {
             "song": track["name"],
             "songid": track["id"],
             "artist": artists,
             "album": album["name"],
             "albumid": album["id"],
-            "cover": cover,
+            "cover": album_cover_url(album),
         }
 
     def get_auth_url(self) -> str:

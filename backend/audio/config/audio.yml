@@ -1,0 +1,22 @@
+# Optional VBAN output. Set enabled: true and replace ip_address with the
+# receiver's IPv4 address to send the processed radio stream over UDP.
+vban:
+  enabled: false
+  ip_address: 192.168.1.100
+  port: 6980
+  stream_name: JMM Audio
+
+# Optional VBAN receiver. Set enabled: true to mix an incoming VBAN stream (for
+# example a mic from another machine) with Spotify (no ducking), before the radio
+# processing. The sender must send 16-bit PCM at 44.1 kHz, the rate of the whole chain;
+# nothing is resampled. channels picks the two stream channels to use: '1,2' for stereo, '1,1'
+# for a mono sender. Packets from other addresses are ignored. quality sets the receive
+# jitter buffer: optimal (0.1 s), fast (0.2 s), medium (0.4 s),
+# slow (0.8 s) or very_slow (1.5 s). Use a slower setting if the input glitches.
+vban_receiver:
+  enabled: false
+  quality: medium
+  sender_ip: 192.168.1.50
+  port: 6980
+  stream_name: Stream1
+  channels: '1,2'

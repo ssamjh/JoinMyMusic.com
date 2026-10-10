@@ -17,8 +17,8 @@
   --color-accent: var(--accent);
   --color-danger: #ff4d4f;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
 
   --ease-dock: cubic-bezier(0.2, 0.8, 0.2, 1);
 
@@ -43,17 +43,16 @@
 
 @layer base {
   :root {
-    --accent: #8b7bf0;
-    --accent-glow: rgba(139, 123, 240, 0.55);
+    --accent: #e07a3f;
+    --accent-glow: rgba(224, 122, 63, 0.55);
     /* The record's centre label: fixed black paper with cream ink */
     --label-paper: #111113;
     --label-ink: rgba(246, 240, 228, 0.92);
-    --c1: #8b7bf0;
-    --c2: #2b1d6e;
+    --c1: #e07a3f;
+    --c2: #3b1d10;
 
     --platter-tilt: 5deg; /* 0 = top-down, 90 = edge-on; higher = flatter/more 3D */
     --tonearm-lift: 34px; /* how far the arm floats above the platter surface */
-    --flip-lift: 200px; /* how high the record rises off the platter during a flip */
   }
 
   body.theme-dark {
@@ -191,15 +190,34 @@
   .no-bg-animation .live-dot {
     animation: none !important;
   }
+  body:not(.no-bg-animation) .history-panel {
+    margin-top: -6px;
+  }
+
+  /* ---- Live input mode (app.js setLiveInput) ---- */
+  /* The stream is the live input alone, with no track to show: the turntable,
+     track details and history fade out, keeping their space, and the visualizer
+     stays in the default accent colour. */
+  .player-layout {
+    transition: opacity 0.6s ease;
+  }
+  body.live-input .player-layout {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.6s ease, visibility 0s linear 0.6s;
+  }
 
   /* ---- Display-only mode (/?display) ---- */
-  /* Visuals-only kiosk view: keep the album art, title/artist and recently-played
-     list, but strip every control + the footer links/copyright. */
+  /* Visuals-only kiosk view: keep artwork, track details and the history
+     disclosure while hiding playback controls and footer links. */
   body.display-mode .header-actions,
   body.display-mode .dock,
-  body.display-mode footer,
-  body.display-mode .live-row {
+  body.display-mode footer {
     display: none !important;
+  }
+  /* No dock to clear. */
+  body.display-mode main {
+    padding-bottom: 0 !important;
   }
 
   /* ---- Header / dock buttons ---- */
@@ -281,6 +299,8 @@
     transform: scale(0.94);
   }
 
+  /* Keep the initial player hidden until its first decoded artwork is mounted. */
+  #playing-link[data-art-ready="false"] { visibility: hidden; }
   /* ---- Now playing artwork ---- */
   #art-card {
     position: relative;
@@ -292,16 +312,12 @@
     box-shadow: 0 40px 90px -28px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--panel-border);
     transition: transform 0.42s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.42s ease;
   }
+  /* Neutral vinyl under the cover: shown while art loads, so it must not take the palette colours. */
   .art-placeholder {
     position: absolute;
     inset: 0;
-    background: radial-gradient(
-        110% 110% at 28% 18%,
-        var(--c1) 0%,
-        rgba(0, 0, 0, 0) 55%
-      ),
-      radial-gradient(120% 120% at 82% 88%, var(--c2) 0%, rgba(0, 0, 0, 0) 58%),
-      linear-gradient(135deg, var(--c1), var(--c2));
+    background: radial-gradient(120% 120% at 30% 20%, #2a2a30 0%, rgba(0, 0, 0, 0) 60%),
+      linear-gradient(135deg, #1c1c21, #0e0e10);
   }
   #playing-image {
     position: absolute;
@@ -560,6 +576,23 @@
   body:not(.no-bg-animation) .tonearm.ready {
     opacity: 1;
   }
+  .dj-stage .tonearm {
+    left: auto;
+    right: 0;
+    bottom: auto;
+    width: var(--tonearm-size, var(--deck-size));
+    height: var(--tonearm-size, var(--deck-size));
+    transition: opacity .5s ease, transform .5s linear;
+  }
+  /* Lifting only deepens the shadow. Never move or resize the arm parts here:
+     the arm hangs almost vertically, so any offset reads as a length change. */
+  .dj-stage .tonearm-arm, .dj-stage .tonearm-head {
+    transition: box-shadow 250ms ease;
+  }
+  .dj-stage .tonearm.is-lifted .tonearm-arm,
+  .dj-stage .tonearm.is-lifted .tonearm-head {
+    box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
+  }
   .tonearm-arm,
   .tonearm-cw,
   .tonearm-pivot,
@@ -622,11 +655,17 @@
   /* Title/artist are injected as innerHTML by app.js (optionally wrapped in a
      Spotify link), so their styling has to live on the container, not the anchor. */
   .div-playing-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
     font-size: clamp(24px, 3.4vw, 34px);
     font-weight: 700;
     letter-spacing: -0.022em;
-    line-height: 1.1;
-    min-height: 1.1em;
+    /* Tall enough for descenders (g, j, p, y): the clamp's overflow clip cuts at the line box. */
+    line-height: 1.3;
+    min-height: 1.3em;
   }
   .div-playing-title a {
     color: inherit;
@@ -637,11 +676,54 @@
     color: var(--muted);
     margin-top: 9px;
     font-weight: 500;
-    min-height: 1em;
+    /* Same 1.3em line box as the title, so the empty and filled states are the same height. */
+    line-height: 1.3;
+    min-height: 1.3em;
   }
   .div-playing-artist a {
     color: inherit;
     text-decoration: none;
+  }
+  /* Fixed width (not shrink-to-fit) so the skeleton bars have room while empty.
+     Centred text reads the same at this width as at its content width. */
+  #player-metadata {
+    width: min(92vw, 680px);
+  }
+  /* Skeleton bars hold the title and artist lines until their text arrives; the
+     bar box matches the line box so nothing moves when the text replaces it. */
+  .div-playing-title:empty::before,
+  .div-playing-artist:empty::before {
+    content: "";
+    display: block;
+    border-radius: 8px;
+    background: linear-gradient(
+      90deg,
+      var(--elev) 0%,
+      color-mix(in srgb, var(--fg) 7%, var(--elev)) 50%,
+      var(--elev) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  }
+  .div-playing-title:empty::before {
+    width: 58%;
+    height: 0.8em;
+    margin: 0.25em auto;
+  }
+  .div-playing-artist:empty::before {
+    width: 36%;
+    height: 0.7em;
+    margin: 0.3em auto;
+  }
+  .div-playing-title:not(:empty),
+  .div-playing-artist:not(:empty) {
+    animation: fadein 0.3s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .div-playing-title:empty::before,
+    .div-playing-artist:empty::before {
+      animation: none;
+    }
   }
   .live-dot {
     display: inline-block;
@@ -805,7 +887,7 @@
     border-radius: 9px;
     flex-shrink: 0;
     object-fit: cover;
-    background: linear-gradient(135deg, var(--c1), var(--c2));
+    background: var(--elev);
     box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
   }
   .result-text {
@@ -844,14 +926,116 @@
     animation: spin 0.7s linear infinite;
   }
 
-  /* ---- Song history (rows are built as innerHTML in app.js) ---- */
+  /* Two fixed decks, each with its own tonearm. Roles alternate in place. */
+  .dj-stage {
+    --deck-size: min(30vh, 300px, calc((100vw - 120px) / 2));
+    --deck-gap: clamp(44px, 7vw, 90px);
+    display: flex;
+    gap: var(--deck-gap);
+    position: relative;
+    align-items: flex-start;
+    order: 0;
+    padding: 20px 0 8px;
+  }
+  .deck-crossfader {
+    --fader-position: 0;
+    position: absolute;
+    left: 50%;
+    top: auto;
+    bottom: 0;
+    transform: translateX(-50%);
+    width: calc(var(--deck-gap) - 8px);
+    height: 52px;
+    padding: 0 6px;
+    border: 1px solid var(--panel-border);
+    border-radius: 7px;
+    background: linear-gradient(145deg, #303036, #151518);
+    box-shadow: 0 5px 12px #0005, inset 0 1px 0 #ffffff0d;
+    pointer-events: none;
+  }
+  body.no-bg-animation .dj-stage { padding-bottom: 0; }
+  .crossfader-track {
+    position: relative;
+    height: 5px;
+    margin-top: 20px;
+    border-radius: 3px;
+    background: #09090b;
+    box-shadow: inset 0 1px 3px #000, 0 1px 0 #ffffff12;
+  }
+  .crossfader-track::after {
+    content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 17px;
+    background: #ffffff24;
+  }
+  .crossfader-thumb {
+    position: absolute;
+    z-index: 1;
+    left: calc(var(--fader-position) * (100% - 10px));
+    top: 50%;
+    transform: translateY(-50%);
+    width: 10px;
+    height: 24px;
+    border: 1px solid #717178;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #303036, #77777e 45%, #34343a);
+    box-shadow: 1px 2px 4px #0008;
+    transition: left 450ms cubic-bezier(.22,.61,.36,1);
+  }
+  .crossfader-thumb::after {
+    content: ""; position: absolute; left: 50%; top: 3px; bottom: 3px; width: 1px;
+    background: #ececed;
+  }
+  body.no-bg-animation .deck-crossfader { display: none; }
+  @media (prefers-reduced-motion: reduce) { .crossfader-thumb { transition: none; } }
+  .deck-slot, .dj-deck { width: var(--deck-size); flex: none; }
+  .dj-deck { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .deck-role { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+  .next-track-info, .plain-progress, .playing-details { display: none; }
+  .dj-stage #art-card, .next-deck-surface, #next-record {
+    width: var(--deck-size);
+    height: var(--deck-size);
+  }
+  .next-deck-surface { position: relative; }
+  #next-record { position: relative; }
+  /* Keep artwork and its captions below the deck hardware during fades. */
+  .dj-stage #art-card, .dj-stage #next-record { z-index: 1; }
+  .dj-stage .spindle { z-index: 2; }
+  .dj-stage .tonearm-mount { z-index: 3; width: var(--deck-size); height: var(--deck-size); }
+  .dj-stage #playing-link { width: var(--deck-size); height: var(--deck-size); }
+  .next-panel { --record-size: var(--deck-size); }
+  .next-panel .history-item { --cluster-x: 0px; --record-turn: 0deg; }
+  .next-panel .history-disc { width: 100%; height: 100%; }
+  #next-record .history-item {
+    transform: none;
+    filter: none;
+    transition: none;
+    background: transparent;
+    z-index: 5;
+  }
+  .next-panel .record-label { transform: rotate(var(--history-art-angle, 0deg)); }
+  body.no-bg-animation .next-panel .record-label { transform: none; }
+  .next-panel .history-platter { display: none !important; }
+  body:not(.no-bg-animation) .dj-stage .now-playing { perspective: none; }
+  body:not(.no-bg-animation) .dj-stage #playing-link { transform: none; }
+  .dj-stage #playing-link[data-art-ready="false"] { visibility: visible; }
+  .dj-stage #playing-link[data-art-ready="false"] #art-card { visibility: hidden; }
+  body.no-bg-animation .next-panel .history-item { padding: 0; border: 0; background: transparent; display: block; height: var(--deck-size); }
+  body.no-bg-animation .next-panel .history-disc { width: 100%; height: 100%; border-radius: 28px; }
+  body.no-bg-animation .next-panel .history-art { width: 100%; height: 100%; border-radius: 28px; }
+  @media (prefers-reduced-motion: reduce) { .dj-stage .tonearm { transition: opacity 200ms ease; } }
+  @media (prefers-reduced-motion: reduce) {
+    .dj-stage .tonearm-arm, .dj-stage .tonearm-head { transition: none; }
+  }
+
+  /* ---- Recently played records ---- */
   .history-panel {
-    width: 250px;
+    position: relative;
+    width: min(720px, calc(100vw - 48px));
     flex-shrink: 0;
-    height: min(40vmin, 32vh, 400px); /* match album art height */
+    height: auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
   }
   .history-head {
     font-size: 11px;
@@ -859,66 +1043,366 @@
     text-transform: uppercase;
     letter-spacing: 0.09em;
     color: var(--muted);
-    padding-left: 4px;
+    padding-left: 8px;
+  }
+  .history-toggle {
+    display: none;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .history-toggle:hover {
+    color: var(--fg);
+  }
+  .history-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .history-toggle svg {
+    width: 16px;
+    height: 16px;
+    transition: transform 180ms ease;
+  }
+  .history-panel[data-expanded="true"] .history-toggle svg {
+    transform: rotate(180deg);
   }
   .history-list {
-    flex: 1;
-    min-height: 0;
+    --record-size: min(168px, calc((100vw - 72px) / 4));
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .history-item {
-    flex: 1;
-    min-height: 0;
-    max-height: 72px; /* cap height so one item does not stretch to fill the panel */
-    overflow: hidden;
-    display: flex;
+    flex-direction: row;
+    justify-content: center;
     align-items: center;
-    gap: 12px;
-    padding: 8px;
-    border-radius: 14px;
-    background: var(--elev);
-    border: 1px solid var(--panel-border);
-    backdrop-filter: blur(20px);
-    text-decoration: none;
+    gap: 8px;
+    min-height: 0;
+  }
+  .history-list .history-item {
+    flex: none;
+    --cluster-x: 0px;
+    --record-turn: 0deg;
+  }
+  .history-list .history-title { font-size: clamp(8px, calc(var(--record-size) * .08), 13px); }
+  .history-list .history-artist { font-size: clamp(7px, calc(var(--record-size) * .069), 11.5px); }
+  .history-item {
+    position: relative;
+    display: block;
+    width: var(--record-size);
+    height: var(--record-size);
+    border-radius: 50%;
+    clip-path: circle(50%);
+    isolation: isolate;
     color: var(--fg);
-    transition: background 0.2s, transform 0.2s;
+    text-decoration: none;
+    z-index: calc(5 - var(--record-index, 0));
+    --record-turn: 0deg;
+    --cluster-x: 10px;
+    transform: translateX(var(--cluster-x)) rotate(var(--record-turn));
+    transition: transform 220ms ease, filter 220ms ease;
   }
-  .history-item:hover {
-    background: var(--panel-border);
-    transform: translateX(-3px);
+  .history-item:nth-child(2n) {
+    --cluster-x: -10px;
+    --record-turn: -2deg;
   }
+  .history-item:nth-child(3n) {
+    --record-turn: 1.8deg;
+  }
+  .history-item:only-child,
+  .history-item:nth-child(3):last-child {
+    grid-column: 1 / -1;
+    --cluster-x: 0px;
+  }
+  .history-list > .history-item {
+    --cluster-x: 0px;
+    --record-turn: 0deg;
+  }
+  .history-item:hover,
+  .history-item:focus-visible {
+    transform: translateX(0) translateY(-5px) scale(1.035) rotate(0deg);
+    filter: drop-shadow(0 8px 9px rgba(0, 0, 0, 0.28));
+    z-index: 10;
+    outline: none;
+  }
+  .history-item:focus .history-disc {
+    box-shadow: 0 9px 18px rgba(0, 0, 0, 0.42), inset 0 0 0 4px var(--accent);
+  }
+  .history-disc {
+    position: absolute;
+    z-index: 2;
+    top: 50%;
+    left: 50%;
+    width: 90.9%;
+    height: 90.9%;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    border-radius: 50%;
+    background: var(--bg);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.32), 0 0 0 1px var(--panel-border);
+  }
+  body:not(.no-bg-animation) .history-item[data-history-key] .history-disc {
+    width: 100%;
+    height: 100%;
+    box-shadow: none;
+  }
+  body:not(.no-bg-animation) .history-item[data-history-key]:focus-visible .history-disc {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .history-platter {
+    position: absolute;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+  }
+  /* Recent records keep their inner vinyl details without the larger platter rim. */
+  body:not(.no-bg-animation) .history-platter { display: none; }
   .history-art {
-    width: 46px;
-    height: 46px;
-    border-radius: 9px;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
-    flex-shrink: 0;
-    background: linear-gradient(135deg, var(--c1), var(--c2));
-    box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+    border-radius: 50%;
+    background: transparent;
+    transform: none;
   }
-  .history-text {
-    min-width: 0;
-    flex: 1;
+  .history-disc .history-art,
+  .history-disc .art-placeholder {
+    transform: rotate(var(--history-art-angle, 0deg));
+  }
+  body.no-bg-animation .history-disc .history-art,
+  body.no-bg-animation .history-disc .art-placeholder {
+    transform: none;
+  }
+  .history-disc .art-placeholder {
+    z-index: 0;
+  }
+  .history-disc .record-overlay {
+    z-index: 2;
+  }
+  .history-disc .art-sheen {
+    z-index: 3;
+  }
+  .history-disc .history-record-label {
+    z-index: 4;
+  }
+  .history-age-center {
+    position: absolute;
+    z-index: 5;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    width: 30.6%;
+    min-height: 30.6%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    color: #f5ecd8;
+    font-size: clamp(8px, calc(var(--record-size) * 0.143), 24px);
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+  }
+  .history-age-value {
+    display: flex;
+    align-items: baseline;
+    gap: 1px;
+  }
+  .history-age-unit {
+    font-size: clamp(3px, calc(var(--record-size) * 0.0476), 8px);
+  }
+  .history-age-ago {
+    font-size: clamp(3px, calc(var(--record-size) * 0.0476), 8px);
+  }
+  .history-age-row {
+    display: none;
+  }
+  .history-tag {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    border-radius: 50%;
+    color: #f5ecd8;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 7px rgba(0, 0, 0, 0.75);
+    background: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.4),
+      rgba(0, 0, 0, 0.04) 34%,
+      rgba(0, 0, 0, 0.02) 66%,
+      rgba(0, 0, 0, 0.48)
+    );
+    pointer-events: none;
   }
   .history-title {
-    font-size: 13px;
-    font-weight: 600;
-    white-space: nowrap;
+    position: absolute;
+    top: 15%;
+    left: 18%;
+    right: 18%;
+    display: -webkit-box;
+    font-size: clamp(10px, 1.05vw, 13px);
+    line-height: 1.08;
+    font-weight: 700;
+    text-align: center;
+    white-space: normal;
     overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .history-item:nth-child(n + 3) .history-title {
+    top: 18%;
   }
   .history-artist {
-    font-size: 11.5px;
-    color: var(--muted);
-    white-space: nowrap;
+    position: absolute;
+    bottom: 15%;
+    left: 18%;
+    right: 18%;
+    display: -webkit-box;
+    font-size: clamp(9px, 0.9vw, 11px);
+    line-height: 1.08;
+    text-align: center;
+    white-space: normal;
     overflow: hidden;
-    text-overflow: ellipsis;
-    margin-top: 1px;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
-  .history-item.history-enter {
-    animation: history-enter 0.45s ease;
+  .history-flight {
+    position: absolute;
+    z-index: 50;
+    margin: 0;
+    transform: none;
+    transition: none;
+    pointer-events: none;
+  }
+
+  /* Effects-off mode uses compact, familiar artwork rows. */
+  body.no-bg-animation .history-list {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding: 0;
+  }
+  body.no-bg-animation .history-list .history-item {
+    width: calc((100% - 24px) / 4);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px;
+  }
+  body.no-bg-animation .history-list .history-title,
+  body.no-bg-animation .history-list .history-artist {
+    width: 100%;
+    font-size: clamp(8px, 1.3vw, 13px);
+  }
+  body.no-bg-animation .history-item {
+    box-sizing: border-box;
+    display: flex;
+    width: 100%;
+    height: auto;
+    min-height: 62px;
+    align-items: center;
+    gap: 11px;
+    padding: 7px 10px;
+    overflow: hidden;
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    clip-path: none;
+    background: var(--elev);
+    isolation: auto;
+    transform: none;
+    transition: transform 180ms ease, background 180ms ease;
+  }
+  body.no-bg-animation .history-item:hover,
+  body.no-bg-animation .history-item:focus-visible {
+    transform: translateY(-2px);
+    background: var(--panel-border);
+  }
+  body.no-bg-animation .history-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  body.no-bg-animation .history-disc {
+    position: relative;
+    inset: auto;
+    flex: none;
+    width: 46px;
+    height: 46px;
+    transform: none;
+    overflow: hidden;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  }
+  body.no-bg-animation .history-disc .record-overlay,
+  body.no-bg-animation .history-disc .art-sheen,
+  body.no-bg-animation .history-record-label {
+    display: none;
+  }
+  body.no-bg-animation .history-age-center {
+    display: none;
+  }
+  body.no-bg-animation .history-age-row {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.1;
+    text-align: right;
+    text-shadow: none;
+  }
+  body.no-bg-animation .history-art {
+    width: 46px;
+    height: 46px;
+    inset: 0;
+    border: 0;
+    border-radius: 9px;
+    box-shadow: none;
+    transform: none;
+  }
+  body.no-bg-animation .history-tag {
+    position: static;
+    display: block;
+    min-width: 0;
+    flex: 1;
+    color: var(--fg);
+    text-shadow: none;
+    background: none;
+  }
+  body.no-bg-animation .history-title,
+  body.no-bg-animation .history-artist {
+    position: static;
+    display: -webkit-box;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  body.no-bg-animation .history-title {
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  body.no-bg-animation .history-artist {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.2;
   }
 
   /* ---- Song-change transitions (classes toggled by app.js) ---- */
@@ -930,18 +1414,94 @@
     display: block;
     animation: fade-swap 1.2s ease;
   }
-  .flip-swap {
-    animation: flip-swap 1.2s ease;
+  .record-arrive {
+    animation: record-arrive 650ms ease both;
   }
 
-  /* Narrow screens stack the history list underneath the album art instead of
-     beside it. The layout side of that lives in the markup as max-stack:*
-     utilities; only the flip height has to be re-declared here. */
+  /* Reserved stand-in for the recently-played panel, which is display:none until
+     history arrives. It takes the panel's place in the flow (same head and row
+     sizes), so the player does not move when the real panel appears. */
+  .history-reserve { display: none; }
+  body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(720px, calc(100vw - 48px));
+    margin-top: -6px;
+    --record-size: min(168px, calc((100vw - 72px) / 4));
+  }
+  .history-reserve-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+  }
+  .history-reserve-slot {
+    position: relative;
+    flex: none;
+    width: var(--record-size);
+    height: var(--record-size);
+  }
   @media (width < 821px) {
-    /* Smaller card here, so the record needs less height to clear the platter. */
-    :root {
-      --flip-lift: 120px;
+    body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
+      min-height: 44px;
+      margin-top: 2px;
     }
+    .history-reserve .history-head,
+    .history-reserve-row {
+      display: none;
+    }
+  }
+  /* Effects off: the panel is a grid cell beside the cover, so the reserve is an
+     empty cell of the same width, height and margin. */
+  @media (width >= 821px) {
+    body.no-bg-animation #history-panel[style*="none"] + .history-reserve {
+      display: block;
+      grid-area: history;
+      width: 250px;
+      height: var(--art-size);
+      margin-left: 34px;
+    }
+    body.no-bg-animation .history-reserve > * {
+      display: none;
+    }
+  }
+
+  /* Narrow screens stack the history list underneath the metadata. */
+  @media (width < 821px) {
+    .history-panel {
+      width: min(720px, calc(100vw - 48px));
+      height: auto;
+      min-height: 0;
+      margin-top: 2px;
+    }
+    .history-panel .history-head {
+      display: none;
+    }
+    .history-toggle {
+      display: flex;
+      align-self: stretch;
+    }
+    .history-list {
+      display: none;
+    }
+    .history-panel[data-expanded="true"] .history-list {
+      display: flex;
+    }
+    body.no-bg-animation .history-list {
+      display: none;
+    }
+    body.no-bg-animation .history-panel[data-expanded="true"] .history-list {
+      display: flex;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-item,
+  .history-disc,
+  .history-tag {
+    transition: none !important;
   }
 }
 
@@ -983,17 +1543,116 @@
     opacity: 0.2;
   }
 }
+@layer components {
+  /* Effects-off layout uses static artwork, clear details, and short fades. */
+  body.no-bg-animation, body.no-bg-animation * {
+    animation: none !important;
+    transition-property: opacity !important;
+    transition-duration: 150ms !important;
+  }
+  /* A single square cover with the recently-played list beside it (stacked
+     underneath on narrow screens) and the title/artist below. No up-next deck. */
+  body.no-bg-animation .player-layout { --art-size: min(40vmin, 32vh, 400px); }
+  body.no-bg-animation .dj-stage {
+    --deck-size: var(--art-size);
+    gap: 0;
+    padding: 0;
+  }
+  /* The now-playing wrapper moves between deck slots; hide whichever holds up next. */
+  body.no-bg-animation .deck-slot:has(.next-panel),
+  body.no-bg-animation .deck-role,
+  body.no-bg-animation .playing-details,
+  body.no-bg-animation .plain-progress { display: none; }
+  body.no-bg-animation #player-metadata { width: min(92vw, 400px); }
+  body.no-bg-animation .history-panel { width: min(92vw, 360px); gap: 10px; }
+  body.no-bg-animation .history-panel .history-head { display: block; padding-left: 4px; }
+  body.no-bg-animation .history-panel .history-toggle { display: none; }
+  body.no-bg-animation .history-panel .history-list {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    gap: 10px;
+  }
+  body.no-bg-animation .history-list .history-item {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    max-height: 72px;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 8px;
+    border: 1px solid var(--panel-border);
+  }
+  body.no-bg-animation .history-list .history-title,
+  body.no-bg-animation .history-list .history-artist {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  body.no-bg-animation .history-list .history-title { font-size: 13px; }
+  body.no-bg-animation .history-list .history-artist { margin-top: 1px; font-size: 11.5px; }
+  body.no-bg-animation .history-age-row { margin-top: 1px; text-align: left; }
+  @media (width >= 821px) {
+    /* !important: the wrapper's flex/gap utilities outrank this layer. */
+    body.no-bg-animation .player-layout {
+      display: grid !important;
+      column-gap: 0 !important;
+      grid-template-columns: auto auto;
+      grid-template-areas: "art history" "meta meta";
+      justify-content: center;
+      justify-items: center;
+    }
+    body.no-bg-animation .dj-stage { grid-area: art; }
+    body.no-bg-animation #player-metadata { grid-area: meta; }
+    body.no-bg-animation .history-panel {
+      grid-area: history;
+      width: 250px;
+      height: var(--art-size);
+      margin-left: 34px; /* a margin, not a column gap, so a hidden panel leaves the cover centred */
+    }
+  }
+  .next-track-title { color: var(--fg); font-size: 15px; font-weight: 650; }
+  .next-track-title, .next-track-artist, .next-track-details {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .next-track-details { margin-top: 4px; font-size: 11px; }
+  #track-progress { height: 4px; overflow: hidden; background: var(--elev); border-radius: 4px; }
+  #track-progress-fill { display: block; width: 0; height: 100%; background: var(--accent); }
+  .track-times { display: flex; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  body.no-bg-animation .history-item:hover,
+  body.no-bg-animation .history-item:focus-visible { transform: none; filter: none; }
+
+  /* Remote art: blurred and transparent until app.js (markImageLoading) sets
+     is-loaded. The art's placeholder sits underneath while it loads. */
+  img.blur-load {
+    filter: blur(14px);
+    opacity: 0;
+    transition: filter 0.5s ease, opacity 0.4s ease;
+  }
+  img.blur-load.is-loaded {
+    filter: none;
+    opacity: 1;
+  }
+  body.no-bg-animation img.blur-load {
+    filter: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    img.blur-load {
+      filter: none;
+      transition: opacity 0.4s ease;
+    }
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-@keyframes history-enter {
-  0% {
-    opacity: 0;
-  }
-  100% {
-    opacity: 1;
   }
 }
 /* Song change: cross-fade the now-playing art + text */
@@ -1011,31 +1670,16 @@
     opacity: 1;
   }
 }
-/* Song change: lift the record off the platter, flip it edge-on (it "turns off"),
-   swap the cover, flip back, then set it back down. The lift happens BEFORE any
-   rotation (and is held through it) so the disc clears the platter instead of
-   clipping through it. Perspective comes from the parent (.now-playing) — this
-   only runs in fx mode, where that 3D context is live. translateZ is along the
-   platter normal, so the record rises straight up off the deck. */
-@keyframes flip-swap {
-  0% {
-    transform: translateZ(0) rotateY(0deg);
-    opacity: 1;
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
   }
-  22% {
-    transform: translateZ(var(--flip-lift)) rotateY(0deg);
-    opacity: 1;
+  to {
+    background-position: -100% 0;
   }
-  50% {
-    transform: translateZ(var(--flip-lift)) rotateY(90deg);
-    opacity: 0;
-  }
-  78% {
-    transform: translateZ(var(--flip-lift)) rotateY(0deg);
-    opacity: 1;
-  }
-  100% {
-    transform: translateZ(0) rotateY(0deg);
-    opacity: 1;
-  }
+}
+/* The new record fades onto the deck while the outgoing one docks in history. */
+@keyframes record-arrive {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }

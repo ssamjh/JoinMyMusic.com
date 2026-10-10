@@ -1,11 +1,10 @@
-// Backend origin. The frontend is static-hosted (Cloudflare Pages) so every
-// API call and the SSE stream are cross-origin; the backend allows this origin
-// via CORS. Point at http://localhost:8080 for local backend work.
-const API_BASE = "https://api.joinmymusic.com";
+// Local Astro dev injects an empty base and proxies /api to the live API.
+// Production keeps calling the API directly from the static site.
+const API_BASE = window.__JMM_API_BASE__ ?? "https://api.joinmymusic.com";
 
 const audioStream = document.getElementById("audio-stream");
 const buttonToggle = document.getElementById("button-toggle");
-const playingImage = document.getElementById("playing-image");
+let playingImage = document.getElementById("playing-image");
 let isPlaying = false;
 let pollInterval = null;
 let lastVotedSongId = null;
@@ -87,13 +86,17 @@ let bgPresenceTarget = { r: 20, g: 20, b: 20 };
 // invalidations that aren't captured by the colour/energy values themselves.
 let bgLastBass = -1, bgLastPresence = -1, bgForceDraw = true;
 
-// Palette extracted from the next cover, staged until the record actually swaps
-// to it — so the backdrop / side glow never change colour ahead of the artwork.
+// Palette extracted from the next cover, staged until the deck crossover begins.
 let pendingColors = null;
+let paletteTransition = null;
+let hasAppliedPalette = false;
+const PALETTE_FADE_MS = 500;
+const DECK_TIMING = { overlap: 4500, lift: 250, park: 500, spinDown: 1000, stopped: 2500, fade: 1500 };
+const DECK_HANDOVER_MS = DECK_TIMING.overlap + DECK_TIMING.lift + DECK_TIMING.park + DECK_TIMING.spinDown + DECK_TIMING.stopped + DECK_TIMING.fade * 2;
 
+const TONEARM_SWEEP_DEG = 29.32;
+const TONEARM_PARK_DEG = -10;
 // Tonearm progress globals — drive the arm from the rim to the centre
-const TONEARM_SWEEP_DEG = 29.32; // rim → just before centre (runout, ~15% radius)
-const TONEARM_PARK_DEG = -10;    // swung off the side of the record (rest)
 // Anchored against performance.now() (monotonic) rather than Date.now(), so the
 // arm position is immune to the listener's wall clock being wrong/skewed. Set
 // from the server's elapsed_ms — the position currently being heard — on every
@@ -101,23 +104,77 @@ const TONEARM_PARK_DEG = -10;    // swung off the side of the record (rest)
 let songStartedAtPerf = null;
 let songDurationMs = null;
 let tonearmSongId = null; // song the arm timing is locked to
-let tonearmChoreography = false; // true while the scripted swing-off/on is running
+let tonearmChoreography = false; // lock scratching during a deck handover
+let tonearmEntryFrame = 0;
+let fixedTonearmSize = null;
+let preloweredTonearmSongId = null;
+let preloweredTonearmStartedAtPerf = null;
+let preloweredTonearmDurationMs = null;
+let crossfaderTransitionPending = false;
 // Pending timeouts of the running swap sequence, so a second song change (e.g.
 // a skip landing right at a track boundary) or a stop can abort it cleanly
 // instead of two choreographies fighting over the arm and the dim state.
 let choreoTimers = [];
+let recordDeparture = null;
+let recordArrival = null;
 function choreoTimeout(fn, ms) {
   choreoTimers.push(setTimeout(fn, ms));
 }
+function setCrossfader(side) {
+  const fader = document.getElementById("deck-crossfader");
+  if (!fader) return;
+  fader.style.setProperty("--fader-position", side === "center" ? .5 : side === "right" ? 1 : 0);
+  fader.setAttribute("aria-label", side === "center" ? "Crossfader: centre, changing decks" : `Crossfader: ${side} deck`);
+}
+
+function updateCrossfader() {
+  if (!fxOn() || !isPlaying) {
+    setCrossfader(activeDeckSide);
+    return;
+  }
+  if (crossfaderTransitionPending) {
+    setCrossfader("center");
+    return;
+  }
+  if (songStartedAtPerf == null || !songDurationMs) {
+    setCrossfader(activeDeckSide);
+    return;
+  }
+
+  const elapsed = performance.now() - songStartedAtPerf;
+  const withinHandoverWindow = elapsed < 5000 || songDurationMs - elapsed <= 10000;
+  setCrossfader(withinHandoverWindow ? "center" : activeDeckSide);
+}
+
 function cancelChoreography() {
+  document.querySelectorAll(".tonearm.is-lifted").forEach((arm) => arm.classList.remove("is-lifted"));
+  crossfaderTransitionPending = false;
+  if (preloweredTonearmSongId) {
+    const arm = document.getElementById("next-tonearm");
+    if (arm) {
+      arm.style.transition = "";
+      arm.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
+    }
+  }
+  preloweredTonearmSongId = null;
+  preloweredTonearmStartedAtPerf = null;
+  preloweredTonearmDurationMs = null;
+  setCrossfader(activeDeckSide);
+  recordDeparture?.cancel();
+  recordDeparture = null;
+  recordArrival?.cancel();
+  recordArrival = null;
+  stopNextSpin();
   choreoTimers.forEach(clearTimeout);
   choreoTimers = [];
   const cardEl = document.getElementById('art-card');
   const titleEl = document.querySelector('.div-playing-title');
   const artistEl = document.querySelector('.div-playing-artist');
-  if (cardEl) cardEl.classList.remove('flip-swap', 'fade-swap');
-  if (titleEl) titleEl.classList.remove('fade-swap-text');
-  if (artistEl) artistEl.classList.remove('fade-swap-text');
+  if (cardEl) cardEl.classList.remove('record-arrive', 'fade-swap');
+  if (cardEl) cardEl.style.removeProperty("opacity");
+  document.getElementById("player-metadata")?.style.removeProperty("opacity");
+  if (titleEl) titleEl.classList.remove('fade-swap-text', 'record-arrive');
+  if (artistEl) artistEl.classList.remove('fade-swap-text', 'record-arrive');
   if (tonearmChoreography) {
     const armEl = document.getElementById('tonearm');
     if (armEl) armEl.style.transition = ''; // restore play-time (linear) transition
@@ -125,29 +182,99 @@ function cancelChoreography() {
   }
   document.body.classList.remove('fx-dimmed');
 }
-function updateTonearm() {
+function parkTonearm(el, hide = false) {
+  if (tonearmEntryFrame) cancelAnimationFrame(tonearmEntryFrame);
+  tonearmEntryFrame = 0;
+  if (hide) el.classList.remove('ready');
+  el.style.transition = 'none';
+  el.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
+  void el.offsetWidth;
+  el.style.transition = '';
+}
+function updateTonearm({ entry = false } = {}) {
   const el = document.getElementById("tonearm");
   if (!el) return;
   if (songStartedAtPerf == null || !songDurationMs) {
     el.classList.remove("ready");
+    if (el.style.transform !== `rotate(${TONEARM_PARK_DEG}deg)`) parkTonearm(el);
     return;
   }
-  el.classList.add("ready");
-  if (tonearmChoreography) return; // scripted swing in progress — don't fight it
-  if (!isPlaying) {
-    // Paused — park the arm off to the side; it swings into place on play.
-    el.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
+  if (!fxOn() || tonearmChoreography) return;
+  let angle = TONEARM_PARK_DEG;
+  if (isPlaying) {
+    let p = (performance.now() - songStartedAtPerf) / songDurationMs;
+    p = p < 0 ? 0 : p > 1 ? 1 : p;
+    angle = Number((p * TONEARM_SWEEP_DEG).toFixed(2));
+  }
+  if (!entry) {
+    if (tonearmEntryFrame) cancelAnimationFrame(tonearmEntryFrame);
+    tonearmEntryFrame = 0;
+    el.classList.add("ready");
+    el.style.transform = `rotate(${angle}deg)`;
     return;
   }
-  let p = (performance.now() - songStartedAtPerf) / songDurationMs;
-  p = p < 0 ? 0 : p > 1 ? 1 : p;
-  el.style.transform = `rotate(${(p * TONEARM_SWEEP_DEG).toFixed(2)}deg)`;
+
+  // A deck's arm can still be at the previous song's end angle. Park it while
+  // hidden, then reveal and lower it from the rim on the next paint.
+  parkTonearm(el, true);
+  tonearmEntryFrame = requestAnimationFrame(() => {
+    tonearmEntryFrame = 0;
+    if (!el.isConnected || tonearmChoreography || songStartedAtPerf == null) return;
+    el.classList.add("ready");
+    el.style.transform = `rotate(${angle}deg)`;
+  });
 }
-setInterval(updateTonearm, 500);
+function updatePreloweredTonearm() {
+  if (!fxOn()) return;
+  if (!preloweredTonearmSongId || preloweredTonearmStartedAtPerf == null || !preloweredTonearmDurationMs) return;
+  const arm = document.getElementById("next-tonearm");
+  if (!arm || !arm.isConnected) return;
+  const elapsed = performance.now() - preloweredTonearmStartedAtPerf;
+  const progress = isPlaying ? Math.max(0, Math.min(1, elapsed / preloweredTonearmDurationMs)) : null;
+  const angle = progress == null ? TONEARM_PARK_DEG : Number((progress * TONEARM_SWEEP_DEG).toFixed(2));
+  arm.classList.add("ready");
+  arm.style.transform = `rotate(${angle}deg)`;
+}
+function formatTrackTime(ms) {
+  const seconds = Math.max(0, Math.floor((ms || 0) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+// Calibrate when effects are first shown, and again (force) whenever the decks resize.
+function lockTonearmSize(force = false) {
+  if ((fixedTonearmSize !== null && !force) || !fxOn()) return;
+  const width = document.getElementById("playing-link").getBoundingClientRect().width;
+  if (width <= 0) return;
+  fixedTonearmSize = `${width}px`;
+  document.querySelectorAll(".dj-stage .tonearm").forEach((arm) => {
+    arm.style.setProperty("--tonearm-size", fixedTonearmSize);
+  });
+}
+requestAnimationFrame(() => lockTonearmSize());
+function updatePlainProgress() {
+  if (fxOn()) return;
+  const elapsed = songStartedAtPerf == null ? 0 : Math.max(0, Math.min(songDurationMs || 0, performance.now() - songStartedAtPerf));
+  const percent = songDurationMs ? elapsed / songDurationMs * 100 : 0;
+  const progress = document.getElementById("track-progress");
+  if (!progress) return;
+  progress.setAttribute("aria-valuenow", String(Math.round(percent)));
+  document.getElementById("track-progress-fill").style.width = `${percent}%`;
+  document.getElementById("track-elapsed").textContent = formatTrackTime(elapsed);
+  document.getElementById("track-duration").textContent = formatTrackTime(songDurationMs);
+}
+setInterval(() => {
+  updateTonearm();
+  updatePreloweredTonearm();
+  updateCrossfader();
+  updatePlainProgress();
+}, 500);
 // Background tabs throttle the interval above to ~1/min, so snap the arm to the
 // right spot the instant we're refocused rather than waiting for the next tick.
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) updateTonearm();
+  if (!document.hidden) {
+    updateTonearm();
+    updatePreloweredTonearm();
+    updateCrossfader();
+  }
 });
 
 // ---- Record spin engine (JS-driven so speed can ramp up/down and stop) ----
@@ -161,8 +288,8 @@ let spinRampFrom = 0, spinRampTo = 0, spinRampStart = 0, spinRampDur = 0, spinRa
 // Scratch gesture state (see initRecordScratch). recordGrabbed pauses the spin
 // engine so the pointer can drive the record's angle (and the audio) directly.
 let recordGrabbed = false, scratchRect = null;
-let scratchPrevAngle = 0, scratchPrevTime = 0, scratchVel = 0;
-let scratchMoved = false;
+let scratchPrevAngle = null, scratchPendingDeg = 0, scratchVel = 0;
+let scratchMoved = false, scratchRafId = null, scratchFramePrev = 0;
 function fxOn() {
   return !document.body.classList.contains("no-bg-animation");
 }
@@ -227,9 +354,16 @@ function ensureSpin() {
 // Background / song-change globals
 let bgHasBeenSet = false;
 let pendingMetadata = null;       // { data, imgSrc } waiting to be applied
+let latestMetadataSnapshot = null;
+let latestMetadataReceivedAt = 0;
 let lastDisplayedSongId = null;   // currently shown song, for change detection
 
 function generateUUID() {
+  // crypto.randomUUID is only exposed in secure contexts (https or localhost),
+  // so plain-http LAN origins take the template fallback below.
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
     /[xy]/g,
     function (c) {
@@ -249,12 +383,22 @@ function getOrCreateUUID() {
   return uuid;
 }
 
+// localStorage can throw (blocked storage, private modes, quota), so failures
+// are swallowed: writes are dropped and reads behave as "no value stored".
 function storageSet(key, value) {
-  localStorage.setItem(key, value);
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    // Storage unavailable: the preference simply won't persist.
+  }
 }
 
 function storageGet(key) {
-  return localStorage.getItem(key);
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
 }
 
 // --- Theme ---
@@ -274,6 +418,7 @@ function toggleTheme() {
     : "dark";
   applyTheme(next);
   storageSet("ms_theme", next);
+  pollServer();
 }
 
 (function initTheme() {
@@ -403,6 +548,8 @@ function pollServer() {
       name: listenerName,
       volume,
       display: DISPLAY_MODE,
+      theme: document.body.classList.contains("theme-light") ? "light" : "dark",
+      effects: fxOn(),
     }),
   }).catch((error) => console.error("Error polling server:", error));
 }
@@ -544,7 +691,7 @@ function qualityUpdate() {
 
 function initAudioContext() {
   if (audioContext) return;
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  audioContext = new AudioContext();
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 2048;
   analyser.smoothingTimeConstant = 0.4;
@@ -598,11 +745,12 @@ class ScratchProcessor extends AudioWorkletProcessor {
     this.scratching = false;
     this.rate = 0;         // current playback rate (1 = live speed)
     this.targetRate = 0;
+    this.lastRateAt = 0;   // watchdog: no rate updates from the page = hand is still
     this.port.onmessage = (e) => {
       const d = e.data;
-      if (d.type === 'grab') { this.scratching = true; this.readPos = this.w - 64; this.rate = 0; this.targetRate = 0; }
+      if (d.type === 'grab') { this.scratching = true; this.readPos = this.w - 64; this.rate = 0; this.targetRate = 0; this.lastRateAt = currentTime; }
       else if (d.type === 'release') { this.scratching = false; }
-      else if (d.type === 'rate') { this.targetRate = d.value; }
+      else if (d.type === 'rate') { this.targetRate = d.value; this.lastRateAt = currentTime; }
     };
   }
   process(inputs, outputs) {
@@ -627,6 +775,9 @@ class ScratchProcessor extends AudioWorkletProcessor {
       for (let c = 0; c < output.length; c++) output[c].fill(0);
       return true;
     }
+    // The page sends a rate every frame while grabbed; if those stop (stalled or
+    // hidden tab), treat the platter as held still rather than replaying forever.
+    if (currentTime - this.lastRateAt > 0.15) this.targetRate = 0;
     this.rate += (this.targetRate - this.rate) * 0.25; // smooth — kill zipper noise
     const stopped = Math.abs(this.rate) < 0.02;        // held still = silence
     // Readable window: the last ~6s of recorded audio, ending just behind the
@@ -708,18 +859,26 @@ function stopScratchAudio() {
 
 // Normal spin is SPIN_FULL deg/ms and corresponds to 1× playback, so the audio
 // rate is simply the hand's angular speed measured in those same units.
-const SCRATCH_MAX_RATE = 8;   // clamp wild flicks
+const SCRATCH_MAX_RATE = 8;     // clamp wild flicks
 const SCRATCH_RELEASE_MS = 600; // how fast the platter recovers to full speed
+const SCRATCH_DEADZONE = 0.15;  // fraction of the radius around the spindle that is ignored
+const SCRATCH_MAX_STEP = 90;    // deg; a bigger jump between events is a glitch, not a spin
+const SCRATCH_SMOOTH = 0.45;    // per-frame velocity smoothing (higher = snappier)
 
 function scratchEnabled() {
   return fxOn() && isPlaying && scratchReady && !recordGrabbed &&
     !tonearmChoreography && !document.body.classList.contains('no-bg-animation');
 }
 
+// Pointer angle around the record centre, or null near the spindle where the
+// angle is meaningless (tiny moves there swing it by up to 180°).
 function pointerAngleDeg(e) {
   const cx = scratchRect.left + scratchRect.width / 2;
   const cy = scratchRect.top + scratchRect.height / 2;
-  return Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+  const dx = e.clientX - cx, dy = e.clientY - cy;
+  const r = Math.min(scratchRect.width, scratchRect.height) / 2;
+  if (Math.hypot(dx, dy) < r * SCRATCH_DEADZONE) return null;
+  return Math.atan2(dy, dx) * 180 / Math.PI;
 }
 
 function onRecordPointerDown(e) {
@@ -731,57 +890,84 @@ function onRecordPointerDown(e) {
   recordGrabbed = true;
   scratchMoved = false;
   scratchVel = 0;
+  scratchPendingDeg = 0;
   scratchPrevAngle = pointerAngleDeg(e);
-  scratchPrevTime = e.timeStamp || performance.now();
   // Take over the spin engine: freeze any ramp and stop its rAF loop.
   spinRampDur = 0;
   if (spinRafId) { cancelAnimationFrame(spinRafId); spinRafId = null; }
   if (card.setPointerCapture) { try { card.setPointerCapture(e.pointerId); } catch (_) {} }
   document.body.classList.add('record-grabbed');
-  // Audio doesn't cross over to the scrub layer until the finger actually moves
-  // (see onRecordPointerMove) — so a plain tap to open the album link is silent-safe.
+  // Audio doesn't cross over to the scrub layer until the pointer actually moves.
   e.preventDefault();
   window.addEventListener('pointermove', onRecordPointerMove);
-  window.addEventListener('pointerup', onRecordPointerUp);
-  window.addEventListener('pointercancel', onRecordPointerUp);
+  window.addEventListener('pointerup', releaseRecord);
+  window.addEventListener('pointercancel', releaseRecord);
+  card.addEventListener('lostpointercapture', releaseRecord);
+  window.addEventListener('blur', releaseRecord);
+  document.addEventListener('visibilitychange', releaseRecord);
+  scratchFramePrev = 0;
+  scratchRafId = requestAnimationFrame(scratchFrame);
 }
 
+// Pointer events only accumulate movement; scratchFrame turns it into velocity
+// once per frame, so a pointer that stops moving (and stops sending events)
+// reads as a held record instead of keeping its last speed.
 function onRecordPointerMove(e) {
   if (!recordGrabbed) return;
   const ang = pointerAngleDeg(e);
+  if (ang === null || scratchPrevAngle === null) { scratchPrevAngle = ang; return; }
   let d = ang - scratchPrevAngle;
   if (d > 180) d -= 360; else if (d < -180) d += 360; // shortest way round
-  const now = e.timeStamp || performance.now();
-  let dt = now - scratchPrevTime;
-  if (dt < 1) dt = 1;
   scratchPrevAngle = ang;
-  scratchPrevTime = now;
+  if (Math.abs(d) > SCRATCH_MAX_STEP) return;
+  scratchPendingDeg += d;
+}
+
+function scratchFrame(t) {
+  if (!recordGrabbed) { scratchRafId = null; return; }
+  const dt = scratchFramePrev ? Math.max(1, Math.min(t - scratchFramePrev, 50)) : 16;
+  scratchFramePrev = t;
+  const d = scratchPendingDeg;
+  scratchPendingDeg = 0;
   if (!scratchMoved && Math.abs(d) > 0.6) {
     scratchMoved = true;
     startScratchAudio(); // first real movement — cross over to the scrub layer
   }
-  // Rotate the record under the finger.
-  spinAngle = (spinAngle + d) % 360;
-  if (spinEls) spinEls.forEach((el) => (el.style.transform = `rotate(${spinAngle}deg)`));
+  // Rotate the record under the pointer.
+  if (d) {
+    spinAngle = (spinAngle + d) % 360;
+    if (spinEls) spinEls.forEach((el) => (el.style.transform = `rotate(${spinAngle}deg)`));
+  }
   // Angular speed (deg/ms) → playback rate; 1× when moving at normal spin speed.
-  scratchVel = d / dt;
-  let rate = scratchVel / SPIN_FULL;
-  rate = Math.max(-SCRATCH_MAX_RATE, Math.min(SCRATCH_MAX_RATE, rate));
-  setScratchRate(rate);
+  scratchVel += (d / dt - scratchVel) * SCRATCH_SMOOTH;
+  if (Math.abs(scratchVel) < SPIN_FULL * 0.02) scratchVel = 0;
+  if (scratchMoved) {
+    setScratchRate(Math.max(-SCRATCH_MAX_RATE, Math.min(SCRATCH_MAX_RATE, scratchVel / SPIN_FULL)));
+  }
+  scratchRafId = requestAnimationFrame(scratchFrame);
 }
 
-function onRecordPointerUp() {
+function releaseRecord(e) {
   if (!recordGrabbed) return;
+  if (e && e.type === 'visibilitychange' && !document.hidden) return;
   recordGrabbed = false;
+  if (scratchRafId) { cancelAnimationFrame(scratchRafId); scratchRafId = null; }
+  const card = document.getElementById('art-card');
   window.removeEventListener('pointermove', onRecordPointerMove);
-  window.removeEventListener('pointerup', onRecordPointerUp);
-  window.removeEventListener('pointercancel', onRecordPointerUp);
+  window.removeEventListener('pointerup', releaseRecord);
+  window.removeEventListener('pointercancel', releaseRecord);
+  if (card) card.removeEventListener('lostpointercapture', releaseRecord);
+  window.removeEventListener('blur', releaseRecord);
+  document.removeEventListener('visibilitychange', releaseRecord);
   document.body.classList.remove('record-grabbed');
   if (scratchMoved) {
     stopScratchAudio();          // cross back to the (still-live) stream
   }
+  const vel = scratchVel;
+  scratchVel = 0;
+  if (tonearmChoreography) return; // the deck handover owns the spin now
   // Carry the hand's forward momentum into the spin, then ease back to full.
-  spinSpeed = Math.max(0, Math.min(scratchVel, SPIN_FULL * 3));
+  spinSpeed = Math.max(0, Math.min(vel, SPIN_FULL * 3));
   spinPrev = 0;
   startSpinRamp(isPlaying ? SPIN_FULL : 0, SCRATCH_RELEASE_MS, EASE_OUT);
 }
@@ -832,13 +1018,17 @@ function drawBgLoop(timestamp) {
   if (timestamp - bgLastTime < BG_INTERVAL) return;
   bgLastTime = timestamp;
 
-  // Lerp toward target colors
-  bgPrimary.r += (bgPrimaryTarget.r - bgPrimary.r) * 0.06;
-  bgPrimary.g += (bgPrimaryTarget.g - bgPrimary.g) * 0.06;
-  bgPrimary.b += (bgPrimaryTarget.b - bgPrimary.b) * 0.06;
-  bgPresence.r += (bgPresenceTarget.r - bgPresence.r) * 0.06;
-  bgPresence.g += (bgPresenceTarget.g - bgPresence.g) * 0.06;
-  bgPresence.b += (bgPresenceTarget.b - bgPresence.b) * 0.06;
+  if (paletteTransition) {
+    const progress = Math.max(0, Math.min(1, (timestamp - paletteTransition.startedAt) / paletteTransition.duration));
+    const eased = progress * progress * (3 - 2 * progress);
+    bgPrimary = blendPaletteColor(paletteTransition.bgPrimary, bgPrimaryTarget, eased);
+    bgPresence = blendPaletteColor(paletteTransition.bgPresence, bgPresenceTarget, eased);
+    vizPrimary = blendPaletteColor(paletteTransition.vizPrimary, bgPrimaryTarget, eased);
+    vizPresence = blendPaletteColor(paletteTransition.vizPresence, bgPresenceTarget, eased);
+    applyAccentVars(vizPrimary, vizPresence);
+    bgForceDraw = true;
+    if (progress === 1) paletteTransition = null;
+  }
 
   // Skip the paint entirely when nothing is moving: colours have settled onto
   // their targets and the bass/presence energy is steady. The loop keeps
@@ -910,30 +1100,79 @@ function bgGlowCenter() {
 
 function applyPendingMetadata() {
   if (!pendingMetadata) return;
-  const { data, imgSrc } = pendingMetadata;
+  const { data, imgSrc, artwork, receivedAt, revision } = pendingMetadata;
   pendingMetadata = null;
 
   const createLink = (url, id, name) =>
-    `<a href="${url}${encodeURIComponent(id)}" target="_blank" style="color: inherit; text-decoration: none;">${escapeHtml(name)}</a>`;
+    `<a href="${url}${encodeURIComponent(id)}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">${escapeHtml(name)}</a>`;
 
   const cardEl   = document.getElementById('art-card');
   const titleEl  = document.querySelector('.div-playing-title');
   const artistEl = document.querySelector('.div-playing-artist');
 
-  const isChange = lastDisplayedSongId !== null && lastDisplayedSongId !== data.songid;
+  const isChange = lastDeckSongId !== null && lastDeckSongId !== data.songid;
   lastDisplayedSongId = data.songid;
 
   const applyContent = () => {
-    // Swap the cover and the colour palette together — at this point the
-    // background + side glow are dimmed, so the colour change isn't visible
-    // until they fade back in as the record spins up.
+    if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+    const tonearmSongChanged = lastDeckSongId !== data.songid;
+    recordDeparture?.cancel();
+    recordDeparture = null;
+    recordArrival?.cancel();
+    recordArrival = null;
+    // Promote the waiting deck and apply its artwork and palette together.
+    const changesDeck = lastDeckSongId && lastDeckSongId !== data.songid;
+    const targetSide = data.deck_side === "left" || data.deck_side === "right"
+      ? data.deck_side
+      : changesDeck ? (activeDeckSide === "left" ? "right" : "left") : activeDeckSide;
+    const movesDeck = targetSide !== activeDeckSide;
+    if (changesDeck) {
+      const waiting = document.querySelector("#next-record .history-item");
+      const incomingAngle = waiting?.dataset.songid === data.songid ? Number(waiting.dataset.recordAngle) || 0 : 0;
+      const incomingSpeed = waiting?.dataset.songid === data.songid ? nextSpinSpeed : 0;
+      stopNextSpin();
+      // Keep the waiting record's angle and speed when it becomes active.
+      if (spinRafId) cancelAnimationFrame(spinRafId);
+      spinRafId = null;
+      spinAngle = incomingAngle;
+      spinSpeed = incomingSpeed;
+      spinRampDur = 0;
+      spinPrev = 0;
+      const surfaces = spinEls || [playingImage, document.querySelector("#art-card .art-placeholder"), document.getElementById("record-label")];
+      surfaces.filter(Boolean).forEach((element) => { element.style.transform = `rotate(${spinAngle}deg)`; });
+    }
+    if (movesDeck) switchDecks(targetSide, lastDeckSongId === null);
+    if (changesDeck && !movesDeck) {
+      nextDeckPending = false;
+      renderNextTrack(latestNextQueue);
+    }
+    flushRecordTransfer(data.songid);
+    displayedRecordSongId = data.songid;
+    lastDeckSongId = data.songid;
     applyPendingColors();
-    playingImage.src = imgSrc;
+    if (artwork && artwork.naturalWidth) {
+      const previousImage = playingImage;
+      artwork.id = "playing-image";
+      artwork.alt = "";
+      artwork.draggable = false;
+      artwork.width = 400;
+      artwork.height = 400;
+      markImageLoading(artwork);
+      artwork.style.transform = previousImage.style.transform;
+      previousImage.replaceWith(artwork);
+      playingImage = artwork;
+      if (spinEls) spinEls = spinEls.map((element) => element === previousImage ? artwork : element);
+    } else if (artwork) {
+      // A failed cover uses the placeholder, never the previous song's picture.
+      playingImage.style.opacity = "0";
+    }
+    document.getElementById("playing-link").dataset.artReady = "true";
     titleEl.innerHTML  = createLink('https://open.spotify.com/track/', data.songid, data.song);
     artistEl.innerHTML = data.artist
       .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
       .join(', ');
     updateRecordLabel(data);
+    document.getElementById("playing-details").textContent = [data.album, data.year].filter(Boolean).join(" · ");
     // Re-anchor the arm on every metadata — song change, in-track seek, and the
     // reconnect snapshot all carry a fresh elapsed_ms (the position currently
     // being heard, already adjusted for the stream delay server-side). The
@@ -944,9 +1183,26 @@ function applyPendingMetadata() {
     songDurationMs = data.duration_ms || null;
     songStartedAtPerf =
       typeof data.elapsed_ms === "number"
-        ? performance.now() - data.elapsed_ms
+        ? receivedAt - data.elapsed_ms
         : null;
-    updateTonearm();
+    crossfaderTransitionPending = false;
+    // The inactive deck's arm stays parked whenever a real track is present.
+    // It starts hidden on page load and is also hidden again by the empty-state
+    // handler below, so the CSS ready state reflects actual metadata.
+    const inactiveTonearm = document.getElementById("next-tonearm");
+    if (changesDeck && inactiveTonearm) parkTonearm(inactiveTonearm);
+    inactiveTonearm?.classList.add("ready");
+    if (changesDeck) tonearmChoreography = false;
+    const armAlreadyLowered = movesDeck && preloweredTonearmSongId === data.songid;
+    if (changesDeck) {
+      preloweredTonearmSongId = null;
+      preloweredTonearmStartedAtPerf = null;
+      preloweredTonearmDurationMs = null;
+    }
+    updateTonearm({ entry: tonearmSongChanged && !armAlreadyLowered });
+    updateCrossfader();
+    updatePlainProgress();
+    if (changesDeck) startSpinRamp(isPlaying ? SPIN_FULL : 0, 1000, EASE_IN);
     if ('mediaSession' in navigator && data.song) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: data.song,
@@ -966,62 +1222,57 @@ function applyPendingMetadata() {
   // changes) — abort it before starting this one.
   cancelChoreography();
 
-  const armEl = document.getElementById('tonearm');
-
   // Lightweight mode: no record/arm — just cross-fade the art + text.
   if (document.body.classList.contains('no-bg-animation')) {
-    cardEl.classList.add('fade-swap');
-    titleEl.classList.add('fade-swap-text');
-    artistEl.classList.add('fade-swap-text');
-    choreoTimeout(applyContent, 600);
+    const fadeTargets = [cardEl, document.getElementById("player-metadata")];
+    fadeTargets.forEach((el) => { el.style.opacity = "0"; });
     choreoTimeout(() => {
-      cardEl.classList.remove('fade-swap');
-      titleEl.classList.remove('fade-swap-text');
-      artistEl.classList.remove('fade-swap-text');
-    }, 1200);
+      if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+      applyContent();
+      fadeTargets.forEach((el) => { el.style.opacity = ""; });
+    }, 150);
     return;
   }
 
-  // Full turntable sequence:
-  //   1. arm swings back off the side of the record
-  //   2. the record flips, swapping to the new cover while edge-on
-  //   3. arm drops back onto the rim to start the new song
-  const LEAD_MS = 700;  // let the record spin down a bit before the arm moves
-  const SWING_MS = 1000;
-  tonearmChoreography = true;
-  // Song's about to end — fade out the background + side glow as the record spins down.
-  document.body.classList.add('fx-dimmed');
-  // Record eases to a stop first, finishing right as the arm parks / flip begins.
-  startSpinRamp(0, LEAD_MS + SWING_MS, EASE_OUT);
-
+  // Keep the outgoing deck playing for a short crossover while the waiting
+  // record spins up. The arm keeps following the current track during this hold.
+  crossfaderTransitionPending = true;
+  setCrossfader("center");
+  applyPendingColors(DECK_HANDOVER_MS);
+  if (!data.deck_side || data.deck_side !== activeDeckSide) startNextSpin(data.songid, data, receivedAt);
   choreoTimeout(() => {
-    // Arm swings off the side of the record.
-    if (armEl) {
-      armEl.style.transition = 'transform 1s ease, opacity 1s ease';
-      armEl.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
-    }
+    if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+    // Lift the stylus first, return the arm outside, then slow the record.
+    releaseRecord(); // a song change takes the record out of the hand
+    tonearmChoreography = true;
+    const outgoingArm = document.getElementById("tonearm");
+    outgoingArm?.classList.add("is-lifted");
     choreoTimeout(() => {
-      cardEl.classList.add('flip-swap');
-      titleEl.classList.add('fade-swap-text');
-      artistEl.classList.add('fade-swap-text');
-      choreoTimeout(applyContent, 600); // swap at the edge-on (invisible) point
+      if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+      if (outgoingArm) outgoingArm.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
       choreoTimeout(() => {
-        cardEl.classList.remove('flip-swap');
-        titleEl.classList.remove('fade-swap-text');
-        artistEl.classList.remove('fade-swap-text');
-        // Flip done — drop the arm back onto the rim and spin back up to speed
-        // (only if actually playing; a paused record stays at rest).
-        if (armEl) armEl.style.transform = 'rotate(0deg)';
-        startSpinRamp(isPlaying ? SPIN_FULL : 0, 1400, EASE_IN);
-        // Record's spinning again — bring the background + side glow back.
-        document.body.classList.remove('fx-dimmed');
+        if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+        startSpinRamp(0, DECK_TIMING.spinDown, EASE_OUT);
         choreoTimeout(() => {
-          if (armEl) armEl.style.transition = ''; // restore play-time (linear) transition
-          tonearmChoreography = false;
-        }, SWING_MS);
-      }, 1200);
-    }, SWING_MS);
-  }, LEAD_MS);
+          if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+          // Keep the stopped record on the platter before its slower departure.
+          choreoTimeout(() => {
+            if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+            if (recordMotionEnabled()) {
+              recordDeparture = cardEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DECK_TIMING.fade, easing: "ease", fill: "forwards" });
+            }
+            choreoTimeout(() => {
+              if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+              applyContent();
+              if (recordMotionEnabled()) {
+                recordArrival = cardEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: DECK_TIMING.fade, easing: "ease" });
+              }
+            }, DECK_TIMING.fade);
+          }, DECK_TIMING.stopped);
+        }, DECK_TIMING.spinDown);
+      }, DECK_TIMING.park);
+    }, DECK_TIMING.lift);
+  }, DECK_TIMING.overlap);
 }
 
 // --- End Background Canvas ---
@@ -1213,6 +1464,7 @@ function buttonStop() {
   audioStream.pause();
   audioStream.currentTime = 0;
   isPlaying = false;
+  releaseRecord();
   stopPolling();
   updatePlayUI();
   updateButtons();
@@ -1296,19 +1548,99 @@ function setVolumeUI(val) {
 
 function preloadImage(url, callback) {
   const img = new Image();
-  img.crossOrigin = 'Anonymous';
-  // Wait for a full decode (not just download) so the bitmap is warm in cache —
-  // setting playingImage.src to the same URL then paints instantly without a flicker.
-  const done = () => callback(img);
-  img.onload = () => (img.decode ? img.decode().then(done, done) : done());
-  img.onerror = done; // don't stall the swap on a broken cover
-  img.src = url;
+  img.crossOrigin = "anonymous";
+  img.decoding = "async";
+  let finished = false;
+  const complete = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timeout);
+    img.onload = img.onerror = null;
+    callback(img);
+  };
+  const timeout = setTimeout(complete, 8000);
+  img.onload = () => (img.decode ? img.decode().then(complete, complete) : complete());
+  img.onerror = complete;
+  if (url) img.src = url;
+  else complete();
+}
+
+// Remote art starts blurred and transparent (.blur-load) and sharpens in once it
+// has loaded and decoded. An image that is already loaded shows at once, so
+// preloaded covers never flash blurred. Failed images are shown as before.
+function markImageLoading(img) {
+  img.classList.add("blur-load");
+  if (img.complete && img.naturalWidth) {
+    img.classList.add("is-loaded");
+    return;
+  }
+  img.classList.remove("is-loaded");
+  const show = () => img.classList.add("is-loaded");
+  img.addEventListener("load", () => {
+    (img.decode ? img.decode() : Promise.resolve()).then(show, show);
+  }, { once: true });
+  img.addEventListener("error", show, { once: true });
+}
+
+let displayedRecordSongId = null;
+let latestMetadataSongId = null;
+let metadataRevision = 0;
+let nextTrack = null;
+let activeDeckSide = "left";
+let lastDeckSongId = null;
+let latestNextQueue = [];
+let nextDeckPending = false;
+let nextLoadTimer = null;
+let nextFade = null;
+let nextHasShownRecord = false;
+let pendingRecordTransfer = null;
+let historyMotionCleanups = [];
+
+function recordMotionEnabled() {
+  return !document.body.classList.contains("no-bg-animation")
+    && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function historyMotionEnabled() {
+  const list = document.getElementById("history-list");
+  return recordMotionEnabled() && list && getComputedStyle(list).display !== "none";
+}
+
+function finishHistoryMotion() {
+  historyMotionCleanups.splice(0).forEach((cleanup) => cleanup());
+}
+
+function flushRecordTransfer(songid) {
+  const transfer = pendingRecordTransfer;
+  if (!transfer || transfer.toId !== songid || !transfer.items) return;
+  clearTimeout(transfer.timeout);
+  pendingRecordTransfer = null;
+  renderHistory(transfer.items, true);
 }
 
 function handleMetadata(currentData) {
+  const receivedAt = performance.now();
+  latestMetadataSnapshot = currentData;
+  latestMetadataReceivedAt = receivedAt;
+  const revision = ++metadataRevision;
+  latestMetadataSongId = currentData?.songid || null;
+  if (displayedRecordSongId && displayedRecordSongId !== latestMetadataSongId) finishHistoryMotion();
   if (!currentData || !currentData.song) {
+    cancelChoreography();
+    nextDeckPending = false;
+    clearTimeout(nextLoadTimer);
+    renderNextTrack(latestNextQueue);
+    if (pendingRecordTransfer) {
+      clearTimeout(pendingRecordTransfer.timeout);
+      const items = pendingRecordTransfer.items;
+      pendingRecordTransfer = null;
+      if (items) renderHistory(items);
+    }
+    finishHistoryMotion();
+    displayedRecordSongId = null;
+    document.getElementById("playing-link").dataset.artReady = "false";
     document
-      .querySelectorAll(".div-playing-title, .div-playing-artist")
+      .querySelectorAll(".div-playing-title, .div-playing-artist, #playing-details")
       .forEach((el) => (el.textContent = ""));
     updateRecordLabel(null);
     if (
@@ -1322,24 +1654,64 @@ function handleMetadata(currentData) {
     songStartedAtPerf = null;
     songDurationMs = null;
     tonearmSongId = null;
+    const inactiveTonearm = document.getElementById("next-tonearm");
+    if (inactiveTonearm) parkTonearm(inactiveTonearm, true);
     updateTonearm();
     return;
   }
 
+  if (lastDeckSongId && lastDeckSongId !== currentData.songid) {
+    // Hold the fader in the middle as soon as a new track is known, including
+    // while its cover art is still loading. The pending state is cleared when
+    // the metadata is applied, using the elapsed-time anchor from this event.
+    crossfaderTransitionPending = fxOn() && isPlaying;
+    updateCrossfader();
+  }
+
+  if (displayedRecordSongId && displayedRecordSongId !== currentData.songid
+      && pendingRecordTransfer?.toId !== currentData.songid && historyMotionEnabled()) {
+    finishHistoryMotion();
+    if (pendingRecordTransfer) {
+      clearTimeout(pendingRecordTransfer.timeout);
+      const items = pendingRecordTransfer.items;
+      pendingRecordTransfer = null;
+      if (items) renderHistory(items);
+    }
+    const transfer = {
+      fromId: displayedRecordSongId,
+      toId: currentData.songid,
+      items: null,
+    };
+    pendingRecordTransfer = transfer;
+    // A missing/slow cover must not hold history indefinitely.
+    transfer.timeout = setTimeout(() => {
+      if (pendingRecordTransfer !== transfer) return;
+      pendingRecordTransfer = null;
+      if (transfer.items) renderHistory(transfer.items);
+    }, 20000);
+  }
+  if (lastDeckSongId && lastDeckSongId !== currentData.songid) nextDeckPending = true;
   updateSongId(currentData.songid);
 
   if (playingImage.src !== currentData.cover) {
     // Preload new cover, extract colours, then kick off the wipe transition.
     // The DOM update (image + text) is deferred until the wipe reaches the centre.
     preloadImage(currentData.cover, function (img) {
+      if (currentData.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+      if (!fxOn()) {
+        pendingMetadata = { data: currentData, imgSrc: currentData.cover, artwork: img, receivedAt, revision };
+        applyPendingMetadata();
+        return;
+      }
       extractColors(img).then((colors) => {
-        pendingMetadata = { data: currentData, imgSrc: currentData.cover };
+        if (currentData.songid !== latestMetadataSongId || revision !== metadataRevision) return;
+        pendingMetadata = { data: currentData, imgSrc: currentData.cover, artwork: img, receivedAt, revision };
         updateBackgroundColors(colors);
       });
     });
   } else {
     // Same cover — just queue the text/metadata update
-    pendingMetadata = { data: currentData, imgSrc: currentData.cover };
+    pendingMetadata = { data: currentData, imgSrc: currentData.cover, receivedAt, revision };
     applyPendingMetadata();
   }
 }
@@ -1366,8 +1738,7 @@ function setLabelArcText(textEl, str, arc) {
   textEl.setAttribute("font-size", fs.toFixed(2));
   textEl.querySelector("textPath").textContent = text;
 }
-function updateRecordLabel(data) {
-  const svg = document.getElementById("record-label");
+function updateRecordLabel(data, svg = document.getElementById("record-label")) {
   if (!svg) return;
   setLabelArcText(svg.querySelector("#label-title"), data && data.song, LABEL_ARCS.title);
   setLabelArcText(
@@ -1385,35 +1756,447 @@ function escapeHtml(str) {
 }
 
 let lastHistoryTopId = null;
-function renderHistory(history) {
+let historyExpanded = false;
+let historyAgeTimer = null;
+function setHistoryExpanded(expanded) {
+  historyExpanded = expanded;
+  const panel = document.getElementById("history-panel");
+  const button = document.getElementById("history-toggle");
+  const label = document.getElementById("history-toggle-text");
+  if (!panel || !button) return;
+
+  panel.dataset.expanded = String(expanded);
+  button.setAttribute("aria-expanded", String(expanded));
+  if (label) label.textContent = expanded ? "Hide recently played" : "Show recently played";
+}
+
+const historyToggle = document.getElementById("history-toggle");
+if (historyToggle) {
+  historyToggle.addEventListener("click", () => {
+    setHistoryExpanded(!historyExpanded);
+  });
+}
+
+function buildHistoryRecordLabel(index, data = null) {
+  const source = document.getElementById("record-label");
+  if (!source) return "";
+
+  const label = source.cloneNode(true);
+  label.classList.add("history-record-label");
+  label.style.removeProperty("transform");
+  if (data) updateRecordLabel(data, label);
+  else label.querySelectorAll("text").forEach((element) => element.remove());
+
+  const prefix = `history-label-${index}`;
+  label.id = prefix;
+  const ids = new Map();
+  label.querySelectorAll("[id]").forEach((element) => {
+    const previousId = element.id;
+    const nextId = `${prefix}-${previousId}`;
+    ids.set(previousId, nextId);
+    element.id = nextId;
+  });
+
+  const referenceAttributes = ["href", "xlink:href", "fill", "stroke", "filter", "mask", "clip-path", "style"];
+  [label, ...label.querySelectorAll("*")].forEach((element) => {
+    referenceAttributes.forEach((attribute) => {
+      const value = element.getAttribute(attribute);
+      if (!value) return;
+      let remapped = value;
+      ids.forEach((nextId, previousId) => {
+        remapped = remapped.split(`#${previousId}`).join(`#${nextId}`);
+      });
+      if (remapped !== value) element.setAttribute(attribute, remapped);
+    });
+  });
+
+  return label.outerHTML;
+}
+
+function getHistoryAge(playedAt, now = Date.now() / 1000) {
+  if (playedAt == null || playedAt === "") return null;
+  const timestamp = Number(playedAt);
+  if (!Number.isFinite(timestamp)) return null;
+  const ageSeconds = now - timestamp;
+  if (ageSeconds < 0 || ageSeconds > 30 * 60) return null;
+  const minutes = Math.floor(ageSeconds / 60);
+  const text = minutes < 1 ? "<1min ago" : `${minutes}min ago`;
+  const center = minutes < 1 ? "<1" : String(minutes);
+  const spoken = minutes < 1
+    ? "Played less than a minute ago"
+    : `Played ${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  return { text, center, spoken };
+}
+
+function updateHistoryAges() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll(".history-age[data-played-at]").forEach((marker) => {
+    const age = getHistoryAge(marker.dataset.playedAt, now);
+    if (!age) {
+      marker.remove();
+      return;
+    }
+    if (marker.classList.contains("history-age-center")) {
+      marker.querySelector(".history-age-number").textContent = age.center;
+      marker.querySelector(".history-age-ago").textContent = "ago";
+    } else {
+      marker.textContent = age.text;
+    }
+    marker.setAttribute("aria-label", age.spoken);
+    marker.title = age.spoken;
+  });
+}
+
+let nextSpinRafId = null;
+let nextSpinSpeed = 0;
+function stopNextSpin() {
+  if (nextSpinRafId) cancelAnimationFrame(nextSpinRafId);
+  nextSpinRafId = null;
+  nextSpinSpeed = 0;
+}
+function positionNextTonearm(songid, data, receivedAt) {
+  const waiting = document.querySelector("#next-record .history-item");
+  if (!recordMotionEnabled() || waiting?.dataset.songid !== songid || !data.duration_ms) return false;
+  const arm = document.getElementById("next-tonearm");
+  if (!arm) return false;
+  arm.classList.remove("is-lifted");
+  const startedAt = typeof data.elapsed_ms === "number" ? receivedAt - data.elapsed_ms : receivedAt;
+  preloweredTonearmStartedAtPerf = startedAt;
+  preloweredTonearmDurationMs = data.duration_ms;
+  preloweredTonearmSongId = songid;
+  updatePreloweredTonearm();
+  return true;
+}
+function startNextSpin(songid, data, receivedAt) {
+  stopNextSpin();
+  const waiting = document.querySelector("#next-record .history-item");
+  if (!recordMotionEnabled() || waiting?.dataset.songid !== songid) return;
+  positionNextTonearm(songid, data, receivedAt);
+  const disc = waiting.querySelector(".history-disc");
+  const started = performance.now();
+  let previous = started;
+  let angle = Number(waiting.dataset.recordAngle) || 0;
+  const frame = (now) => {
+    if (!recordMotionEnabled() || !waiting.isConnected || latestMetadataSongId !== songid) { stopNextSpin(); return; }
+    const elapsed = Math.min(1, (now - started) / 1000);
+    nextSpinSpeed = SPIN_FULL * EASE_IN(elapsed);
+    angle = (angle + nextSpinSpeed * Math.min(50, now - previous)) % 360;
+    previous = now;
+    waiting.dataset.recordAngle = angle;
+    disc.style.setProperty("--history-art-angle", `${angle}deg`);
+    nextSpinRafId = requestAnimationFrame(frame);
+  };
+  nextSpinRafId = requestAnimationFrame(frame);
+}
+
+let nextArtworkVersion = 0;
+function switchDecks(side = activeDeckSide === "left" ? "right" : "left", initial = false) {
+  activeDeckSide = side;
+  const active = document.getElementById(`deck-${activeDeckSide}`);
+  const inactive = document.getElementById(`deck-${activeDeckSide === "left" ? "right" : "left"}`);
+  const playing = document.querySelector(".now-playing");
+  const next = document.getElementById("next-panel");
+  active.appendChild(playing);
+  inactive.appendChild(next);
+  // The role wrappers trade places, but each physical deck keeps its own arm.
+  // Exchange the arm nodes after moving the wrappers, then make IDs follow the
+  // playing/up-next roles so progress updates target the newly active arm.
+  const playingMount = playing.querySelector(".tonearm-mount");
+  const nextMount = next.querySelector(".tonearm-mount");
+  const playingArm = playingMount?.querySelector(".tonearm");
+  const nextArm = nextMount?.querySelector(".tonearm");
+  if (playingMount && nextMount && playingArm && nextArm) {
+    playingMount.replaceChildren(nextArm);
+    nextMount.replaceChildren(playingArm);
+    nextArm.id = "tonearm";
+    playingArm.id = "next-tonearm";
+  }
+  document.getElementById("dj-stage").dataset.playingSide = activeDeckSide;
+  // Initial deck alignment must preserve the first queue artwork/load callback.
+  if (initial) {
+    nextDeckPending = false;
+    clearTimeout(nextLoadTimer);
+    return;
+  }
+  // Leave the emptied platter visible; queue changes during the wait are coalesced.
+  nextDeckPending = true;
+  ++nextArtworkVersion;
+  nextFade?.cancel();
+  const container = document.getElementById("next-record");
+  container.replaceChildren();
+  container.style.removeProperty("opacity");
+  clearTimeout(nextLoadTimer);
+  nextLoadTimer = setTimeout(() => {
+    nextDeckPending = false;
+    renderNextTrack(latestNextQueue);
+  }, 3000);
+}
+
+function renderNextTrack(queue) {
+  latestNextQueue = (queue || []).slice(0, 1);
+  if (nextDeckPending) return;
+  const container = document.getElementById("next-record");
+  if (!container) return;
+  nextTrack = latestNextQueue[0] || null;
+  const version = ++nextArtworkVersion;
+  nextFade?.cancel();
+  const track = nextTrack;
+  const showDetails = () => {
+    const info = document.getElementById("next-track-info");
+    if (!info) return;
+    if (!track) { info.textContent = "Nothing queued"; return; }
+    info.innerHTML = `<div class="next-track-title">${escapeHtml(track.song || "Unknown track")}</div><div class="next-track-artist">${escapeHtml((track.artist || []).map((artist) => artist.name).join(" · ") || "Unknown artist")}</div><div class="next-track-details">${escapeHtml([track.album, track.year].filter(Boolean).join(" · "))}</div>`;
+  };
+  const fadeDuration = fxOn() ? 1500 : 150;
+  const shouldFade = !fxOn() || recordMotionEnabled();
+  const animateArrival = nextHasShownRecord && shouldFade;
+  const current = container.querySelector(".history-item");
+  if (track && current?.dataset.songid === track.songid && current.dataset.cover === (track.cover || "")) {
+    const year = current.querySelector('[id$="-label-year"]');
+    if (year) year.textContent = track.year || "";
+    showDetails();
+    return;
+  }
+  const replace = (artwork) => {
+    if (version !== nextArtworkVersion || nextDeckPending) return;
+    container.style.removeProperty("opacity");
+    showDetails();
+    if (!track) { container.replaceChildren(); return; }
+    const angle = (Math.random() * 360).toFixed(2);
+    const title = escapeHtml(track.song || "Unknown track");
+    const artists = (track.artist || []).map((artist) => escapeHtml(artist.name)).join(", ") || "Unknown artist";
+    container.innerHTML = `<a class="history-item" data-songid="${escapeHtml(track.songid)}" data-record-angle="${angle}" data-cover="${escapeHtml(track.cover || "")}" href="https://open.spotify.com/track/${encodeURIComponent(track.songid)}" target="_blank" rel="noopener noreferrer" aria-label="Up next: ${title} by ${artists}">
+      <span class="history-disc" style="--history-art-angle:${angle}deg"><span class="art-placeholder"></span><span class="record-overlay"></span>${buildHistoryRecordLabel("next", track)}<span class="art-sheen"></span></span>
+    </a>`;
+    if (artwork?.naturalWidth) {
+      artwork.className = "history-art";
+      artwork.alt = "";
+      markImageLoading(artwork);
+      container.querySelector(".history-disc").appendChild(artwork);
+    }
+    nextHasShownRecord = true;
+    if (animateArrival) {
+      // Drop the incoming record onto the deck without flipping it.
+      const frames = recordMotionEnabled() ? [
+        { opacity: 0, transform: "perspective(900px) translateZ(40px)", offset: 0 },
+        { opacity: 1, transform: "perspective(900px) translateZ(0px)", offset: 1 },
+      ] : [{ opacity: 0 }, { opacity: 1 }];
+      nextFade = container.animate(frames, { duration: fadeDuration, easing: "ease" });
+    }
+  };
+  const ready = (artwork) => {
+    if (version !== nextArtworkVersion || nextDeckPending) return;
+    if (current && shouldFade) {
+      const fade = container.animate([{ opacity: 1 }, { opacity: 0 }], { duration: fadeDuration, easing: "ease", fill: "forwards" });
+      nextFade = fade;
+      fade.finished.then(() => { fade.cancel(); replace(artwork); }, () => {});
+    } else replace(artwork);
+  };
+  if (track) preloadImage(track.cover, ready);
+  else ready(null);
+}
+
+let historyFlightId = 0;
+function prepareHistoryFlight(node) {
+  node.removeAttribute("href");
+  node.removeAttribute("aria-label");
+  node.setAttribute("aria-hidden", "true");
+  node.classList.add("history-flight");
+  const prefix = `history-flight-${++historyFlightId}-`;
+  const ids = new Map();
+  node.querySelectorAll("[id]").forEach((element) => {
+    ids.set(element.id, prefix + element.id);
+    element.id = prefix + element.id;
+  });
+  node.querySelectorAll("*").forEach((element) => {
+    [...element.attributes].forEach((attribute) => {
+      let value = attribute.value;
+      ids.forEach((next, before) => { value = value.split(`#${before}`).join(`#${next}`); });
+      if (value !== attribute.value) element.setAttribute(attribute.name, value);
+    });
+  });
+}
+
+function animateHistorySlots(previous, list) {
+  if (!historyMotionEnabled()) return;
+  const duration = 650;
+  const easing = "cubic-bezier(.22,.61,.36,1)";
+  const animate = (element, frames, options = {}) => {
+    const motion = element.animate(frames, { duration, easing, ...options });
+    const cleanup = () => { motion.cancel(); element.style.removeProperty("visibility"); };
+    historyMotionCleanups.push(cleanup);
+    motion.finished.then(cleanup, () => {});
+  };
+  const targets = [...list.children];
+  targets.forEach((item, index) => {
+    const before = previous.find((entry) => entry.key === item.dataset.historyKey);
+    const after = item.getBoundingClientRect();
+    if (before) {
+      const base = getComputedStyle(item).transform;
+      animate(item, [
+        { transform: `translate(${before.rect.x - after.x}px, ${before.rect.y - after.y}px) scale(${before.rect.width / after.width}) ${base}` },
+        { transform: base },
+      ]);
+    } else {
+      const base = getComputedStyle(item).transform;
+      animate(item, [
+        { opacity: 0, transform: `scale(.96) ${base}` },
+        { opacity: 1, transform: base },
+      ]);
+    }
+  });
+  // Departing records stay inside the panel so the scroll area clips them like the rest.
+  const panel = list.closest(".history-panel");
+  const panelRect = panel.getBoundingClientRect();
+  previous.filter((entry) => !targets.some((item) => item.dataset.historyKey === entry.key))
+    .forEach((entry) => {
+      const departing = entry.node;
+      prepareHistoryFlight(departing);
+      departing.style.cssText = `--record-size:${entry.rect.width}px;left:${entry.rect.x - panelRect.x}px;top:${entry.rect.y - panelRect.y}px;width:${entry.rect.width}px;height:${entry.rect.height}px;`;
+      panel.appendChild(departing);
+      const motion = departing.animate([
+        { opacity: 1, transform: "translateY(0) scale(1)" },
+        { opacity: 0, transform: "translateY(10px) scale(.96)" },
+      ], { duration, easing });
+      const cleanup = () => { motion.cancel(); departing.remove(); };
+      historyMotionCleanups.push(cleanup);
+      motion.finished.then(cleanup, cleanup);
+    });
+}
+
+// Keep in-flight records attached to their slots if the layout changes.
+window.addEventListener("resize", () => {
+  finishHistoryMotion();
+  // The deck size follows the viewport (rotation, mobile browser bars), so the arm must too.
+  lockTonearmSize(true);
+  updateTonearm();
+});
+document.getElementById("bgToggleBtn")?.addEventListener("click", finishHistoryMotion);
+document.querySelector("main")?.addEventListener("scroll", finishHistoryMotion, { passive: true });
+
+// One angle per play for this page session, shared by every history rerender.
+const historyRecordAngles = new Map();
+function historyRecordKey(track) {
+  return `${track.songid}:${track.played_at ?? ""}`;
+}
+function historyRecordAngle(track) {
+  const key = historyRecordKey(track);
+  if (!historyRecordAngles.has(key)) {
+    historyRecordAngles.set(key, (Math.random() * 360).toFixed(2));
+    if (historyRecordAngles.size > 200) historyRecordAngles.delete(historyRecordAngles.keys().next().value);
+  }
+  return historyRecordAngles.get(key);
+}
+
+function renderHistory(history, animateUpdate = false) {
   const panel = document.getElementById("history-panel");
   const list = document.getElementById("history-list");
   if (!panel || !list) return;
 
   const items = (history || []).slice(0, 4);
+  if (!animateUpdate && pendingRecordTransfer && items[0]?.songid === pendingRecordTransfer.fromId
+      && historyMotionEnabled()) {
+    pendingRecordTransfer.items = items;
+    return;
+  }
+  const keys = items.map(historyRecordKey).join("|");
+  if (!animateUpdate && keys === renderedHistoryKeys && !historyCrossfade) {
+    updateHistoryAges();
+    return;
+  }
+  finishHistoryMotion();
+  const previous = [...list.children].map((node) => ({
+    key: node.dataset.historyKey, rect: node.getBoundingClientRect(), node: node.cloneNode(true),
+  }));
   panel.style.display = items.length ? "" : "none";
+  setHistoryExpanded(historyExpanded);
 
   const newTopId = items.length ? items[0].songid : null;
-  const isNew = newTopId && newTopId !== lastHistoryTopId && lastHistoryTopId !== null;
+  const isNew = (newTopId && newTopId !== lastHistoryTopId && lastHistoryTopId !== null)
+    || (renderedHistoryKeys !== null && keys !== renderedHistoryKeys);
   lastHistoryTopId = newTopId;
 
+  // Without record motion the list cross-fades: out, swap, then back in.
+  if ((animateUpdate || isNew) && previous.length && !historyMotionEnabled()) {
+    crossfadeHistory(list, () => fillHistoryList(list, items, keys));
+    return;
+  }
+  if (historyCrossfade) {
+    historyCrossfade.cancel();
+    historyCrossfade = null;
+    list.getAnimations().forEach((animation) => animation.cancel());
+  }
+  fillHistoryList(list, items, keys);
+  if (animateUpdate || isNew) animateHistorySlots(previous, list);
+}
+
+let renderedHistoryKeys = null;
+let historyCrossfade = null;
+function crossfadeHistory(list, swap) {
+  if (historyCrossfade) historyCrossfade.cancel();
+  const fade = { cancelled: false, cancel() { this.cancelled = true; } };
+  historyCrossfade = fade;
+  const from = getComputedStyle(list).opacity;
+  list.animate([{ opacity: from }, { opacity: 0 }], { duration: 220, easing: "ease-in", fill: "forwards" })
+    .finished.then(async () => {
+      if (fade.cancelled) return;
+      swap();
+      // Let the new covers decode so they fade in with their rows instead of popping in after.
+      const images = [...list.querySelectorAll(".history-art")].map((img) => img.decode().catch(() => {}));
+      await Promise.race([Promise.all(images), new Promise((resolve) => setTimeout(resolve, 400))]);
+      if (fade.cancelled) return;
+      list.getAnimations().forEach((animation) => animation.cancel());
+      await list.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, easing: "ease-out" }).finished.catch(() => {});
+      if (historyCrossfade === fade) historyCrossfade = null;
+    }, () => {});
+}
+
+function fillHistoryList(list, items, keys) {
+  renderedHistoryKeys = keys;
+  // Carry already-loaded covers into the rebuilt rows so they never blank and reload.
+  const loadedArt = new Map();
+  list.querySelectorAll(".history-item").forEach((item) => {
+    const img = item.querySelector(".history-art");
+    if (img?.complete && img.naturalWidth) loadedArt.set(item.dataset.historyKey, img);
+  });
   list.innerHTML = items
-    .map((it) => {
-      const artists = (it.artist || []).map((a) => escapeHtml(a.name)).join(", ");
-      return `<a class="history-item" href="https://open.spotify.com/track/${encodeURIComponent(it.songid)}" target="_blank">
-        <img class="history-art" src="${escapeHtml(it.cover || "")}" alt="" />
-        <div class="history-text">
-          <div class="history-title">${escapeHtml(it.song)}</div>
-          <div class="history-artist">${artists}</div>
-        </div>
+    .map((it, index) => {
+      const artists = (it.artist || []).map((a) => escapeHtml(a.name)).join(", ") || "Unknown artist";
+      const title = escapeHtml(it.song || "Unknown track");
+      const cover = it.cover
+        ? `<img class="history-art" src="${escapeHtml(it.cover)}" alt="" loading="lazy" />`
+        : "";
+      const recordLabel = buildHistoryRecordLabel(index);
+      const age = getHistoryAge(it.played_at);
+      const ageCenter = age
+        ? `<span class="history-age history-age-center" role="img" data-played-at="${Number(it.played_at)}" aria-label="${age.spoken}" title="${age.spoken}"><span class="history-age-value"><span class="history-age-number">${escapeHtml(age.center)}</span><span class="history-age-unit">min</span></span><span class="history-age-ago">ago</span></span>`
+        : "";
+      const ageRow = age
+        ? `<span class="history-age history-age-row" role="img" data-played-at="${Number(it.played_at)}" aria-label="${age.spoken}" title="${age.spoken}">${escapeHtml(age.text)}</span>`
+        : "";
+      return `<a class="history-item" data-history-key="${escapeHtml(historyRecordKey(it))}" style="--record-index:${index}" href="https://open.spotify.com/track/${encodeURIComponent(it.songid)}" target="_blank" rel="noopener noreferrer" aria-label="${title} by ${artists} on Spotify">
+        <span class="history-platter platter" aria-hidden="true"></span>
+        <span class="history-disc" style="--history-art-angle:${historyRecordAngle(it)}deg"><span class="art-placeholder"></span>${cover}<span class="record-overlay"></span>${recordLabel}<span class="art-sheen"></span>${ageCenter}</span>
+        <span class="history-tag">
+          <span class="history-title">${title}</span>
+          <span class="history-artist">${artists}</span>
+          ${ageRow}
+        </span>
       </a>`;
     })
     .join("");
 
-  // Animate the freshly added song shifting into the top of the list
-  if (isNew && list.firstElementChild) {
-    list.firstElementChild.classList.add("history-enter");
-  }
+  list.querySelectorAll(".history-item").forEach((item) => {
+    const img = item.querySelector(".history-art");
+    const loaded = loadedArt.get(item.dataset.historyKey);
+    if (img && loaded && loaded.src === img.src) img.replaceWith(loaded);
+    else if (img) {
+      markImageLoading(img);
+      img.addEventListener("error", () => img.remove(), { once: true });
+    }
+  });
+  updateHistoryAges();
+  if (!historyAgeTimer) historyAgeTimer = window.setInterval(updateHistoryAges, 30_000);
 }
 
 function connectSSE() {
@@ -1425,13 +2208,21 @@ function connectSSE() {
     handleMetadata(JSON.parse(e.data));
   });
 
+  evtSource.addEventListener("queue", (e) => {
+    renderNextTrack(JSON.parse(e.data).queue);
+  });
+
+  evtSource.addEventListener("source", (e) => {
+    setLiveInput(JSON.parse(e.data).live === true);
+  });
+
   evtSource.addEventListener("history", (e) => {
     renderHistory(JSON.parse(e.data).history);
   });
 
   evtSource.addEventListener("listeners", (e) => {
     const data = JSON.parse(e.data);
-    document.getElementById("listener-count").textContent = data.count;
+    document.querySelectorAll(".listener-count").forEach((el) => { el.textContent = data.count; });
   });
 
   evtSource.addEventListener("skipvotes", (e) => {
@@ -1462,6 +2253,16 @@ function connectSSE() {
     const data = JSON.parse(e.data);
     if (data.uuid && data.uuid !== getOrCreateUUID()) return;
     showAnnouncement(data.text);
+  });
+  evtSource.addEventListener("preferences", (e) => {
+    const data = JSON.parse(e.data);
+    if (data.uuid !== getOrCreateUUID()) return;
+    if (data.theme === "light" || data.theme === "dark") {
+      applyTheme(data.theme);
+      storageSet("ms_theme", data.theme);
+    }
+    if (typeof data.effects === "boolean" && data.effects !== fxOn()) toggleBgAnimation();
+    pollServer();
   });
 
   evtSource.onerror = () => {
@@ -1641,10 +2442,23 @@ function applyAccentVars(primary, presence) {
   root.setProperty("--c2", rgbToHex(presence));
 }
 
-// Stash the new palette and drive the song-change sequence. The colours are
-// NOT applied here — applyContent() snaps them at the exact cover-swap moment
-// (while the background + side glow are dimmed), so they never change ahead of
-// the swap. The old colour-wipe transition is intentionally gone.
+// Live input mode: the API's "source" event says the stream is the live input
+// alone (Spotify idle). The player fades out (global.css) and the visualizer
+// fades to the default accent. The next record's palette replaces it as usual.
+const LIVE_INPUT_COLOR = { r: 224, g: 122, b: 63 }; // --accent default in global.css
+let liveInput = false;
+
+function setLiveInput(live) {
+  if (live === liveInput) return;
+  liveInput = live;
+  document.body.classList.toggle("live-input", live);
+  if (live) {
+    pendingColors = { primary: { ...LIVE_INPUT_COLOR }, presence: { ...LIVE_INPUT_COLOR } };
+    applyPendingColors();
+  }
+}
+
+// Stage the palette for the incoming record's crossover.
 function updateBackgroundColors(colors) {
   pendingColors = {
     primary: parseRgb(colors.primary),
@@ -1654,70 +2468,69 @@ function updateBackgroundColors(colors) {
   applyPendingMetadata();
 }
 
-// Snap the stashed palette into the live colour globals. Called from
-// applyContent() — i.e. exactly when the cover image is swapped.
-function applyPendingColors() {
+function blendPaletteColor(from, to, progress) {
+  return {
+    r: Math.round(from.r + (to.r - from.r) * progress),
+    g: Math.round(from.g + (to.g - from.g) * progress),
+    b: Math.round(from.b + (to.b - from.b) * progress),
+  };
+}
+
+// Share the deck handover's duration rather than starting a separate fade at promotion.
+function applyPendingColors(duration = PALETTE_FADE_MS) {
   if (!pendingColors) return;
-  vizPrimary = { ...pendingColors.primary };
-  vizPresence = { ...pendingColors.presence };
   bgPrimaryTarget = { ...pendingColors.primary };
-  bgPrimary = { ...pendingColors.primary };
   bgPresenceTarget = { ...pendingColors.presence };
-  bgPresence = { ...pendingColors.presence };
-  applyAccentVars(vizPrimary, vizPresence);
+  if (hasAppliedPalette && fxOn()) {
+    paletteTransition = {
+      startedAt: performance.now(),
+      duration,
+      bgPrimary: { ...bgPrimary }, bgPresence: { ...bgPresence },
+      vizPrimary: { ...vizPrimary }, vizPresence: { ...vizPresence },
+    };
+  } else {
+    paletteTransition = null;
+    bgPrimary = { ...bgPrimaryTarget };
+    bgPresence = { ...bgPresenceTarget };
+    vizPrimary = { ...bgPrimaryTarget };
+    vizPresence = { ...bgPresenceTarget };
+    applyAccentVars(vizPrimary, vizPresence);
+  }
+  hasAppliedPalette = true;
+  bgForceDraw = true;
   pendingColors = null;
 }
 
-// Cookie helpers
-function getCookie(name) {
-  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-  return match ? match[2] : null;
-}
-
-function setCookie(name, value, days) {
-  const d = new Date();
-  d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
-  document.cookie = name + "=" + value + ";expires=" + d.toUTCString() + ";path=/";
+// One-off migration: copy a bgAnimation cookie into localStorage, then expire it.
+function migrateBgAnimationCookie() {
+  const match = document.cookie.match(/(?:^|; )bgAnimation=(on|off)(?:;|$)/);
+  if (!match) return;
+  if (storageGet("bgAnimation") === null) storageSet("bgAnimation", match[1]);
+  document.cookie = "bgAnimation=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
 }
 
 // Background animation toggle
 // Default: OFF. Only auto-enable on capable desktop devices.
 // Cheap upfront gate. Kept deliberately permissive — it only rules out devices
-// that clearly can't cope (reduced-motion, phones, a software GPU, very low
-// core/RAM). The real decision is made at runtime by the FPS probe below, which
-// measures actual performance with the real workload instead of guessing from
-// specs (browsers don't expose enough hardware detail to judge "grunt" reliably).
+// that clearly can't cope (reduced-motion, phones/tablets, very low core/RAM).
+// The real decision is made at runtime by the FPS probe below, which measures
+// actual performance with the real workload instead of guessing from specs
+// (browsers don't expose enough hardware detail to judge "grunt" reliably).
 function shouldEnableAnimations() {
   // Hard opt-out: user prefers reduced motion
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
 
-  // Phones/tablets by user-agent (the layout + effects are desktop-oriented).
-  // NOTE: we no longer disable on touch capability alone — plenty of capable
-  // laptops are touchscreens and were being wrongly excluded.
-  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) return false;
+  // Phones/tablets. userAgentData.mobile covers Chromium; the UA pattern covers
+  // the rest. iPadOS in desktop mode reports a Mac user agent, so it is caught
+  // by the Mac check plus a touch-point count (real Macs report none).
+  if (navigator.userAgentData && navigator.userAgentData.mobile) return false;
+  if (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent)) return false;
+  const isMacLike = navigator.platform === "MacIntel" || /Macintosh/.test(navigator.userAgent);
+  if (isMacLike && navigator.maxTouchPoints > 1) return false;
 
   // Only rule out genuinely low-end machines.
   if (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4) return false;
   if (navigator.deviceMemory && navigator.deviceMemory < 4) return false;
-
-  // Software / known-weak GPU via the WebGL renderer string (when the browser
-  // still exposes it — many now mask it for privacy, which is fine).
-  try {
-    const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (!gl) return false; // no WebGL at all — likely very weak
-    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-    if (debugInfo) {
-      const renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)).toLowerCase();
-      if (renderer.includes('swiftshader') || renderer.includes('llvmpipe') ||
-          renderer.includes('software') || renderer.includes('microsoft basic')) {
-        return false;
-      }
-    }
-  } catch (e) {
-    // Couldn't probe WebGL — don't hold that against the device; let the FPS
-    // probe be the judge rather than disabling outright.
-  }
 
   return true;
 }
@@ -1730,21 +2543,39 @@ function updateToggleButton() {
   btn.title = isOff ? 'Background effects: off' : 'Background effects: on';
 }
 
+function refreshVisualMetadata() {
+  cancelChoreography();
+  if (latestMetadataSnapshot) {
+    const refreshed = { ...latestMetadataSnapshot };
+    if (typeof refreshed.elapsed_ms === "number") refreshed.elapsed_ms += performance.now() - latestMetadataReceivedAt;
+    handleMetadata(refreshed);
+  }
+}
 function toggleBgAnimation() {
   const isOff = document.body.classList.toggle('no-bg-animation');
-  setCookie('bgAnimation', isOff ? 'off' : 'on', 365);
+  lockTonearmSize(true);
+  storageSet('bgAnimation', isOff ? 'off' : 'on');
   // User made an explicit choice — stop second-guessing their hardware
   perfWatchDone = true;
   updateToggleButton();
+  updatePlainProgress();
+  refreshVisualMetadata();
   if (isOff) {
     stopBg();
     stopViz();
   } else {
     startBg();
+    const image = playingImage;
+    if (image.naturalWidth) extractColors(image).then((colors) => {
+      if (!fxOn() || playingImage !== image) return;
+      pendingColors = { primary: parseRgb(colors.primary), presence: parseRgb(colors.presence) };
+      applyPendingColors();
+    });
     // Turning effects on mid-playback: build the Web Audio graph now if needed.
     if (isPlaying) enableAudioGraph();
   }
   ensureSpin();
+  pollServer();
 }
 
 // Runtime performance guard: while effects are auto-enabled, sample the real frame
@@ -1755,7 +2586,7 @@ let perfWatchDone = false;
 function startPerfWatch() {
   if (perfWatchDone || perfWatchActive) return;
   // Never override effects the user explicitly switched on
-  if (getCookie('bgAnimation') === 'on') { perfWatchDone = true; return; }
+  if (storageGet('bgAnimation') === 'on') { perfWatchDone = true; return; }
   if (document.body.classList.contains('no-bg-animation')) return;
 
   perfWatchActive = true;
@@ -1784,11 +2615,13 @@ function startPerfWatch() {
           perfWatchActive = false;
           perfWatchDone = true;
           document.body.classList.add('no-bg-animation');
-          setCookie('bgAnimation', 'off', 365);
+          refreshVisualMetadata();
+          storageSet('bgAnimation', 'off');
           updateToggleButton();
           stopBg();
           stopViz();
           ensureSpin();
+          pollServer();
           if (typeof showToast === 'function') showToast('Effects disabled to keep things smooth');
           return;
         }
@@ -1805,8 +2638,9 @@ function startPerfWatch() {
 }
 
 // Initialize background animation preference
-// Cookie always wins. No cookie → default OFF unless device passes all checks.
+// Stored choice always wins. Nothing stored → default OFF unless device passes all checks.
 (function initBgAnimationToggle() {
+  migrateBgAnimationCookie();
   if (DISPLAY_MODE) {
     // Always-on effects on a display; never auto-disable for perf.
     document.body.classList.remove('no-bg-animation');
@@ -1815,7 +2649,7 @@ function startPerfWatch() {
     startBg();
     return;
   }
-  const pref = getCookie('bgAnimation');
+  const pref = storageGet('bgAnimation');
   if (pref === 'on') {
     // User explicitly wants effects — respect it
   } else if (pref === 'off' || !shouldEnableAnimations()) {
@@ -1851,14 +2685,44 @@ function showToast(message) {
 }
 
 // ---- Modals ----
+// Element focused before the first modal opened. Kept across modal-to-modal
+// steps (request -> confirm -> back) and restored once no modal is open.
+let modalOpener = null;
+const MODAL_FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+  'select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])';
+
+function anyModalOpen() {
+  return document.querySelector(".modal-overlay.show") !== null;
+}
 function openModal(id) {
+  if (!modalOpener && !anyModalOpen()) modalOpener = document.activeElement;
   document.getElementById(id).classList.add("show");
+}
+// Hides one modal and, if none remain open, returns focus to the opener.
+function hideModal(id) {
+  document.getElementById(id).classList.remove("show");
+  restoreModalFocus();
+}
+// Swaps one modal for another without touching the remembered opener.
+function switchModal(fromId, toId) {
+  document.getElementById(fromId).classList.remove("show");
+  openModal(toId);
+}
+function restoreModalFocus() {
+  if (anyModalOpen()) return;
+  const opener = modalOpener;
+  modalOpener = null;
+  if (opener && opener.isConnected && typeof opener.focus === "function") {
+    opener.focus({ preventScroll: true });
+  }
 }
 function closeModals() {
   document.querySelectorAll(".modal-overlay").forEach((m) =>
     m.classList.remove("show")
   );
   stopSpotifyPreview();
+  restoreModalFocus();
 }
 function closeModalsFromOverlay(event) {
   if (event.target === event.currentTarget) closeModals();
@@ -1873,8 +2737,7 @@ function openRequestModal() {
 }
 function backToRequest() {
   stopSpotifyPreview();
-  document.getElementById("songConfirmModal").classList.remove("show");
-  openModal("songRequestModal");
+  switchModal("songConfirmModal", "songRequestModal");
 }
 function openVoteModal() {
   if (!isPlaying || !songId || songId === lastVotedSongId) return;
@@ -1886,6 +2749,46 @@ function stopSpotifyPreview() {
   if (spotifyPreview) spotifyPreview.src = "about:blank";
 }
 
+// Keeps Tab and Shift+Tab inside the top-most open modal card. The top-most
+// overlay is the one with the highest z-index (ties go to the later DOM node).
+// Focus inside a cross-origin iframe (e.g. the Turnstile widget) is not visible
+// to this listener, so the browser handles Tab there as usual.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  let top = null;
+  let topZ = -Infinity;
+  document.querySelectorAll(".modal-overlay.show").forEach((overlay) => {
+    const z = parseInt(getComputedStyle(overlay).zIndex, 10) || 0;
+    if (z >= topZ) {
+      top = overlay;
+      topZ = z;
+    }
+  });
+  const card = top && top.querySelector(".modal-card");
+  if (!card) return;
+
+  const items = Array.from(card.querySelectorAll(MODAL_FOCUSABLE)).filter(
+    (el) => el.getClientRects().length > 0
+  );
+  if (items.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  const inside = card.contains(active);
+  if (e.shiftKey) {
+    if (!inside || active === first) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (!inside || active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+});
+
 // ---- Admin announcements ----
 // Closes only its own overlay (not closeModals) so a popup arriving while the
 // user is mid-request doesn't tear down the modal they were using.
@@ -1894,7 +2797,7 @@ function showAnnouncement(text) {
   openModal("announceModal");
 }
 function closeAnnouncement() {
-  document.getElementById("announceModal").classList.remove("show");
+  hideModal("announceModal");
 }
 
 // ---- Keyboard shortcuts ----
@@ -2003,7 +2906,16 @@ document.addEventListener("DOMContentLoaded", function () {
     };
   }
 
+  // Only the newest search may write results: starting a new search (or
+  // clearing the query) aborts the one still in flight.
+  let searchController = null;
+
   function searchSongs() {
+    if (searchController) {
+      searchController.abort();
+      searchController = null;
+    }
+
     // Require a name before searching
     if (!requesterNameInput.value.trim()) {
       searchResults.innerHTML =
@@ -2018,13 +2930,18 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
+    const controller = new AbortController();
+    searchController = controller;
+
     fetch(API_BASE + "/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, uuid: getOrCreateUUID() }),
+      signal: controller.signal,
     })
       .then((response) => response.json())
       .then((data) => {
+        if (controller.signal.aborted) return;
         if (data.error || data.detail) {
           displayMessage(data.error || data.detail);
         } else {
@@ -2032,8 +2949,12 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       })
       .catch((error) => {
+        if (error.name === "AbortError") return;
         console.error("Error:", error);
         displayMessage("An error occurred while searching.");
+      })
+      .finally(() => {
+        if (searchController === controller) searchController = null;
       });
   }
 
@@ -2064,6 +2985,8 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
       `;
+      const art = item.querySelector(".result-art");
+      if (art instanceof HTMLImageElement) markImageLoading(art);
       item.addEventListener("click", () => showConfirmation(track));
       searchResults.appendChild(item);
     });
@@ -2072,15 +2995,16 @@ document.addEventListener("DOMContentLoaded", function () {
   function showConfirmation(track) {
     selectedSongData = track;
 
-    document.getElementById("confirm-song-image").src = track.cover || "";
+    const confirmImage = document.getElementById("confirm-song-image");
+    confirmImage.src = track.cover || "";
+    markImageLoading(confirmImage);
     document.getElementById("confirm-song-title").textContent = track.name;
     document.getElementById("confirm-song-artist").textContent = track.artist;
 
     const spotifyPreview = document.getElementById("spotify-preview");
     spotifyPreview.src = `https://open.spotify.com/embed/track/${track.id}`;
 
-    document.getElementById("songRequestModal").classList.remove("show");
-    openModal("songConfirmModal");
+    switchModal("songRequestModal", "songConfirmModal");
   }
 
   document
@@ -2214,6 +3138,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 audioStream.addEventListener("ended", function () {
   isPlaying = false;
+  releaseRecord();
   stopPolling();
   updatePlayUI();
 });
