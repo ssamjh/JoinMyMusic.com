@@ -208,8 +208,6 @@
       ctx.fillStyle = 'rgba(127,138,155,0.28)';
       ctx.fillRect(0, mid - len, w, 1);
       ctx.fillRect(0, mid + len, w, 1);
-      ctx.fillStyle = 'rgba(127,138,155,0.75)';
-      ctx.fillText(`${g} dB`, 4, mid - len - 1);
     }
     // One value per pixel (the loudest column landing on it), drawn as a single filled
     // shape per layer: separate bars at fractional positions leave seams between them.
@@ -249,6 +247,15 @@
       shape(series(2 + ch), ch);
       ctx.fillStyle = `rgb(${wv.colors[ch]})`;
       ctx.fill();
+    }
+    // Grid labels last, on a backing box, so the waveform never covers them.
+    for (const g of GRID_DB) {
+      const label = `${g} dB`;
+      const y = mid - ampToLen(fromDb(g), half) - 1;
+      ctx.fillStyle = 'rgba(10,12,16,0.75)';
+      ctx.fillRect(2, y - 11, ctx.measureText(label).width + 4, 11);
+      ctx.fillStyle = 'rgba(127,138,155,0.9)';
+      ctx.fillText(label, 4, y);
     }
   }
 

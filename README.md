@@ -146,9 +146,9 @@ The login is saved in the `spotify-state` volume. `docker compose down -v` erase
 | `RADIO_FILTER`: an extra FFmpeg filter chain, applied by the encoder after processing | same |
 | `FFMPEG_LOGLEVEL` (default `warning`) | same |
 | `CONTROL_PORT` (default `8090`, `0` disables) | same |
-| Device name, crossfade (5 s), autoplay, login method | `backend/audio/config/spotify.yml` |
-| VBAN output and input | `backend/audio/config/audio.yml` |
-| Input trim and level control | `backend/audio/config/processing.liq` |
+| Device name, crossfade (5 s), autoplay, login method, volume (off) | `backend/audio/config/spotify.yml` |
+| VBAN output and input, Spotify input trim | `backend/audio/config/audio.yml` |
+| Input AGC and VBAN trim | `backend/audio/config/processing.liq` |
 | Processing chain | `backend/audio/config/processing.ffmpeg` (applied live) |
 
 The `config/` directory is mounted read-only. Saving `processing.ffmpeg` applies it
@@ -158,8 +158,10 @@ live. After editing `processing.liq`, `audio.yml` or `spotify.yml`, run
 
 **Processing**
 
-- Liquidsoap is the input stage. It trims Spotify by 12 dB, mixes in the optional VBAN
-  input, and applies the input AGC: a gated leveler that moves its gain at fixed
+- Liquidsoap is the input stage. It trims Spotify (`spotify.trim_db` in `audio.yml`,
+  default -12 dB), mixes in the optional VBAN input (`vban_receiver.trim_db`, default
+  -6 dB; Spotify is ducked by `vban_receiver.duck_db`, default -10 dB, while the input is
+  live), and applies the input AGC: a gated leveler that moves its gain at fixed
   dB-per-second rates toward a target RMS level. It won't raise the gain for quiet
   material and holds it during silence, so quiet passages and pauses aren't pumped up.
   Its rates, range and thresholds are named settings at the top of the AGC section.

@@ -23,7 +23,14 @@ server:
   port: 3678
   allow_origin: ''
 
+# Audio for the processor: 320 kbps and no software volume (the Connect volume control
+# does not change the samples). Don't set flac_enabled: this go-librespot build cannot
+# decrypt FLAC and refuses to start with it on. Track normalisation stays on: one fixed
+# gain per track toward -14 LUFS, capped so the track's peak stays under full scale. It
+# evens out levels between songs without touching their dynamics, so the input AGC only
+# makes small corrections.
 bitrate: 320
+external_volume: true
 volume_steps: 100
 initial_volume: 100
 

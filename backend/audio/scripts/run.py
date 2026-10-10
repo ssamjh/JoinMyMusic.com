@@ -178,6 +178,16 @@ def load_vban_config() -> dict[str, object]:
 VBAN_RECEIVER_QUALITY = {"optimal": 0.1, "fast": 0.2, "medium": 0.4, "slow": 0.8, "very_slow": 1.5}
 
 
+VBAN_TRIM_DB = -6.0
+VBAN_DUCK_DB = -10.0
+
+
+def validate_db(value: object, name: str, low: float, high: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+        raise SystemExit(f"{name} must be a number of dB from {low:g} to {high:g}")
+    return float(value)
+
+
 def load_vban_receiver_config() -> dict[str, object]:
     """Incoming VBAN stream, mixed with Spotify at equal level before processing."""
     receiver = load_audio_config().get("vban_receiver", {})
@@ -209,11 +219,25 @@ def load_vban_receiver_config() -> dict[str, object]:
     return {
         "enabled": True,
         "quality": quality,
+        "trim_db": validate_db(receiver.get("trim_db", VBAN_TRIM_DB), "vban_receiver.trim_db", -40.0, 12.0),
+        "duck_db": validate_db(receiver.get("duck_db", VBAN_DUCK_DB), "vban_receiver.duck_db", -40.0, 0.0),
         "sender_ip": str(parsed_address),
         "port": validate_port(receiver.get("port", 6980), "vban_receiver"),
         "stream_name": validate_stream_name(receiver.get("stream_name", "Stream1"), "vban_receiver"),
         "channels": ",".join(part.strip() for part in parts),
     }
+
+
+SPOTIFY_TRIM_DB = -12.0
+SPOTIFY_TRIM_RANGE = (-40.0, 12.0)
+
+
+def load_spotify_trim_db() -> float:
+    """spotify.trim_db in audio.yml: the gain applied to Spotify before the mix and the AGC."""
+    spotify = load_audio_config().get("spotify", {})
+    if not isinstance(spotify, dict):
+        raise SystemExit("The 'spotify' section in audio.yml must be a mapping")
+    return validate_db(spotify.get("trim_db", SPOTIFY_TRIM_DB), "spotify.trim_db", *SPOTIFY_TRIM_RANGE)
 
 
 def vban_receiver_fifo_path() -> str:
@@ -644,6 +668,7 @@ def supervise() -> int:
     vban_on = bool(vban_config.get("enabled"))
     prepare_vban_fifo(vban_on)
     receiver_config = load_vban_receiver_config()
+    spotify_trim_db = load_spotify_trim_db()
     prepare_vban_receiver_fifo(bool(receiver_config.get("enabled")))
     # Control page, meters and live control. Control failures degrade; they never stop the stream.
     session = control.prepare(source_text, processing)
@@ -673,6 +698,7 @@ def supervise() -> int:
         assert encoder.stdin is not None
         radio_env = os.environ.copy()
         radio_env["RADIO_INPUT_FIFO"] = radio_fifo_path()
+        radio_env["SPOTIFY_TRIM_DB"] = str(spotify_trim_db)
         # Liquidsoap writes a copy of the input mix here for the admin monitor's input meters.
         # Opened read-write so the open never blocks and the reader never sees EOF.
         monitor_fifo = control.monitor_input_fifo_path()
@@ -686,6 +712,8 @@ def supervise() -> int:
         if receiver_config.get("enabled"):
             radio_env["VBAN_INPUT_FIFO"] = vban_receiver_fifo_path()
             radio_env["VBAN_INPUT_BUFFER"] = str(VBAN_RECEIVER_QUALITY[str(receiver_config["quality"])])
+            radio_env["VBAN_INPUT_TRIM_DB"] = str(receiver_config["trim_db"])
+            radio_env["VBAN_DUCK_DB"] = str(receiver_config["duck_db"])
         liquidsoap = subprocess.Popen(
             [liquidsoap_bin, processing_script],
             stdin=subprocess.DEVNULL,

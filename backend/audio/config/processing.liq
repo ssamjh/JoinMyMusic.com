@@ -19,8 +19,9 @@ raw = input.external.rawaudio(
 )
 raw = mksafe(raw)
 
-# Fixed Spotify input trim before processing (-12 dB).
-spotify_trim_db = -12.0
+# Spotify input trim before the mix and the AGC: spotify.trim_db in audio.yml, passed
+# in by the supervisor (default -12 dB).
+spotify_trim_db = float_of_string(getenv(default="-12.0", "SPOTIFY_TRIM_DB"))
 raw = amplify(lin_of_dB(spotify_trim_db), raw)
 
 # Optional VBAN receiver input (vban_receiver in audio.yml). vban_receptor writes the
@@ -41,9 +42,11 @@ else
     restart=true,
     "cat #{string.quote(vban_fifo)}"
   )
+  # The input's level over 50 ms, for the ducking below.
+  vban_fast = rms(duration=0.05, mksafe(vban_in))
   # The input's level (RMS dBFS, before its trim), read by the control API's /api/source.
   # The API uses it to tell when the stream is the VBAN input alone.
-  vban_in = rms(duration=1.0, mksafe(vban_in))
+  vban_in = rms(duration=1.0, vban_fast)
   server.register(
     description="VBAN input RMS level in dBFS.",
     "vban_level",
@@ -52,9 +55,40 @@ else
       if level > 0. then string_of(dB_of_lin(level)) else "-200." end
     end
   )
-  # Fixed VBAN input trim, for headroom when speech and music play together.
-  vban_trim_db = -6.0
-  add(normalize=false, [raw, amplify(lin_of_dB(vban_trim_db), vban_in)])
+  # VBAN input trim: vban_receiver.trim_db in audio.yml (default -6 dB).
+  vban_trim_db = float_of_string(getenv(default="-6.0", "VBAN_INPUT_TRIM_DB"))
+  # Ducking: while the VBAN input is above duck_threshold_db (RMS dBFS, before its trim),
+  # Spotify is turned down by duck_db (vban_receiver.duck_db in audio.yml; 0 is off) at
+  # duck_attack_db_s. duck_hold seconds after the input falls below the threshold, so
+  # Spotify does not come up between words, it returns at duck_release_db_s.
+  duck_db = float_of_string(getenv(default="0.0", "VBAN_DUCK_DB"))
+  duck_threshold_db = -40.0
+  duck_hold = 0.6
+  duck_attack_db_s = 30.0
+  duck_release_db_s = 8.0
+  duck_step = 0.02
+  duck_gain_db = ref(0.)
+  duck_held = ref(0.)
+  def duck_update() =
+    level = vban_fast.rms()
+    if level > 0. and dB_of_lin(level) > duck_threshold_db then
+      duck_held := duck_hold
+    else
+      duck_held := max(0., !duck_held - duck_step)
+    end
+    wanted = if !duck_held > 0. then duck_db else 0. end
+    change = wanted - !duck_gain_db
+    if change < 0. then
+      duck_gain_db := !duck_gain_db + max(change, 0. - duck_attack_db_s * duck_step)
+    else
+      duck_gain_db := !duck_gain_db + min(change, duck_release_db_s * duck_step)
+    end
+  end
+  if duck_db < 0. then thread.run(every=duck_step, duck_update) end
+  add(normalize=false, [
+    amplify({lin_of_dB(!duck_gain_db)}, raw),
+    amplify(lin_of_dB(vban_trim_db), vban_in)
+  ])
 end
 
 # A copy of the input mix, before the AGC, for the admin monitor's input meters. It is
