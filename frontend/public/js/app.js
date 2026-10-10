@@ -1,4 +1,4 @@
-// Local Astro dev injects an empty base and proxies /api to the live API.
+// Local Astro dev sets the base to /api, which it proxies to the live API.
 // Production keeps calling the API directly from the static site.
 const API_BASE = window.__JMM_API_BASE__ ?? "https://api.joinmymusic.com";
 
@@ -540,7 +540,7 @@ function pollServer() {
   // Kiosks still heartbeat so the admin panel can see and control them, but
   // the flag keeps them out of the "listening now" count — a screen in the
   // corner isn't a person.
-  fetch(API_BASE + "/api/listener", {
+  fetch(API_BASE + "/listener", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2201,7 +2201,7 @@ function fillHistoryList(list, items, keys) {
 
 function connectSSE() {
   const evtSource = new EventSource(
-    API_BASE + (DISPLAY_NO_AUDIO ? "/api/events-realtime" : "/api/events")
+    API_BASE + (DISPLAY_NO_AUDIO ? "/events-realtime" : "/events")
   );
 
   evtSource.addEventListener("metadata", (e) => {
@@ -2933,7 +2933,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const controller = new AbortController();
     searchController = controller;
 
-    fetch(API_BASE + "/api/search", {
+    fetch(API_BASE + "/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, uuid: getOrCreateUUID() }),
@@ -3045,7 +3045,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     const requesterName = requesterNameInput.value.trim();
 
-    fetch(API_BASE + "/api/request", {
+    fetch(API_BASE + "/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -3101,7 +3101,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const userUUID = getOrCreateUUID();
 
-      fetch(API_BASE + "/api/skip", {
+      fetch(API_BASE + "/skip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ uuid: userUUID, songid: songId, turnstile: turnstileToken }),

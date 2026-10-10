@@ -11,10 +11,12 @@ export default defineConfig({
     server: {
       // Keep browser requests same-origin during local development. This lets
       // localhost reach the live API without changing its production CORS rules.
+      // The API serves its routes at the root, so the /api prefix is dropped.
       proxy: {
         '/api': {
           target: 'https://api.joinmymusic.com',
           changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
           // SSE responses stay open for the lifetime of the EventSource.
           timeout: 0,
           proxyTimeout: 0,

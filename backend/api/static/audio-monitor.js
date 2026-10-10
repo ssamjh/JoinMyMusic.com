@@ -31,12 +31,19 @@
   <div id="jm-notice" class="notice" role="status">Live control is unavailable: the processor is not accepting changes, so it cannot be bypassed.</div>
 
   <section class="channel">
-    <h2>Input <span>Before the AGC and processing</span></h2>
+    <h2>Input <span>After the input trims, before the AGC and processing</span></h2>
     <div class="wave-row">
       <div class="wave" id="jm-inWave"><canvas id="jm-inCanvas" aria-label="Input waveform"></canvas></div>
       <div class="meters" id="jm-inMeters"></div>
     </div>
   </section>
+
+  <div class="agcbar" id="jm-agcBar">
+    <span>AGC gain</span>
+    <div class="agc-track" aria-hidden="true"><div class="agc-fill" id="jm-agcFill"></div><div class="agc-zero"></div></div>
+    <b id="jm-agcVal" class="mono">--</b>
+    <div class="agc-scale" aria-hidden="true"></div>
+  </div>
 
   <div class="diffbar">
     <span>Output &minus; Input RMS <small>(3 s average)</small></span>
@@ -81,6 +88,7 @@
   const FLOOR_DB = -60;                // waveform dB scale floor
   const METER_DB = -48;                // meter scale floor
   const GRID_DB = [-6, -12, -24];
+  const AGC_RANGE_DB = 15;             // agc_range_db in config/processing.liq
   const COLORS = {
     in: ['45,212,191', '56,189,248'],  // L, R
     out: ['163,230,53', '250,204,21'],
@@ -103,6 +111,7 @@
   let lastMsg = 0;
   let connState = '';
   let dirty = true;
+  let agcGain = null;                  // AGC gain in dB from the meter stream; null: unknown
 
   class Ring {
     constructor() { this.data = new Float32Array(N * 4); this.head = 0; }
@@ -155,6 +164,9 @@
     root.append(scale);
     return rows;
   }
+  root.querySelector('.agc-scale').innerHTML = [-15, -10, -5, 0, 5, 10, 15]
+    .map((v) => `<span style="left:${50 + (v / AGC_RANGE_DB) * 50}%">${v > 0 ? '+' + v : v}</span>`).join('');
+
   const meters = [
     { ring: inRing, rows: buildMeters($('inMeters'), COLORS.in) },
     { ring: outRing, rows: buildMeters($('outMeters'), COLORS.out) },
@@ -268,6 +280,21 @@
     return toDb(Math.sqrt(pw(o))) - toDb(Math.sqrt(pw(i)));
   }
 
+  // The AGC gain as a bar from the centre: right for boost, left for cut.
+  function updateAgc() {
+    const known = Number.isFinite(agcGain);
+    const g = known ? clamp(agcGain, -AGC_RANGE_DB, AGC_RANGE_DB) : 0;
+    const w = (Math.abs(g) / AGC_RANGE_DB) * 50;
+    const fill = $('agcFill');
+    fill.style.left = (g < 0 ? 50 - w : 50) + '%';
+    fill.style.width = w + '%';
+    fill.classList.toggle('cut', g < 0);
+    $('agcVal').textContent = known ? `${agcGain >= 0 ? '+' : '−'}${Math.abs(agcGain).toFixed(1)} dB` : '--';
+    const bar = $('agcBar');
+    bar.classList.toggle('off', agcBypass);
+    bar.title = agcBypass ? 'AGC bypassed: the gain is still tracked but not applied' : '';
+  }
+
   // Columns arrive in bursts (the output more than the input), so each side plays them
   // out at a steady 100 per second from a small buffer instead of drawing them on arrival.
   const COL_MS = 10;
@@ -364,6 +391,7 @@
     lastDraw = now;
     for (const wv of waves) { fit(wv); drawWave(wv); }
     for (const set of meters) updateMeters(set, now);
+    updateAgc();
     const df = diffDb();
     $('diff').textContent = Number.isFinite(df)
       ? `${df >= 0 ? '+' : '−'}${Math.abs(df).toFixed(1)} dB` : '--';
@@ -388,6 +416,7 @@
       lastMsg = performance.now();
       playouts[0].add(m.in);
       playouts[1].add(m.out);
+      if ('agc' in m) { agcGain = typeof m.agc === 'number' ? m.agc : null; dirty = true; }
       setConn('live');
     };
     src.onerror = () => {
@@ -445,6 +474,7 @@
     b.disabled = !control;
     b.title = control ? '' : 'Live control unavailable';
     waves[1].wrap.classList.toggle('bypassed', bypass);
+    updateAgc();
     const a = $('agc');
     a.setAttribute('aria-pressed', String(agcBypass));
     a.querySelector('.state').textContent = agcBypass ? 'BYPASSED' : 'AGC ON';

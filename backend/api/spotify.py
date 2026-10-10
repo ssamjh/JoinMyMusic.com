@@ -10,7 +10,7 @@ import os
 
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
-SPOTIFY_REDIRECT_URI = os.environ.get("SPOTIFY_REDIRECT_URI", "http://localhost:8080/api/callback")
+SPOTIFY_REDIRECT_URI = os.environ.get("SPOTIFY_REDIRECT_URI", "http://localhost:8080/callback")
 TOKEN_CACHE_FILE = os.environ.get("TOKEN_CACHE_FILE", "/data/token_cache.json")
 # Public origin of this API. Cover art is rewritten to point here rather than
 # at Spotify's CDN, so nothing the browser loads names Spotify.
@@ -26,7 +26,7 @@ COVER_ID_RE = re.compile(r"^[a-zA-Z0-9]{1,64}$")
 
 
 def cover_proxy_url(url: Optional[str]) -> Optional[str]:
-    """Rewrite an i.scdn.co album-art URL to our own /api/cover/<id> proxy.
+    """Rewrite an i.scdn.co album-art URL to our own /cover/<id> proxy.
 
     Spotify's art URLs are content-addressed -- the last path segment is the
     image id and is all the proxy needs. Anything else (empty, already
@@ -34,7 +34,7 @@ def cover_proxy_url(url: Optional[str]) -> Optional[str]:
     """
     if not url or not url.startswith("https://i.scdn.co/image/"):
         return url
-    return f"{API_BASE_URL}/api/cover/{url.rsplit('/', 1)[-1]}"
+    return f"{API_BASE_URL}/cover/{url.rsplit('/', 1)[-1]}"
 
 
 SCOPE = "user-read-playback-state app-remote-control user-modify-playback-state"

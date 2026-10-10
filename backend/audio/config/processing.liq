@@ -57,8 +57,9 @@ else
   add(normalize=false, [raw, amplify(lin_of_dB(vban_trim_db), vban_in)])
 end
 
-# A copy of the input mix, before the AGC, for the admin monitor's input meters. The
-# supervisor always reads it, so this output never holds up the stream.
+# A copy of the input mix, before the AGC, for the admin monitor's input meters. It is
+# after the input trims, so with the AGC and processing bypassed it matches the output.
+# The supervisor always reads it, so this output never holds up the stream.
 monitor_fifo = getenv("MONITOR_INPUT_FIFO")
 if monitor_fifo != "" then
   ignore(output.external(
@@ -114,6 +115,12 @@ else
     end
   end
   thread.run(every=agc_step, agc_update)
+  # The AGC gain in dB, read by the admin monitor's AGC meter.
+  server.register(
+    description="Input AGC gain in dB.",
+    "agc_gain",
+    fun (_) -> string_of(!agc_gain_db)
+  )
   add(normalize=false, [
     amplify({if agc_bypass() then 0. else lin_of_dB(!agc_gain_db) end}, measured),
     amplify({if agc_bypass() then 1. else 0. end}, radio)

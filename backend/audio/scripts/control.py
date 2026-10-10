@@ -351,6 +351,10 @@ def liquidsoap_socket_path() -> str:
     return os.environ.get("LIQUIDSOAP_SOCKET", "/run/audio/liquidsoap.sock")
 
 
+AGC_GAIN_TIMEOUT = 0.25  # seconds; the meter stream reads the AGC gain on every event
+AGC_GAIN_MAX_AGE = 0.1  # seconds a reading is reused, so several meter clients share one
+
+
 class LiquidsoapControl:
     """Sets interactive variables in Liquidsoap and reads its levels through its server socket."""
 
@@ -365,18 +369,25 @@ class LiquidsoapControl:
 
     def vban_level_db(self) -> float | None:
         """The VBAN input's RMS level in dBFS, or None when the receiver is off."""
-        text = self.command("vban_level")
+        return self._float("vban_level")
+
+    def agc_gain_db(self) -> float | None:
+        """The input AGC's gain in dB, or None when the AGC is compiled out."""
+        return self._float("agc_gain", timeout=AGC_GAIN_TIMEOUT)
+
+    def _float(self, command: str, timeout: float | None = None) -> float | None:
+        text = self.command(command, timeout)
         try:
             return float(text)
         except ValueError:
-            return None  # an unknown command: the receiver is not enabled
+            return None  # an unknown command
 
-    def command(self, line: str) -> str:
+    def command(self, line: str, timeout: float | None = None) -> str:
         command = f"{line}\n".encode("ascii")
         reply = b""
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-                conn.settimeout(COMMAND_TIMEOUT_MS / 1000)
+                conn.settimeout(COMMAND_TIMEOUT_MS / 1000 if timeout is None else timeout)
                 conn.connect(self._path)
                 conn.sendall(command)
                 while not reply.rstrip().endswith(b"END"):
@@ -402,6 +413,9 @@ class LiveControl:
         self._bypass = False
         self._agc_bypass = False
         self._liquidsoap = LiquidsoapControl(liquidsoap_socket_path())
+        self._agc_lock = threading.Lock()
+        self._agc_gain: float | None = None
+        self._agc_read_at = 0.0
         self._values = {(item.id, param.name): param.value for item in filters for param in item.params}
 
     @property
@@ -507,6 +521,23 @@ class LiveControl:
     def vban_level_db(self) -> float | None:
         return self._liquidsoap.vban_level_db()
 
+    def agc_gain_db(self) -> float | None:
+        """The AGC gain, read at most every AGC_GAIN_MAX_AGE. While another thread is reading
+        it, returns the last reading instead of waiting."""
+        if time.monotonic() - self._agc_read_at < AGC_GAIN_MAX_AGE:
+            return self._agc_gain
+        if not self._agc_lock.acquire(blocking=False):
+            return self._agc_gain
+        try:
+            try:
+                self._agc_gain = self._liquidsoap.agc_gain_db()
+            except ApiError:
+                self._agc_gain = None
+            self._agc_read_at = time.monotonic()
+            return self._agc_gain
+        finally:
+            self._agc_lock.release()
+
     def set_agc_bypass(self, bypass: bool) -> dict:
         """Bypass the input AGC, which runs in Liquidsoap before the processor."""
         with self._lock:
@@ -561,21 +592,16 @@ def _peak_rms(channel: array.array) -> tuple[float, float]:
     return round(min(peak, 1.0), 4), round(min(rms, 1.0), 4)
 
 
-def measure(samples: array.array, gain: float = 1.0) -> list[float]:
-    """One 10 ms stereo column as [peak L, peak R, RMS L, RMS R], each 0..1 after gain."""
-    values = [*_peak_rms(samples[0::2]), *_peak_rms(samples[1::2])]
-    peak_left, rms_left, peak_right, rms_right = (round(min(value * gain, 1.0), 4) for value in values)
+def measure(samples: array.array) -> list[float]:
+    """One 10 ms stereo column as [peak L, peak R, RMS L, RMS R], each 0..1."""
+    peak_left, rms_left = _peak_rms(samples[0::2])
+    peak_right, rms_right = _peak_rms(samples[1::2])
     return [peak_left, peak_right, rms_left, rms_right]
 
 
 def monitor_input_fifo_path() -> str:
     """FIFO carrying Liquidsoap's copy of the input mix (Spotify and VBAN) before the AGC."""
     return os.environ.get("MONITOR_INPUT_FIFO", "/run/audio/monitor-input.pcm")
-
-
-# Liquidsoap writes the input copy after its 12 dB Spotify trim; the meters add it back,
-# so Spotify shows at its own level.
-MONITOR_INPUT_GAIN = 10 ** (12 / 20)
 
 
 class Monitor:
@@ -672,7 +698,7 @@ class Monitor:
             samples.frombytes(buffer[offset:offset + COLUMN_BYTES])
             if sys.byteorder == "big":
                 samples.byteswap()
-            columns.append(measure(samples, MONITOR_INPUT_GAIN if side == "in" else 1.0))
+            columns.append(measure(samples))
         del buffer[:usable]
         with self._lock:
             for column in columns:
@@ -852,7 +878,8 @@ class ControlHandler(BaseHTTPRequestHandler):
         while True:
             columns = self.monitor.snapshot(cursor)
             if columns["in"] or columns["out"]:
-                chunk = f"data: {json.dumps(columns, separators=(',', ':'))}\n\n"
+                event = {**columns, "agc": self.live.agc_gain_db()}
+                chunk = f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
             else:
                 chunk = ": keep-alive\n\n"
             self.wfile.write(chunk.encode("utf-8"))

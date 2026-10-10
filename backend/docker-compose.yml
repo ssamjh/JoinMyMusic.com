@@ -17,7 +17,7 @@ services:
       LIBRESPOT_API_URL: "http://audio:3678"
       # The audio container's control API, shown in the admin panel's Audio section.
       AUDIO_CONTROL_URL: "http://audio:8090"
-      SPOTIFY_REDIRECT_URI: "https://api.joinmymusic.com/api/callback"
+      SPOTIFY_REDIRECT_URI: "https://api.joinmymusic.com/callback"
       ALLOWED_ORIGINS: "https://joinmymusic.com,https://www.joinmymusic.com"
       API_BASE_URL: "https://api.joinmymusic.com"
       AUTH_KEY: "change_me"

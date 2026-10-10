@@ -17,7 +17,7 @@ import os
 AUTH_KEY = os.environ.get("AUTH_KEY", "change_me")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
 # The audio container's control page (meters, bypass, processing graph), reached over the
-# Compose network and served to admins under /api/admin/audio/.
+# Compose network and served to admins under /admin/audio/.
 AUDIO_CONTROL_URL = os.environ.get("AUDIO_CONTROL_URL", "http://audio:8090").rstrip("/")
 # Comma-separated list of frontend origins allowed to call this API.
 ALLOWED_ORIGINS = os.environ.get(
@@ -97,7 +97,7 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 
 class CoverExemptCORSMiddleware(CORSMiddleware):
-    """CORS for the API, but hands-off for /api/cover.
+    """CORS for the API, but hands-off for /cover.
 
     Cover responses are cached for a year, and the same URL is loaded both as a
     plain <img> (no Origin header, so this middleware would add no CORS headers
@@ -110,7 +110,7 @@ class CoverExemptCORSMiddleware(CORSMiddleware):
     """
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].startswith("/api/cover/"):
+        if scope["type"] == "http" and scope["path"].startswith("/cover/"):
             return await self.app(scope, receive, send)
         await super().__call__(scope, receive, send)
 
@@ -166,7 +166,7 @@ async def verify_turnstile(token: str, ip: str) -> bool:
 
 # ─── SSE ─────────────────────────────────────────────────────────────────────
 
-@app.get("/api/events")
+@app.get("/events")
 async def sse_events(request: Request):
     async def event_generator():
         # Subscribe before sending initial state to avoid missing events
@@ -202,10 +202,10 @@ async def sse_events(request: Request):
     )
 
 # ─── SSE (realtime, no audio-sync delay) ────────────────────────────────────
-# Same event types as /api/events, but "metadata" is pushed the instant
+# Same event types as /events, but "metadata" is pushed the instant
 # Spotify reports a change rather than delayed to line up with the audio
 # stream. Filter which categories to receive with query flags, e.g.
-# /api/events-realtime?music=1 for only now-playing/history updates.
+# /events-realtime?music=1 for only now-playing/history updates.
 # Recognized flags: music (metadata, history, queue, source), listeners, skipvotes, control
 # (stop, announce). Omit all flags to receive every category.
 
@@ -227,7 +227,7 @@ def _query_flag_truthy(value: Optional[str]) -> bool:
     return value is not None and value.lower() not in ("0", "false", "no", "")
 
 
-@app.get("/api/events-realtime")
+@app.get("/events-realtime")
 async def sse_events_realtime(request: Request):
     requested = [c for c in _REALTIME_CATEGORIES if c in request.query_params]
     allowed = (
@@ -274,23 +274,23 @@ async def sse_events_realtime(request: Request):
 
 # ─── Metadata (REST fallback) ─────────────────────────────────────────────────
 
-@app.get("/api/metadata")
+@app.get("/metadata")
 async def get_metadata():
     return {"current": committed_metadata_for_clients()}
 
 
-@app.get("/api/history")
+@app.get("/history")
 async def get_play_history():
     return {"history": get_history()}
 
 
-@app.get("/api/queue")
+@app.get("/queue")
 async def get_upcoming_queue():
     return {"queue": list(upcoming_queue)}
 
 # ─── Auth status ─────────────────────────────────────────────────────────────
 
-@app.get("/api/auth_status")
+@app.get("/auth_status")
 async def auth_status():
     return {"authenticated": spotify_client.is_authenticated()}
 
@@ -318,7 +318,7 @@ class ListenerPayload(BaseModel):
     effects: Optional[bool] = None
 
 
-@app.post("/api/listener", status_code=204)
+@app.post("/listener", status_code=204)
 async def register_listener(payload: ListenerPayload, request: Request):
     if not UUID_RE.match(payload.uuid):
         raise HTTPException(status_code=400, detail="Invalid UUID")
@@ -336,7 +336,7 @@ async def register_listener(payload: ListenerPayload, request: Request):
     }
 
 
-@app.get("/api/listener/stats")
+@app.get("/listener/stats")
 async def listener_stats():
     return {"count": active_listener_count()}
 
@@ -350,7 +350,7 @@ class SearchPayload(BaseModel):
 BAN_MESSAGE = "You have been banned from requesting songs."
 
 
-@app.post("/api/search")
+@app.post("/search")
 async def search_songs(payload: SearchPayload, request: Request):
     if is_banned(request.client.host, payload.uuid):
         raise HTTPException(status_code=403, detail=BAN_MESSAGE)
@@ -374,7 +374,7 @@ class RequestPayload(BaseModel):
     uuid: Optional[str] = None
 
 
-@app.post("/api/request")
+@app.post("/request")
 async def add_request(payload: RequestPayload, request: Request):
     ip = request.client.host
 
@@ -448,7 +448,7 @@ class SkipPayload(BaseModel):
     turnstile: str
 
 
-@app.post("/api/skip")
+@app.post("/skip")
 async def vote_skip(payload: SkipPayload, request: Request):
     ip = request.client.host
 
@@ -494,7 +494,7 @@ async def vote_skip(payload: SkipPayload, request: Request):
     return {"success": True, "message": "Vote recorded", "count": count, "needed": needed}
 
 
-@app.get("/api/skip/stats")
+@app.get("/skip/stats")
 async def skip_stats():
     metadata = await librespot.get_current_playback()
     song_id = metadata.get("current", {}).get("songid", "")
@@ -505,7 +505,7 @@ async def skip_stats():
 
 # ─── Album art ───────────────────────────────────────────────────────────────
 
-@app.get("/api/cover/{image_id}")
+@app.get("/cover/{image_id}")
 async def cover(image_id: str):
     """Proxy album art so the browser never requests anything from Spotify.
 
@@ -533,12 +533,12 @@ async def cover(image_id: str):
 
 # ─── Spotify OAuth ───────────────────────────────────────────────────────────
 
-@app.get("/api/setup")
+@app.get("/setup")
 async def setup():
     return RedirectResponse(spotify_client.get_auth_url())
 
 
-@app.get("/api/callback")
+@app.get("/callback")
 async def callback(code: Optional[str] = None):
     if code and spotify_client.handle_callback(code):
         message = "Authentication successful! This window will close in 10 seconds."
@@ -603,7 +603,7 @@ ADMIN_HTML = """<!DOCTYPE html>
                 style="text-transform:none;letter-spacing:normal"
                 aria-expanded="false" aria-controls="audioMonitor">Show</button>
     </div>
-    <div id="audioMonitor" data-jmm-monitor data-embedded data-base="/api/admin/audio/" hidden></div>
+    <div id="audioMonitor" data-jmm-monitor data-embedded data-base="/admin/audio/" hidden></div>
 
     <div class="row g-3">
         <!-- Requests column -->
@@ -651,10 +651,10 @@ ADMIN_HTML = """<!DOCTYPE html>
             box.dataset.key = authKey;
             const css = document.createElement('link');
             css.rel = 'stylesheet';
-            css.href = '/api/admin/audio/monitor.css' + q;
+            css.href = '/admin/audio/monitor.css' + q;
             document.head.append(css);
             const js = document.createElement('script');
-            js.src = '/api/admin/audio/monitor.js' + q;
+            js.src = '/admin/audio/monitor.js' + q;
             // Hidden again before the script arrived: start, then stop at once.
             js.onload = () => { if (box.hidden && box.jmmMonitor) box.jmmMonitor.stop(); };
             document.body.append(js);
@@ -741,9 +741,9 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     async function loadData() {
         const [reqRes, lisRes, settingsRes] = await Promise.all([
-            fetch('/api/admin/requests?key=' + authKey),
-            fetch('/api/admin/listeners?key=' + authKey),
-            fetch('/api/admin/settings?key=' + authKey),
+            fetch('/admin/requests?key=' + authKey),
+            fetch('/admin/listeners?key=' + authKey),
+            fetch('/admin/settings?key=' + authKey),
         ]);
         if (!reqRes.ok) {
             document.querySelector('.container-fluid').innerHTML = '<p class="text-danger mt-4">Access denied.</p>';
@@ -774,7 +774,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     async function approveRequest(id) {
-        const res = await fetch('/api/admin/requests/' + id + '/approve?key=' + authKey, {
+        const res = await fetch('/admin/requests/' + id + '/approve?key=' + authKey, {
             method: 'POST', headers: {'Content-Type': 'application/json'}
         });
         const data = await res.json();
@@ -783,12 +783,12 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     async function deleteRequest(id) {
-        await fetch('/api/admin/requests/' + id + '?key=' + authKey, {method: 'DELETE'});
+        await fetch('/admin/requests/' + id + '?key=' + authKey, {method: 'DELETE'});
         loadData();
     }
 
     document.getElementById('autoApproveToggle').addEventListener('change', async function() {
-        await fetch('/api/admin/auto-approve?key=' + authKey, {
+        await fetch('/admin/auto-approve?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({enabled: this.checked})
@@ -799,7 +799,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         const r = requestsById[requestId];
         if (!r) return;
         if (!confirm('Ban the song "' + (r.track_name || r.spotify_uri) + '"?\\n\\nNo one will be able to request it, and pending requests for it are removed.')) return;
-        const res = await fetch('/api/admin/song-bans?key=' + authKey, {
+        const res = await fetch('/admin/song-bans?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({songid: r.spotify_uri, track_name: r.track_name, artist_name: r.artist_name})
@@ -817,7 +817,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         const hours = prompt('Ban ' + who + '?\\n\\nDuration in hours (leave blank for permanent):', '');
         if (hours === null) return; // cancelled
         const h = parseFloat(hours);
-        const res = await fetch('/api/admin/bans?key=' + authKey, {
+        const res = await fetch('/admin/bans?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
@@ -833,7 +833,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     async function setListenerPreference(uuid, field, value) {
-        const res = await fetch('/api/admin/listener/preferences?key=' + authKey, {
+        const res = await fetch('/admin/listener/preferences?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({uuid, [field]: value})
@@ -848,7 +848,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     async function stopPlayback(uuid) {
         const who = uuid ? 'this listener' : 'ALL listeners';
         if (!confirm('Stop playback for ' + who + '?')) return;
-        const res = await fetch('/api/admin/stop?key=' + authKey, {
+        const res = await fetch('/admin/stop?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({uuid: uuid || null})
@@ -863,7 +863,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         const who = uuid ? 'this listener' : 'ALL listeners';
         const text = prompt('Popup message to ' + who + ':', '');
         if (text === null || !text.trim()) return;
-        const res = await fetch('/api/admin/message?key=' + authKey, {
+        const res = await fetch('/admin/message?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({text: text.trim(), uuid: uuid || null})
@@ -876,7 +876,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     // The admin_key cookie keeps navigation authenticated; only carry the key
     // in the URL when this page itself was opened with one.
-    document.getElementById('bansLink').href = '/api/admin/bans/view' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
+    document.getElementById('bansLink').href = '/admin/bans/view' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
 
     loadData();
     setInterval(loadData, 10000);
@@ -949,14 +949,14 @@ BANS_HTML = """<!DOCTYPE html>
     const authKey = new URLSearchParams(window.location.search).get('key') || '';
     // The admin_key cookie keeps navigation authenticated; only carry the key
     // in the URL when this page itself was opened with one.
-    document.getElementById('backLink').href = '/api/admin' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
+    document.getElementById('backLink').href = '/admin' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
 
     function esc(s) {
         return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
     async function loadBans() {
-        const res = await fetch('/api/admin/bans?key=' + authKey);
+        const res = await fetch('/admin/bans?key=' + authKey);
         if (!res.ok) {
             document.getElementById('ban-list').innerHTML = '<p class="text-danger mt-4">Access denied.</p>';
             return;
@@ -988,7 +988,7 @@ BANS_HTML = """<!DOCTYPE html>
         const duration = document.getElementById('banDuration').value;
         const reason = document.getElementById('banReason').value.trim();
         if (!ip && !uuid) { alert('Enter an IP and/or a listener ID.'); return; }
-        const res = await fetch('/api/admin/bans?key=' + authKey, {
+        const res = await fetch('/admin/bans?key=' + authKey, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ip, uuid, reason, duration_minutes: duration ? parseInt(duration, 10) : null})
@@ -1005,12 +1005,12 @@ BANS_HTML = """<!DOCTYPE html>
     }
 
     async function unban(id) {
-        await fetch('/api/admin/bans/' + id + '?key=' + authKey, {method: 'DELETE'});
+        await fetch('/admin/bans/' + id + '?key=' + authKey, {method: 'DELETE'});
         loadBans();
     }
 
     async function loadSongBans() {
-        const res = await fetch('/api/admin/song-bans?key=' + authKey);
+        const res = await fetch('/admin/song-bans?key=' + authKey);
         if (!res.ok) return;
         const bans = await res.json();
         if (bans.length === 0) {
@@ -1033,7 +1033,7 @@ BANS_HTML = """<!DOCTYPE html>
     }
 
     async function unbanSong(id) {
-        await fetch('/api/admin/song-bans/' + id + '?key=' + authKey, {method: 'DELETE'});
+        await fetch('/admin/song-bans/' + id + '?key=' + authKey, {method: 'DELETE'});
         loadSongBans();
     }
 
@@ -1058,7 +1058,7 @@ AUDIO_CONTROL_ROUTES = {
 }
 
 
-@app.get("/api/admin/audio/{name}")
+@app.get("/admin/audio/{name}")
 async def admin_audio_asset(name: str, _: None = Depends(require_admin)):
     if name not in AUDIO_MONITOR_FILES:
         raise HTTPException(status_code=404, detail="Not found")
@@ -1066,7 +1066,7 @@ async def admin_audio_asset(name: str, _: None = Depends(require_admin)):
     return FileResponse(STATIC_DIR / filename, media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
-@app.api_route("/api/admin/audio/{path:path}", methods=["GET", "POST"])
+@app.api_route("/admin/audio/{path:path}", methods=["GET", "POST"])
 async def admin_audio_proxy(path: str, request: Request, _: None = Depends(require_admin)):
     if path not in AUDIO_CONTROL_ROUTES.get(request.method, set()):
         raise HTTPException(status_code=404, detail="Not found")
@@ -1113,12 +1113,12 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
     )
 
 
-@app.get("/api/admin", response_class=HTMLResponse)
+@app.get("/admin", response_class=HTMLResponse)
 async def admin_panel(request: Request):
     return admin_page_response(request, ADMIN_HTML)
 
 
-@app.get("/api/admin/requests")
+@app.get("/admin/requests")
 async def admin_get_requests(_: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1136,7 +1136,7 @@ async def admin_get_requests(_: None = Depends(require_admin)):
     return result
 
 
-@app.post("/api/admin/requests/{request_id}/approve")
+@app.post("/admin/requests/{request_id}/approve")
 async def admin_approve_request(request_id: int, _: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1156,7 +1156,7 @@ async def admin_approve_request(request_id: int, _: None = Depends(require_admin
         db.close()
 
 
-@app.delete("/api/admin/requests/{request_id}")
+@app.delete("/admin/requests/{request_id}")
 async def admin_delete_request(request_id: int, _: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1167,7 +1167,7 @@ async def admin_delete_request(request_id: int, _: None = Depends(require_admin)
         db.close()
 
 
-@app.get("/api/admin/listeners")
+@app.get("/admin/listeners")
 async def admin_get_listeners(_: None = Depends(require_admin)):
     # Collect all UUIDs that have voted to skip the current song
     current_voters: set[str] = set()
@@ -1186,7 +1186,7 @@ async def admin_get_listeners(_: None = Depends(require_admin)):
     return result
 
 
-@app.get("/api/admin/settings")
+@app.get("/admin/settings")
 async def admin_get_settings(_: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1200,7 +1200,7 @@ class AutoApprovePayload(BaseModel):
     enabled: bool
 
 
-@app.post("/api/admin/auto-approve")
+@app.post("/admin/auto-approve")
 async def admin_set_auto_approve(payload: AutoApprovePayload, _: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1222,7 +1222,7 @@ class ListenerPreferencesPayload(BaseModel):
     effects: Optional[bool] = None
 
 
-@app.post("/api/admin/listener/preferences")
+@app.post("/admin/listener/preferences")
 async def admin_set_listener_preferences(payload: ListenerPreferencesPayload, _: None = Depends(require_admin)):
     if not UUID_RE.match(payload.uuid):
         raise HTTPException(status_code=400, detail="Invalid UUID")
@@ -1244,7 +1244,7 @@ class StopPayload(BaseModel):
     uuid: Optional[str] = None
 
 
-@app.post("/api/admin/stop")
+@app.post("/admin/stop")
 async def admin_stop_playback(payload: StopPayload, _: None = Depends(require_admin)):
     await broadcast_both("stop", {"uuid": (payload.uuid or "").strip() or None})
     return {"success": True}
@@ -1255,7 +1255,7 @@ class AnnouncePayload(BaseModel):
     uuid: Optional[str] = None
 
 
-@app.post("/api/admin/message")
+@app.post("/admin/message")
 async def admin_send_message(payload: AnnouncePayload, _: None = Depends(require_admin)):
     text = payload.text.strip()
     if not text:
@@ -1275,7 +1275,7 @@ class BanPayload(BaseModel):
     duration_minutes: Optional[int] = None  # None/0 = permanent
 
 
-@app.get("/api/admin/bans")
+@app.get("/admin/bans")
 async def admin_get_bans(_: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1288,7 +1288,7 @@ async def admin_get_bans(_: None = Depends(require_admin)):
         db.close()
 
 
-@app.post("/api/admin/bans")
+@app.post("/admin/bans")
 async def admin_add_ban(payload: BanPayload, _: None = Depends(require_admin)):
     # IPv6 bans are widened to the household's /64 (see normalize_ban_ip)
     ip = normalize_ban_ip(payload.ip)
@@ -1315,7 +1315,7 @@ async def admin_add_ban(payload: BanPayload, _: None = Depends(require_admin)):
         db.close()
 
 
-@app.delete("/api/admin/bans/{ban_id}")
+@app.delete("/admin/bans/{ban_id}")
 async def admin_delete_ban(ban_id: int, _: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1332,7 +1332,7 @@ class SongBanPayload(BaseModel):
     artist_name: Optional[str] = None
 
 
-@app.get("/api/admin/song-bans")
+@app.get("/admin/song-bans")
 async def admin_get_song_bans(_: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1342,7 +1342,7 @@ async def admin_get_song_bans(_: None = Depends(require_admin)):
         db.close()
 
 
-@app.post("/api/admin/song-bans")
+@app.post("/admin/song-bans")
 async def admin_add_song_ban(payload: SongBanPayload, _: None = Depends(require_admin)):
     sid = normalize_songid(payload.songid)
     if not sid:
@@ -1364,7 +1364,7 @@ async def admin_add_song_ban(payload: SongBanPayload, _: None = Depends(require_
         db.close()
 
 
-@app.delete("/api/admin/song-bans/{ban_id}")
+@app.delete("/admin/song-bans/{ban_id}")
 async def admin_delete_song_ban(ban_id: int, _: None = Depends(require_admin)):
     db = get_db()
     try:
@@ -1375,6 +1375,6 @@ async def admin_delete_song_ban(ban_id: int, _: None = Depends(require_admin)):
         db.close()
 
 
-@app.get("/api/admin/bans/view", response_class=HTMLResponse)
+@app.get("/admin/bans/view", response_class=HTMLResponse)
 async def bans_page(request: Request):
     return admin_page_response(request, BANS_HTML)

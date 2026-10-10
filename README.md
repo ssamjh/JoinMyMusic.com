@@ -26,7 +26,7 @@ listeners --> joinmymusic.com (frontend) --SSE/JSON--> api.joinmymusic.com (back
 
 Astro 7 with Tailwind 4 (via `@tailwindcss/vite`), building to a static site. In
 production it talks to the backend at `api.joinmymusic.com`. During local
-development, Astro proxies browser `/api` requests to that live API, so the
+development, Astro proxies browser `/api` requests to that live API (dropping the prefix), so the
 browser stays same-origin and does not need a CORS exception. The API still
 must be reachable for local frontend testing.
 
@@ -78,7 +78,7 @@ docker compose logs -f audio          # first start prints a Spotify pairing URL
 
 ### API (`backend/api/`)
 
-Visit `/api/setup` once to authorise Spotify. The SQLite database and Spotify token
+Visit `/setup` once to authorise Spotify. The SQLite database and Spotify token
 cache are stored in `backend/data/` (mounted at `/data`).
 
 There is no automated API test suite. For API changes, verify imports and startup with
@@ -91,11 +91,11 @@ song comes from go-librespot's `next_track` status field.
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/events` | SSE: `metadata`, `listeners`, `history`, `queue`, `skipvotes`, `stop`, `announce`, `preferences` (music metadata delayed to match the audio) |
-| `GET /api/events-realtime` | Same events, `metadata` and `queue` undelayed; filter with `?music=1` etc. |
-| `GET /api/metadata`, `GET /api/history`, `GET /api/queue` | Current song, play history, and the next song |
-| `POST /api/listener` | Listener heartbeat, including `theme` (`light`/`dark`) and `effects` (boolean) |
-| `POST /api/admin/listener/preferences` | Authenticated per-listener theme/FX command delivered by the `preferences` SSE event |
+| `GET /events` | SSE: `metadata`, `listeners`, `history`, `queue`, `skipvotes`, `stop`, `announce`, `preferences` (music metadata delayed to match the audio) |
+| `GET /events-realtime` | Same events, `metadata` and `queue` undelayed; filter with `?music=1` etc. |
+| `GET /metadata`, `GET /history`, `GET /queue` | Current song, play history, and the next song |
+| `POST /listener` | Listener heartbeat, including `theme` (`light`/`dark`) and `effects` (boolean) |
+| `POST /admin/listener/preferences` | Authenticated per-listener theme/FX command delivered by the `preferences` SSE event |
 
 Metadata includes `deck_side` (`left` or `right`), assigned by the API on song
 changes. Both metadata feeds and reconnect snapshots use this value so browsers
@@ -197,10 +197,14 @@ The API's admin panel has an Audio section, collapsed until opened. Its script a
 styles are in the API (`backend/api/static/audio-monitor.js` and `.css`). Its data comes
 from the audio container's control API on port 8090, which is not published: the API
 reaches it over the Compose network (`AUDIO_CONTROL_URL`, default `http://audio:8090`)
-and passes on admin requests at `/api/admin/audio/`.
+and passes on admin requests at `/admin/audio/`.
 
 - Input and output level meters (peak and RMS). The input is the mix of Spotify and the
-  VBAN input before the AGC; the output is the stream as broadcast.
+  VBAN input after their input trims, before the AGC, so with the AGC and processing
+  bypassed it matches the output; the output is the stream as broadcast.
+- An AGC gain meter (cut or boost, within the AGC's range), read from Liquidsoap's
+  `agc_gain` server command and sent with the meter events as `agc` (dB, `null` when
+  unavailable). It is dimmed while the AGC is bypassed.
 - **Bypass processing** sends the audio around the processing chain. The radio filter
   and the safety limiter still apply.
 - **Bypass AGC** turns off the Liquidsoap input AGC, through Liquidsoap's server socket

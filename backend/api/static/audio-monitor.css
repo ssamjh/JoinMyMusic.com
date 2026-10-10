@@ -52,6 +52,15 @@
 .jmm-monitor .rd .pv { color: var(--muted); }
 .jmm-monitor .scale { position: relative; height: 14px; margin-left: 22px; font-size: 10px; color: var(--muted); font-family: var(--mono); }
 .jmm-monitor .scale span { position: absolute; transform: translateX(-50%); }
+.jmm-monitor .agcbar { display: grid; grid-template-columns: auto minmax(0, 1fr) 74px; align-items: center; gap: 2px 12px; padding: 0 4px; color: var(--muted); font-size: 13px; }
+.jmm-monitor .agcbar b { color: var(--text); font-size: 16px; text-align: right; }
+.jmm-monitor .agcbar.off .agc-track, .jmm-monitor .agcbar.off b { opacity: .4; }
+.jmm-monitor .agc-track { position: relative; height: 14px; background: #0a0c10; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.jmm-monitor .agc-fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: #38bdf8; transition: left .1s linear, width .1s linear; }
+.jmm-monitor .agc-fill.cut { background: var(--amber); }
+.jmm-monitor .agc-zero { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: #f8fafc; opacity: .6; }
+.jmm-monitor .agc-scale { grid-column: 2; position: relative; height: 14px; font-size: 10px; font-family: var(--mono); }
+.jmm-monitor .agc-scale span { position: absolute; transform: translateX(-50%); }
 .jmm-monitor .diffbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 4px 4px; color: var(--muted); font-size: 13px; }
 .jmm-monitor .diffbar b { color: var(--text); font-size: 16px; }
 .jmm-monitor .diffbar small { color: var(--muted); }

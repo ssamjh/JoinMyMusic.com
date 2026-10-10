@@ -43,7 +43,7 @@ intentionally separate containers; never merge them. Both are defined as the
   the bypasses and the processing graph. The audio monitor UI lives in the API
   (`backend/api/static/audio-monitor.js`/`.css`, scoped under `.jmm-monitor`); the admin
   panel draws it and reaches the control API through an admin-only proxy at
-  `/api/admin/audio/` over the Compose network (`AUDIO_CONTROL_URL`, default
+  `/admin/audio/` over the Compose network (`AUDIO_CONTROL_URL`, default
   `http://audio:8090`).
 - The API reads now-playing, the next track, skips and queues songs through the audio
   container's go-librespot REST API (`LIBRESPOT_API_URL`, default `http://audio:3678`).
@@ -63,8 +63,8 @@ intentionally separate containers; never merge them. Both are defined as the
 - Prefer Astro components and Tailwind utilities for normal presentation. Keep
   bespoke visual effects and JavaScript-toggled state classes in `global.css`.
 - `METADATA_DELAY` intentionally aligns normal SSE metadata with the delayed audio
-  stream. `/api/events-realtime` is the undelayed feed for display/control clients.
-- Album art is proxied through `/api/cover/{image_id}`. Preserve its constant
+  stream. `/events-realtime` is the undelayed feed for display/control clients.
+- Album art is proxied through `/cover/{image_id}`. Preserve its constant
   wildcard CORS behavior and immutable-cache assumptions when changing middleware.
 - Display modes are controlled by URL parameters: `display`, `noaudio`,
   `volume=0-100`, and `zoom`.
