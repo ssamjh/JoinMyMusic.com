@@ -48,7 +48,7 @@ Deploy `frontend/dist/` to any static host.
 
 - `src/styles/global.css` — Tailwind entry. Holds the theme tokens (aliased with
   `@theme inline` so utilities follow the runtime light/dark class on `<body>`)
-  plus the component CSS that is not expressible as utilities: the 3D turntable,
+  plus the component CSS that is not expressible as utilities: the jukebox and turntable,
   the pressed-record label, the audio-reactive canvases, and the state classes
   `app.js` toggles (`.show`, `.active`, `.is-playing`, `.flip-swap`, …).
 - Everything else — layout, spacing, typography, colour — is Tailwind utilities
@@ -98,9 +98,9 @@ song comes from go-librespot's `next_track` status field.
 | `POST /admin/listener/preferences` | Authenticated per-listener theme/FX command delivered by the `preferences` SSE event |
 
 Metadata includes `deck_side` (`left` or `right`), assigned by the API on song
-changes. Both metadata feeds and reconnect snapshots use this value so browsers
-agree on the active deck. Listener preferences are visible and controllable in
-the admin panel; IP addresses are blurred until hovered or focused.
+changes; the current frontend does not use it. Listener preferences are visible
+and controllable in the admin panel; IP addresses are blurred until hovered or
+focused.
 
 The `queue` event keeps the `{"queue": [...]}` shape: `queue` is empty when no next
 song is known, or contains a single track. The API polls go-librespot status and sends

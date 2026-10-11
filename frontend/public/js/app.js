@@ -86,13 +86,16 @@ let bgPresenceTarget = { r: 20, g: 20, b: 20 };
 // invalidations that aren't captured by the colour/energy values themselves.
 let bgLastBass = -1, bgLastPresence = -1, bgForceDraw = true;
 
-// Palette extracted from the next cover, staged until the deck crossover begins.
+// Palette extracted from the next cover, staged until the record change begins.
 let pendingColors = null;
 let paletteTransition = null;
 let hasAppliedPalette = false;
 const PALETTE_FADE_MS = 500;
-const DECK_TIMING = { overlap: 4500, lift: 250, park: 500, spinDown: 1000, stopped: 2500, fade: 1500 };
-const DECK_HANDOVER_MS = DECK_TIMING.overlap + DECK_TIMING.lift + DECK_TIMING.park + DECK_TIMING.spinDown + DECK_TIMING.stopped + DECK_TIMING.fade * 2;
+// Jukebox record change: lift the arm, park it, spin the record down, then carry
+// it to the history rack while the up-next record is carried onto the platter.
+const JUKEBOX_TIMING = { lift: 250, park: 500, spinDown: 900, outgoing: 900, incomingDelay: 450, incoming: 900 };
+const JUKEBOX_HANDOVER_MS = JUKEBOX_TIMING.lift + JUKEBOX_TIMING.park + JUKEBOX_TIMING.spinDown
+  + JUKEBOX_TIMING.incomingDelay + JUKEBOX_TIMING.incoming;
 
 const TONEARM_SWEEP_DEG = 29.32;
 const TONEARM_PARK_DEG = -10;
@@ -104,67 +107,32 @@ const TONEARM_PARK_DEG = -10;
 let songStartedAtPerf = null;
 let songDurationMs = null;
 let tonearmSongId = null; // song the arm timing is locked to
-let tonearmChoreography = false; // lock scratching during a deck handover
+let tonearmChoreography = false; // lock scratching during a record change
 let tonearmEntryFrame = 0;
 let fixedTonearmSize = null;
-let preloweredTonearmSongId = null;
-let preloweredTonearmStartedAtPerf = null;
-let preloweredTonearmDurationMs = null;
-let crossfaderTransitionPending = false;
 // Pending timeouts of the running swap sequence, so a second song change (e.g.
 // a skip landing right at a track boundary) or a stop can abort it cleanly
 // instead of two choreographies fighting over the arm and the dim state.
 let choreoTimers = [];
-let recordDeparture = null;
-let recordArrival = null;
+// Records in flight between the rack and the platter (see flyRecord).
+let recordFlights = [];
+// The title card sinking out of (or rising back into) its window on a record change.
+let plateMotion = null;
 function choreoTimeout(fn, ms) {
   choreoTimers.push(setTimeout(fn, ms));
 }
-function setCrossfader(side) {
-  const fader = document.getElementById("deck-crossfader");
-  if (!fader) return;
-  fader.style.setProperty("--fader-position", side === "center" ? .5 : side === "right" ? 1 : 0);
-  fader.setAttribute("aria-label", side === "center" ? "Crossfader: centre, changing decks" : `Crossfader: ${side} deck`);
-}
 
-function updateCrossfader() {
-  if (!fxOn() || !isPlaying) {
-    setCrossfader(activeDeckSide);
-    return;
-  }
-  if (crossfaderTransitionPending) {
-    setCrossfader("center");
-    return;
-  }
-  if (songStartedAtPerf == null || !songDurationMs) {
-    setCrossfader(activeDeckSide);
-    return;
-  }
-
-  const elapsed = performance.now() - songStartedAtPerf;
-  const withinHandoverWindow = elapsed < 5000 || songDurationMs - elapsed <= 10000;
-  setCrossfader(withinHandoverWindow ? "center" : activeDeckSide);
+// Jump in-flight records to their destinations; `land` = false drops them
+// without running the landing (the change is being cancelled).
+function finishRecordFlights(land = true) {
+  recordFlights.splice(0).forEach((flight) => flight.finish(land));
 }
 
 function cancelChoreography() {
   document.querySelectorAll(".tonearm.is-lifted").forEach((arm) => arm.classList.remove("is-lifted"));
-  crossfaderTransitionPending = false;
-  if (preloweredTonearmSongId) {
-    const arm = document.getElementById("next-tonearm");
-    if (arm) {
-      arm.style.transition = "";
-      arm.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
-    }
-  }
-  preloweredTonearmSongId = null;
-  preloweredTonearmStartedAtPerf = null;
-  preloweredTonearmDurationMs = null;
-  setCrossfader(activeDeckSide);
-  recordDeparture?.cancel();
-  recordDeparture = null;
-  recordArrival?.cancel();
-  recordArrival = null;
-  stopNextSpin();
+  finishRecordFlights(false);
+  plateMotion?.cancel();
+  plateMotion = null;
   choreoTimers.forEach(clearTimeout);
   choreoTimers = [];
   const cardEl = document.getElementById('art-card');
@@ -172,6 +140,8 @@ function cancelChoreography() {
   const artistEl = document.querySelector('.div-playing-artist');
   if (cardEl) cardEl.classList.remove('record-arrive', 'fade-swap');
   if (cardEl) cardEl.style.removeProperty("opacity");
+  if (cardEl) cardEl.style.removeProperty("transition");
+  document.querySelector(".history-item.is-receiving")?.classList.remove("is-receiving");
   document.getElementById("player-metadata")?.style.removeProperty("opacity");
   if (titleEl) titleEl.classList.remove('fade-swap-text', 'record-arrive');
   if (artistEl) artistEl.classList.remove('fade-swap-text', 'record-arrive');
@@ -224,30 +194,17 @@ function updateTonearm({ entry = false } = {}) {
     el.style.transform = `rotate(${angle}deg)`;
   });
 }
-function updatePreloweredTonearm() {
-  if (!fxOn()) return;
-  if (!preloweredTonearmSongId || preloweredTonearmStartedAtPerf == null || !preloweredTonearmDurationMs) return;
-  const arm = document.getElementById("next-tonearm");
-  if (!arm || !arm.isConnected) return;
-  const elapsed = performance.now() - preloweredTonearmStartedAtPerf;
-  const progress = isPlaying ? Math.max(0, Math.min(1, elapsed / preloweredTonearmDurationMs)) : null;
-  const angle = progress == null ? TONEARM_PARK_DEG : Number((progress * TONEARM_SWEEP_DEG).toFixed(2));
-  arm.classList.add("ready");
-  arm.style.transform = `rotate(${angle}deg)`;
-}
 function formatTrackTime(ms) {
   const seconds = Math.max(0, Math.floor((ms || 0) / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
-// Calibrate when effects are first shown, and again (force) whenever the decks resize.
+// Calibrate when effects are first shown, and again (force) whenever the deck resizes.
 function lockTonearmSize(force = false) {
   if ((fixedTonearmSize !== null && !force) || !fxOn()) return;
   const width = document.getElementById("playing-link").getBoundingClientRect().width;
   if (width <= 0) return;
   fixedTonearmSize = `${width}px`;
-  document.querySelectorAll(".dj-stage .tonearm").forEach((arm) => {
-    arm.style.setProperty("--tonearm-size", fixedTonearmSize);
-  });
+  document.getElementById("tonearm")?.style.setProperty("--tonearm-size", fixedTonearmSize);
 }
 requestAnimationFrame(() => lockTonearmSize());
 function updatePlainProgress() {
@@ -263,18 +220,12 @@ function updatePlainProgress() {
 }
 setInterval(() => {
   updateTonearm();
-  updatePreloweredTonearm();
-  updateCrossfader();
   updatePlainProgress();
 }, 500);
 // Background tabs throttle the interval above to ~1/min, so snap the arm to the
 // right spot the instant we're refocused rather than waiting for the next tick.
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) {
-    updateTonearm();
-    updatePreloweredTonearm();
-    updateCrossfader();
-  }
+  if (!document.hidden) updateTonearm();
 });
 
 // ---- Record spin engine (JS-driven so speed can ramp up/down and stop) ----
@@ -1113,38 +1064,38 @@ function applyPendingMetadata() {
   const isChange = lastDeckSongId !== null && lastDeckSongId !== data.songid;
   lastDisplayedSongId = data.songid;
 
-  const applyContent = () => {
+  // `land` = false leaves the arm parked and the record still, for a jukebox
+  // record change that lowers the arm once the new record is on the platter.
+  const applyContent = (land = true) => {
     if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
     const tonearmSongChanged = lastDeckSongId !== data.songid;
-    recordDeparture?.cancel();
-    recordDeparture = null;
-    recordArrival?.cancel();
-    recordArrival = null;
-    // Promote the waiting deck and apply its artwork and palette together.
     const changesDeck = lastDeckSongId && lastDeckSongId !== data.songid;
-    const targetSide = data.deck_side === "left" || data.deck_side === "right"
-      ? data.deck_side
-      : changesDeck ? (activeDeckSide === "left" ? "right" : "left") : activeDeckSide;
-    const movesDeck = targetSide !== activeDeckSide;
     if (changesDeck) {
-      const waiting = document.querySelector("#next-record .history-item");
-      const incomingAngle = waiting?.dataset.songid === data.songid ? Number(waiting.dataset.recordAngle) || 0 : 0;
-      const incomingSpeed = waiting?.dataset.songid === data.songid ? nextSpinSpeed : 0;
-      stopNextSpin();
-      // Keep the waiting record's angle and speed when it becomes active.
+      // The up-next record becomes the playing one, keeping its angle.
+      const nextRecord = document.getElementById("next-record");
+      const waiting = nextRecord?.querySelector(".history-item");
       if (spinRafId) cancelAnimationFrame(spinRafId);
       spinRafId = null;
-      spinAngle = incomingAngle;
-      spinSpeed = incomingSpeed;
+      spinAngle = waiting?.dataset.songid === data.songid ? Number(waiting.dataset.recordAngle) || 0 : 0;
+      spinSpeed = 0;
       spinRampDur = 0;
       spinPrev = 0;
       const surfaces = spinEls || [playingImage, document.querySelector("#art-card .art-placeholder"), document.getElementById("record-label")];
       surfaces.filter(Boolean).forEach((element) => { element.style.transform = `rotate(${spinAngle}deg)`; });
-    }
-    if (movesDeck) switchDecks(targetSide, lastDeckSongId === null);
-    if (changesDeck && !movesDeck) {
+      // Its slot stays empty until the following record is loaded into it.
+      nextFade?.cancel();
+      nextRecord?.replaceChildren();
       nextDeckPending = false;
       renderNextTrack(latestNextQueue);
+      // A card that slid out for the change drops back in with the new song.
+      if (plateMotion) {
+        plateMotion.cancel();
+        plateMotion = document.getElementById("title-plate").animate([
+          { transform: "translateY(110%)" },
+          { transform: "translateY(-4%)", offset: 0.75 },
+          { transform: "none" },
+        ], { duration: 650, easing: "ease-out" });
+      }
     }
     flushRecordTransfer(data.songid);
     displayedRecordSongId = data.songid;
@@ -1185,24 +1136,12 @@ function applyPendingMetadata() {
       typeof data.elapsed_ms === "number"
         ? receivedAt - data.elapsed_ms
         : null;
-    crossfaderTransitionPending = false;
-    // The inactive deck's arm stays parked whenever a real track is present.
-    // It starts hidden on page load and is also hidden again by the empty-state
-    // handler below, so the CSS ready state reflects actual metadata.
-    const inactiveTonearm = document.getElementById("next-tonearm");
-    if (changesDeck && inactiveTonearm) parkTonearm(inactiveTonearm);
-    inactiveTonearm?.classList.add("ready");
-    if (changesDeck) tonearmChoreography = false;
-    const armAlreadyLowered = movesDeck && preloweredTonearmSongId === data.songid;
-    if (changesDeck) {
-      preloweredTonearmSongId = null;
-      preloweredTonearmStartedAtPerf = null;
-      preloweredTonearmDurationMs = null;
+    if (land) {
+      if (changesDeck) tonearmChoreography = false;
+      updateTonearm({ entry: tonearmSongChanged });
+      if (changesDeck) startSpinRamp(isPlaying ? SPIN_FULL : 0, 1000, EASE_IN);
     }
-    updateTonearm({ entry: tonearmSongChanged && !armAlreadyLowered });
-    updateCrossfader();
     updatePlainProgress();
-    if (changesDeck) startSpinRamp(isPlaying ? SPIN_FULL : 0, 1000, EASE_IN);
     if ('mediaSession' in navigator && data.song) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: data.song,
@@ -1234,45 +1173,178 @@ function applyPendingMetadata() {
     return;
   }
 
-  // Keep the outgoing deck playing for a short crossover while the waiting
-  // record spins up. The arm keeps following the current track during this hold.
-  crossfaderTransitionPending = true;
-  setCrossfader("center");
-  applyPendingColors(DECK_HANDOVER_MS);
-  if (!data.deck_side || data.deck_side !== activeDeckSide) startNextSpin(data.songid, data, receivedAt);
+  // Jukebox: lift the stylus, return the arm, slow the record, then swap records.
+  const stale = () => data.songid !== latestMetadataSongId || revision !== metadataRevision;
+  applyPendingColors(JUKEBOX_HANDOVER_MS);
+  releaseRecord(); // a song change takes the record out of the hand
+  tonearmChoreography = true;
+  const outgoingArm = document.getElementById("tonearm");
+  outgoingArm?.classList.add("is-lifted");
+  if (recordMotionEnabled()) {
+    plateMotion = document.getElementById("title-plate").animate(
+      [{ transform: "none" }, { transform: "translateY(110%)" }],
+      { duration: 450, easing: "ease-in", fill: "forwards" },
+    );
+  }
   choreoTimeout(() => {
-    if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
-    // Lift the stylus first, return the arm outside, then slow the record.
-    releaseRecord(); // a song change takes the record out of the hand
-    tonearmChoreography = true;
-    const outgoingArm = document.getElementById("tonearm");
-    outgoingArm?.classList.add("is-lifted");
+    if (stale()) return;
+    if (outgoingArm) outgoingArm.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
     choreoTimeout(() => {
-      if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
-      if (outgoingArm) outgoingArm.style.transform = `rotate(${TONEARM_PARK_DEG}deg)`;
+      if (stale()) return;
+      startSpinRamp(0, JUKEBOX_TIMING.spinDown, EASE_OUT);
       choreoTimeout(() => {
-        if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
-        startSpinRamp(0, DECK_TIMING.spinDown, EASE_OUT);
-        choreoTimeout(() => {
-          if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
-          // Keep the stopped record on the platter before its slower departure.
-          choreoTimeout(() => {
-            if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
-            if (recordMotionEnabled()) {
-              recordDeparture = cardEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DECK_TIMING.fade, easing: "ease", fill: "forwards" });
-            }
-            choreoTimeout(() => {
-              if (data.songid !== latestMetadataSongId || revision !== metadataRevision) return;
-              applyContent();
-              if (recordMotionEnabled()) {
-                recordArrival = cardEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: DECK_TIMING.fade, easing: "ease" });
-              }
-            }, DECK_TIMING.fade);
-          }, DECK_TIMING.stopped);
-        }, DECK_TIMING.spinDown);
-      }, DECK_TIMING.park);
-    }, DECK_TIMING.lift);
-  }, DECK_TIMING.overlap);
+        if (stale()) return;
+        swapRecords(data.songid, () => applyContent(false), () => {
+          outgoingArm?.classList.remove("is-lifted");
+          tonearmChoreography = false;
+          updateTonearm();
+          startSpinRamp(isPlaying ? SPIN_FULL : 0, 1000, EASE_IN);
+        });
+      }, JUKEBOX_TIMING.spinDown);
+    }, JUKEBOX_TIMING.park);
+  }, JUKEBOX_TIMING.lift);
+}
+
+// ---- Jukebox record change ----
+// A flight is a fixed-position copy of a record that travels between a rack
+// slot and the platter while the real element underneath stays hidden.
+function buildFlightRecord(source, angle) {
+  const record = document.createElement("div");
+  record.className = "record-flight";
+  record.setAttribute("aria-hidden", "true");
+  source.querySelectorAll(":scope > .art-placeholder, :scope > img, :scope > .record-overlay, :scope > svg, :scope > .art-sheen")
+    .forEach((part) => {
+      const copy = part.cloneNode(true);
+      if (copy.matches("img, .art-placeholder, svg")) copy.style.transform = `rotate(${angle}deg)`;
+      record.appendChild(copy);
+    });
+  uniquifyIds(record, `record-flight-${++historyFlightId}-`);
+  return record;
+}
+
+// Carries `record` from one rect to another along a raised arc, turning once.
+// Rects are untransformed layout boxes; `tilt` is how far each end lies back
+// (deg). The deck and the racks tilt with perspective(RECORD_PERSPECTIVE)
+// about their centres, so the copy does the same and lands on their exact shape.
+const RECORD_PERSPECTIVE = 900;
+function flyRecord(record, from, to, { duration, delay = 0, fadeOut = false, onLand, tilt = [0, 0] }) {
+  const size = from.width;
+  record.style.cssText = `left:${from.left}px;top:${from.top}px;width:${size}px;height:${size}px;`;
+  document.body.appendChild(record);
+  const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+  const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+  const scale = to.width / size;
+  const lift = Math.min(90, Math.abs(dx) * 0.25);
+  // Scaling after the perspective would scale the depth too, so divide it out:
+  // perspective(P / k) inside scale(k) looks like perspective(P) at the new size.
+  const pose = (x, y, k, deg, turn) =>
+    `translate(${x}px, ${y}px) scale(${k}) perspective(${RECORD_PERSPECTIVE / k}px) rotateX(${deg}deg) rotate(${turn}deg)`;
+  const midScale = (1 + scale) / 2 * 1.06;
+  const motion = record.animate([
+    { transform: pose(0, 0, 1, tilt[0], 0), opacity: 1 },
+    { transform: pose(dx / 2, dy / 2 - lift, midScale, (tilt[0] + tilt[1]) / 2, 180), opacity: 1, offset: 0.5 },
+    { transform: pose(dx, dy, scale, tilt[1], 360), opacity: fadeOut ? 0 : 1 },
+  ], { duration, delay, easing: "cubic-bezier(.45,.05,.35,1)", fill: "both" });
+  const flight = {
+    finish(land = true) {
+      flight.finish = () => {};
+      recordFlights = recordFlights.filter((entry) => entry !== flight);
+      motion.cancel();
+      record.remove();
+      if (land) onLand?.();
+    },
+  };
+  recordFlights.push(flight);
+  motion.finished.then(() => flight.finish(), () => {});
+  return flight;
+}
+
+function visibleRect(element) {
+  const rect = element?.getBoundingClientRect();
+  return rect && rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
+// Where an element sits before its own transforms (its tilt) are applied.
+function layoutRect(element) {
+  if (!element?.offsetWidth || !element.offsetParent) return null;
+  const parent = element.offsetParent.getBoundingClientRect();
+  return {
+    left: parent.left + element.offsetParent.clientLeft + element.offsetLeft,
+    top: parent.top + element.offsetParent.clientTop + element.offsetTop,
+    width: element.offsetWidth,
+    height: element.offsetHeight,
+  };
+}
+
+// Moves the playing record to the history rack and the up-next record to the
+// platter. `apply` swaps in the new song's content; `land` runs once the new
+// record is on the platter.
+function swapRecords(songid, apply, land) {
+  const cardEl = document.getElementById("art-card");
+  const cardRect = layoutRect(document.getElementById("playing-link"));
+  const motion = recordMotionEnabled() && cardRect;
+  const tilt = parseFloat(getComputedStyle(document.querySelector(".player-layout")).getPropertyValue("--platter-tilt")) || 0;
+  const waiting = document.querySelector("#next-record .history-item");
+  const incomingDisc = waiting?.dataset.songid === songid ? waiting.querySelector(".history-disc") : null;
+  const incomingRect = incomingDisc ? layoutRect(waiting) : null;
+  const outgoingSongId = displayedRecordSongId;
+  const outgoingAngle = spinAngle;
+  const outgoing = motion ? buildFlightRecord(cardEl, outgoingAngle) : null;
+  const incoming = motion && incomingRect
+    ? buildFlightRecord(incomingDisc, Number(waiting.dataset.recordAngle) || 0) : null;
+
+  apply();
+  if (!motion) { land(); return; }
+  cardEl.style.transition = "none";
+  cardEl.style.opacity = "0";
+
+  // The played record lands on the newest history slot, or fades off toward the rack.
+  const newest = document.querySelector("#history-list .history-item");
+  const slot = newest?.dataset.historyKey?.startsWith(`${outgoingSongId}:`) ? newest : null;
+  const slotRect = layoutRect(slot);
+  // The history records only lie back in the wide two-row stack.
+  const slotTilt = window.matchMedia("(width >= 821px)").matches ? tilt : 0;
+  if (slotRect) {
+    slot.getAnimations().forEach((animation) => animation.cancel());
+    slot.classList.add("is-receiving");
+    slot.querySelector(".history-disc")?.style.setProperty("--history-art-angle", `${outgoingAngle}deg`);
+    historyRecordAngles.set(slot.dataset.historyKey, outgoingAngle.toFixed(2));
+  }
+  const rackRect = visibleRect(document.getElementById("history-panel"))
+    || visibleRect(document.querySelector(".history-reserve-slot"));
+  const small = { width: cardRect.width * 0.4, height: cardRect.height * 0.4 };
+  const target = slotRect
+    || (rackRect ? { left: rackRect.left, top: rackRect.top, ...small }
+      : { left: cardRect.left + cardRect.width * 0.3, top: cardRect.bottom, ...small });
+  flyRecord(outgoing, cardRect, target, {
+    duration: JUKEBOX_TIMING.outgoing,
+    fadeOut: !slotRect,
+    tilt: [tilt, slotRect ? slotTilt : 0],
+    onLand: () => slot?.classList.remove("is-receiving"),
+  });
+
+  if (incoming) {
+    flyRecord(incoming, incomingRect, cardRect, {
+      duration: JUKEBOX_TIMING.incoming,
+      delay: JUKEBOX_TIMING.incomingDelay,
+      tilt: [tilt, tilt],
+      onLand: () => {
+        // The copy sits exactly over the card, so reveal it without a fade.
+        cardEl.style.removeProperty("opacity");
+        void cardEl.offsetWidth;
+        cardEl.style.removeProperty("transition");
+        land();
+      },
+    });
+  } else {
+    // Nothing waiting for this song (a skip or a jump in the queue): fade the
+    // new record onto the platter once the old one has left it.
+    choreoTimeout(() => {
+      cardEl.style.removeProperty("transition");
+      cardEl.style.removeProperty("opacity");
+      land();
+    }, JUKEBOX_TIMING.incomingDelay + 200);
+  }
 }
 
 // --- End Background Canvas ---
@@ -1586,11 +1658,9 @@ let displayedRecordSongId = null;
 let latestMetadataSongId = null;
 let metadataRevision = 0;
 let nextTrack = null;
-let activeDeckSide = "left";
 let lastDeckSongId = null;
 let latestNextQueue = [];
 let nextDeckPending = false;
-let nextLoadTimer = null;
 let nextFade = null;
 let nextHasShownRecord = false;
 let pendingRecordTransfer = null;
@@ -1628,7 +1698,6 @@ function handleMetadata(currentData) {
   if (!currentData || !currentData.song) {
     cancelChoreography();
     nextDeckPending = false;
-    clearTimeout(nextLoadTimer);
     renderNextTrack(latestNextQueue);
     if (pendingRecordTransfer) {
       clearTimeout(pendingRecordTransfer.timeout);
@@ -1654,18 +1723,8 @@ function handleMetadata(currentData) {
     songStartedAtPerf = null;
     songDurationMs = null;
     tonearmSongId = null;
-    const inactiveTonearm = document.getElementById("next-tonearm");
-    if (inactiveTonearm) parkTonearm(inactiveTonearm, true);
     updateTonearm();
     return;
-  }
-
-  if (lastDeckSongId && lastDeckSongId !== currentData.songid) {
-    // Hold the fader in the middle as soon as a new track is known, including
-    // while its cover art is still loading. The pending state is cleared when
-    // the metadata is applied, using the elapsed-time anchor from this event.
-    crossfaderTransitionPending = fxOn() && isPlaying;
-    updateCrossfader();
   }
 
   if (displayedRecordSongId && displayedRecordSongId !== currentData.songid
@@ -1847,97 +1906,14 @@ function updateHistoryAges() {
   });
 }
 
-let nextSpinRafId = null;
-let nextSpinSpeed = 0;
-function stopNextSpin() {
-  if (nextSpinRafId) cancelAnimationFrame(nextSpinRafId);
-  nextSpinRafId = null;
-  nextSpinSpeed = 0;
-}
-function positionNextTonearm(songid, data, receivedAt) {
-  const waiting = document.querySelector("#next-record .history-item");
-  if (!recordMotionEnabled() || waiting?.dataset.songid !== songid || !data.duration_ms) return false;
-  const arm = document.getElementById("next-tonearm");
-  if (!arm) return false;
-  arm.classList.remove("is-lifted");
-  const startedAt = typeof data.elapsed_ms === "number" ? receivedAt - data.elapsed_ms : receivedAt;
-  preloweredTonearmStartedAtPerf = startedAt;
-  preloweredTonearmDurationMs = data.duration_ms;
-  preloweredTonearmSongId = songid;
-  updatePreloweredTonearm();
-  return true;
-}
-function startNextSpin(songid, data, receivedAt) {
-  stopNextSpin();
-  const waiting = document.querySelector("#next-record .history-item");
-  if (!recordMotionEnabled() || waiting?.dataset.songid !== songid) return;
-  positionNextTonearm(songid, data, receivedAt);
-  const disc = waiting.querySelector(".history-disc");
-  const started = performance.now();
-  let previous = started;
-  let angle = Number(waiting.dataset.recordAngle) || 0;
-  const frame = (now) => {
-    if (!recordMotionEnabled() || !waiting.isConnected || latestMetadataSongId !== songid) { stopNextSpin(); return; }
-    const elapsed = Math.min(1, (now - started) / 1000);
-    nextSpinSpeed = SPIN_FULL * EASE_IN(elapsed);
-    angle = (angle + nextSpinSpeed * Math.min(50, now - previous)) % 360;
-    previous = now;
-    waiting.dataset.recordAngle = angle;
-    disc.style.setProperty("--history-art-angle", `${angle}deg`);
-    nextSpinRafId = requestAnimationFrame(frame);
-  };
-  nextSpinRafId = requestAnimationFrame(frame);
-}
-
 let nextArtworkVersion = 0;
-function switchDecks(side = activeDeckSide === "left" ? "right" : "left", initial = false) {
-  activeDeckSide = side;
-  const active = document.getElementById(`deck-${activeDeckSide}`);
-  const inactive = document.getElementById(`deck-${activeDeckSide === "left" ? "right" : "left"}`);
-  const playing = document.querySelector(".now-playing");
-  const next = document.getElementById("next-panel");
-  active.appendChild(playing);
-  inactive.appendChild(next);
-  // The role wrappers trade places, but each physical deck keeps its own arm.
-  // Exchange the arm nodes after moving the wrappers, then make IDs follow the
-  // playing/up-next roles so progress updates target the newly active arm.
-  const playingMount = playing.querySelector(".tonearm-mount");
-  const nextMount = next.querySelector(".tonearm-mount");
-  const playingArm = playingMount?.querySelector(".tonearm");
-  const nextArm = nextMount?.querySelector(".tonearm");
-  if (playingMount && nextMount && playingArm && nextArm) {
-    playingMount.replaceChildren(nextArm);
-    nextMount.replaceChildren(playingArm);
-    nextArm.id = "tonearm";
-    playingArm.id = "next-tonearm";
-  }
-  document.getElementById("dj-stage").dataset.playingSide = activeDeckSide;
-  // Initial deck alignment must preserve the first queue artwork/load callback.
-  if (initial) {
-    nextDeckPending = false;
-    clearTimeout(nextLoadTimer);
-    return;
-  }
-  // Leave the emptied platter visible; queue changes during the wait are coalesced.
-  nextDeckPending = true;
-  ++nextArtworkVersion;
-  nextFade?.cancel();
-  const container = document.getElementById("next-record");
-  container.replaceChildren();
-  container.style.removeProperty("opacity");
-  clearTimeout(nextLoadTimer);
-  nextLoadTimer = setTimeout(() => {
-    nextDeckPending = false;
-    renderNextTrack(latestNextQueue);
-  }, 3000);
-}
-
 function renderNextTrack(queue) {
   latestNextQueue = (queue || []).slice(0, 1);
   if (nextDeckPending) return;
   const container = document.getElementById("next-record");
   if (!container) return;
-  nextTrack = latestNextQueue[0] || null;
+  // A queue that still lists the song now playing has not caught up yet.
+  nextTrack = latestNextQueue[0]?.songid === latestMetadataSongId ? null : latestNextQueue[0] || null;
   const version = ++nextArtworkVersion;
   nextFade?.cancel();
   const track = nextTrack;
@@ -2002,7 +1978,11 @@ function prepareHistoryFlight(node) {
   node.removeAttribute("aria-label");
   node.setAttribute("aria-hidden", "true");
   node.classList.add("history-flight");
-  const prefix = `history-flight-${++historyFlightId}-`;
+  uniquifyIds(node, `history-flight-${++historyFlightId}-`);
+}
+
+// Give a copied subtree its own ids, and point its internal references at them.
+function uniquifyIds(node, prefix) {
   const ids = new Map();
   node.querySelectorAll("[id]").forEach((element) => {
     ids.set(element.id, prefix + element.id);
@@ -2031,17 +2011,18 @@ function animateHistorySlots(previous, list) {
   targets.forEach((item, index) => {
     const before = previous.find((entry) => entry.key === item.dataset.historyKey);
     const after = item.getBoundingClientRect();
+    // A computed "none" can't be combined with other transforms.
     if (before) {
-      const base = getComputedStyle(item).transform;
+      const base = getComputedStyle(item).transform.replace("none", "");
       animate(item, [
         { transform: `translate(${before.rect.x - after.x}px, ${before.rect.y - after.y}px) scale(${before.rect.width / after.width}) ${base}` },
-        { transform: base },
+        { transform: base || "none" },
       ]);
     } else {
-      const base = getComputedStyle(item).transform;
+      const base = getComputedStyle(item).transform.replace("none", "");
       animate(item, [
         { opacity: 0, transform: `scale(.96) ${base}` },
-        { opacity: 1, transform: base },
+        { opacity: 1, transform: base || "none" },
       ]);
     }
   });
@@ -2067,12 +2048,16 @@ function animateHistorySlots(previous, list) {
 // Keep in-flight records attached to their slots if the layout changes.
 window.addEventListener("resize", () => {
   finishHistoryMotion();
+  finishRecordFlights();
   // The deck size follows the viewport (rotation, mobile browser bars), so the arm must too.
   lockTonearmSize(true);
   updateTonearm();
 });
 document.getElementById("bgToggleBtn")?.addEventListener("click", finishHistoryMotion);
-document.querySelector("main")?.addEventListener("scroll", finishHistoryMotion, { passive: true });
+document.querySelector("main")?.addEventListener("scroll", () => {
+  finishHistoryMotion();
+  finishRecordFlights();
+}, { passive: true });
 
 // One angle per play for this page session, shared by every history rerender.
 const historyRecordAngles = new Map();
@@ -2093,10 +2078,13 @@ function renderHistory(history, animateUpdate = false) {
   const list = document.getElementById("history-list");
   if (!panel || !list) return;
 
-  const items = (history || []).slice(0, 4);
+  // Up to eight: the two-row jukebox stack shows them all, other layouts four (CSS).
+  const items = (history || []).slice(0, 8);
   if (!animateUpdate && pendingRecordTransfer && items[0]?.songid === pendingRecordTransfer.fromId
       && historyMotionEnabled()) {
     pendingRecordTransfer.items = items;
+    // History that arrives after the record change still slides in.
+    if (displayedRecordSongId === pendingRecordTransfer.toId) flushRecordTransfer(displayedRecordSongId);
     return;
   }
   const keys = items.map(historyRecordKey).join("|");

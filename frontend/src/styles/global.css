@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Typewriter face for the jukebox title card and rack captions (effects on). */
+@import "@fontsource/courier-prime/400.css";
+@import "@fontsource/courier-prime/700.css";
 
 /* ---- Theme tokens ----------------------------------------------------------
    The palette is theme-switched at runtime by a class on <body> (see setTheme
@@ -51,6 +54,7 @@
     --c1: #e07a3f;
     --c2: #3b1d10;
 
+    --font-typewriter: "Courier Prime", "Courier New", Courier, monospace;
     --platter-tilt: 5deg; /* 0 = top-down, 90 = edge-on; higher = flatter/more 3D */
     --tonearm-lift: 34px; /* how far the arm floats above the platter surface */
   }
@@ -576,7 +580,7 @@
   body:not(.no-bg-animation) .tonearm.ready {
     opacity: 1;
   }
-  .dj-stage .tonearm {
+  .jukebox-deck .tonearm {
     left: auto;
     right: 0;
     bottom: auto;
@@ -586,11 +590,11 @@
   }
   /* Lifting only deepens the shadow. Never move or resize the arm parts here:
      the arm hangs almost vertically, so any offset reads as a length change. */
-  .dj-stage .tonearm-arm, .dj-stage .tonearm-head {
+  .jukebox-deck .tonearm-arm, .jukebox-deck .tonearm-head {
     transition: box-shadow 250ms ease;
   }
-  .dj-stage .tonearm.is-lifted .tonearm-arm,
-  .dj-stage .tonearm.is-lifted .tonearm-head {
+  .jukebox-deck .tonearm.is-lifted .tonearm-arm,
+  .jukebox-deck .tonearm.is-lifted .tonearm-head {
     box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
   }
   .tonearm-arm,
@@ -926,82 +930,82 @@
     animation: spin 0.7s linear infinite;
   }
 
-  /* Two fixed decks, each with its own tonearm. Roles alternate in place. */
-  .dj-stage {
-    --deck-size: min(30vh, 300px, calc((100vw - 120px) / 2));
-    --deck-gap: clamp(44px, 7vw, 90px);
-    display: flex;
-    gap: var(--deck-gap);
+  /* ---- Jukebox ----------------------------------------------------------------
+     Up next on the left, the turntable in the middle and recently played on the
+     right, inside an arched cabinet (wide screens). On a song change app.js
+     carries the played record to the history rack and the up-next record onto
+     the platter as .record-flight copies. Narrow screens stack the three. */
+  .player-layout {
+    --deck-size: min(34vh, 320px, calc((100vw - 280px) / 2.92));
     position: relative;
-    align-items: flex-start;
-    order: 0;
+    isolation: isolate;
+  }
+  @media (width < 821px) {
+    .player-layout { --deck-size: min(34vh, 320px, calc(100vw - 140px)); }
+  }
+  .jukebox-deck {
+    position: relative;
     padding: 20px 0 8px;
   }
-  .deck-crossfader {
-    --fader-position: 0;
-    position: absolute;
-    left: 50%;
-    top: auto;
-    bottom: 0;
-    transform: translateX(-50%);
-    width: calc(var(--deck-gap) - 8px);
-    height: 52px;
-    padding: 0 6px;
-    border: 1px solid var(--panel-border);
-    border-radius: 7px;
-    background: linear-gradient(145deg, #303036, #151518);
-    box-shadow: 0 5px 12px #0005, inset 0 1px 0 #ffffff0d;
-    pointer-events: none;
-  }
-  body.no-bg-animation .dj-stage { padding-bottom: 0; }
-  .crossfader-track {
-    position: relative;
-    height: 5px;
-    margin-top: 20px;
-    border-radius: 3px;
-    background: #09090b;
-    box-shadow: inset 0 1px 3px #000, 0 1px 0 #ffffff12;
-  }
-  .crossfader-track::after {
-    content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 17px;
-    background: #ffffff24;
-  }
-  .crossfader-thumb {
-    position: absolute;
-    z-index: 1;
-    left: calc(var(--fader-position) * (100% - 10px));
-    top: 50%;
-    transform: translateY(-50%);
-    width: 10px;
-    height: 24px;
-    border: 1px solid #717178;
-    border-radius: 2px;
-    background: linear-gradient(90deg, #303036, #77777e 45%, #34343a);
-    box-shadow: 1px 2px 4px #0008;
-    transition: left 450ms cubic-bezier(.22,.61,.36,1);
-  }
-  .crossfader-thumb::after {
-    content: ""; position: absolute; left: 50%; top: 3px; bottom: 3px; width: 1px;
-    background: #ececed;
-  }
-  body.no-bg-animation .deck-crossfader { display: none; }
-  @media (prefers-reduced-motion: reduce) { .crossfader-thumb { transition: none; } }
-  .deck-slot, .dj-deck { width: var(--deck-size); flex: none; }
-  .dj-deck { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  body.no-bg-animation .jukebox-deck { padding: 0; }
+  .now-playing, .next-panel { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .now-playing { width: var(--deck-size); }
   .deck-role { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
-  .next-track-info, .plain-progress, .playing-details { display: none; }
-  .dj-stage #art-card, .next-deck-surface, #next-record {
+  .plain-progress, .playing-details { display: none; }
+  .jukebox-deck #art-card, .jukebox-deck #playing-link {
     width: var(--deck-size);
     height: var(--deck-size);
   }
-  .next-deck-surface { position: relative; }
-  #next-record { position: relative; }
-  /* Keep artwork and its captions below the deck hardware during fades. */
-  .dj-stage #art-card, .dj-stage #next-record { z-index: 1; }
-  .dj-stage .spindle { z-index: 2; }
-  .dj-stage .tonearm-mount { z-index: 3; width: var(--deck-size); height: var(--deck-size); }
-  .dj-stage #playing-link { width: var(--deck-size); height: var(--deck-size); }
-  .next-panel { --record-size: var(--deck-size); }
+  /* Keep artwork below the deck hardware during fades. */
+  .jukebox-deck #art-card { z-index: 1; }
+  .jukebox-deck .spindle { z-index: 2; }
+  .jukebox-deck .tonearm-mount { z-index: 3; width: var(--deck-size); height: var(--deck-size); }
+  /* The deck and the racks share one viewpoint: records lie back at this angle,
+     like a table seen from the front (see "3D turntable" for the platter). */
+  body:not(.no-bg-animation) .player-layout { --platter-tilt: 28deg; }
+  /* Pivoting on the centre keeps each record in its slot as it lies back. */
+  /* perspective() in the transform itself (not on the wrapper) so the vanishing
+     point is the record's centre; app.js flies records with the same geometry
+     (RECORD_PERSPECTIVE). */
+  body:not(.no-bg-animation) .jukebox-deck .now-playing { perspective: none; }
+  body:not(.no-bg-animation) .jukebox-deck #playing-link {
+    transform: perspective(900px) rotateX(var(--platter-tilt));
+    transform-origin: center;
+  }
+  body:not(.no-bg-animation) #next-record .history-item {
+    transform: perspective(900px) rotateX(var(--platter-tilt));
+    transform-origin: center;
+  }
+  /* The platter's front edge, so it reads as a solid disc lying back. */
+  body:not(.no-bg-animation) .jukebox-deck .platter {
+    box-shadow: 0 7px 0 #0b0b0d, 0 8px 0 rgba(255, 255, 255, 0.06), 0 34px 60px -18px rgba(0, 0, 0, 0.8),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  .jukebox-deck #playing-link[data-art-ready="false"] { visibility: visible; }
+  .jukebox-deck #playing-link[data-art-ready="false"] #art-card { visibility: hidden; }
+  @media (prefers-reduced-motion: reduce) { .jukebox-deck .tonearm { transition: opacity 200ms ease; } }
+  @media (prefers-reduced-motion: reduce) {
+    .jukebox-deck .tonearm-arm, .jukebox-deck .tonearm-head { transition: none; }
+  }
+
+  /* Up next: one record waiting in the rack, with its details underneath. */
+  .next-panel {
+    --record-size: calc(var(--deck-size) * 0.62);
+    width: calc(var(--deck-size) * 0.72);
+    text-align: center;
+  }
+  #next-record {
+    position: relative;
+    z-index: 1;
+    width: var(--record-size);
+    height: var(--record-size);
+  }
+  /* An empty slot while nothing is queued or the next record is loading. */
+  #next-record:empty {
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 2px var(--panel-border);
+  }
+  .next-track-info { width: 100%; min-height: 3em; color: var(--muted); font-size: 12px; }
   .next-panel .history-item { --cluster-x: 0px; --record-turn: 0deg; }
   .next-panel .history-disc { width: 100%; height: 100%; }
   #next-record .history-item {
@@ -1012,18 +1016,344 @@
     z-index: 5;
   }
   .next-panel .record-label { transform: rotate(var(--history-art-angle, 0deg)); }
-  body.no-bg-animation .next-panel .record-label { transform: none; }
   .next-panel .history-platter { display: none !important; }
-  body:not(.no-bg-animation) .dj-stage .now-playing { perspective: none; }
-  body:not(.no-bg-animation) .dj-stage #playing-link { transform: none; }
-  .dj-stage #playing-link[data-art-ready="false"] { visibility: visible; }
-  .dj-stage #playing-link[data-art-ready="false"] #art-card { visibility: hidden; }
-  body.no-bg-animation .next-panel .history-item { padding: 0; border: 0; background: transparent; display: block; height: var(--deck-size); }
-  body.no-bg-animation .next-panel .history-disc { width: 100%; height: 100%; border-radius: 28px; }
-  body.no-bg-animation .next-panel .history-art { width: 100%; height: 100%; border-radius: 28px; }
-  @media (prefers-reduced-motion: reduce) { .dj-stage .tonearm { transition: opacity 200ms ease; } }
-  @media (prefers-reduced-motion: reduce) {
-    .dj-stage .tonearm-arm, .dj-stage .tonearm-head { transition: none; }
+  body.no-bg-animation .next-panel { display: none; }
+  @media (width < 821px) {
+    /* Stacked: a small record with its details beside it. */
+    .next-panel {
+      --record-size: 64px;
+      display: grid;
+      width: min(100%, 420px);
+      grid-template-columns: var(--record-size) 1fr;
+      grid-template-areas: "record role" "record info";
+      column-gap: 14px;
+      row-gap: 2px;
+      align-items: center;
+      text-align: left;
+    }
+    .next-panel .deck-role { grid-area: role; align-self: end; }
+    #next-record { grid-area: record; }
+    .next-track-info { grid-area: info; align-self: start; min-height: 0; }
+  }
+
+  /* A record travelling between the rack and the platter. */
+  .record-flight {
+    position: fixed;
+    z-index: 40;
+    margin: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    pointer-events: none;
+    box-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.7);
+    will-change: transform;
+  }
+  .record-flight > img,
+  .record-flight > .art-placeholder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+  }
+  /* Same layer order as a record on the deck, whatever order the parts were
+     copied in: base, cover, grooves, sheen, then the centre label. */
+  .record-flight > .art-placeholder { z-index: 0; }
+  .record-flight > img { z-index: 1; }
+  .record-flight > .record-overlay { z-index: 2; }
+  .record-flight > .art-sheen { z-index: 3; }
+  .record-flight > svg { z-index: 4; }
+  /* The history slot a record is flying into stays empty until it lands. */
+  .history-item.is-receiving { visibility: hidden; }
+
+  /* The title dispenser under the arch: an arched speaker window of backlit,
+     fluted glass glowing in the palette colour, in a chrome rim, with a typed
+     paper title card standing on its bottom edge. On a record change app.js
+     sinks the card out of view and raises the next one; .title-slot clips it
+     at the window's bottom edge. */
+  body:not(.no-bg-animation) #player-metadata {
+    position: relative;
+    padding: 38px 30px 0;
+    border-radius: 50% 50% 20px 20px / 64px 64px 20px 20px;
+    background:
+      radial-gradient(120% 90% at 50% 115%, color-mix(in srgb, var(--accent) 38%, transparent), transparent 70%),
+      repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 2px, rgba(0, 0, 0, 0.12) 2px 9px),
+      linear-gradient(180deg, #121215, #0b0b0d);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+      inset 0 10px 24px -12px rgba(255, 255, 255, 0.18),
+      0 0 0 3px #2a2a2f,
+      0 0 0 4px rgba(255, 255, 255, 0.16),
+      0 0 26px -6px var(--accent-glow),
+      0 14px 30px -14px rgba(0, 0, 0, 0.8);
+  }
+  @media (width < 821px) {
+    body:not(.no-bg-animation) #player-metadata {
+      padding: 30px 16px 0;
+      border-radius: 50% 50% 14px 14px / 44px 44px 14px 14px;
+    }
+  }
+  body:not(.no-bg-animation) .title-slot {
+    position: relative;
+    overflow: hidden;
+    padding: 10px 12px 0;
+  }
+  /* The card rises out of the window's bottom edge: a soft shadow along it. */
+  body:not(.no-bg-animation) .title-slot::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 10px;
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0));
+    pointer-events: none;
+  }
+  /* The rack captions are typed like the title card. */
+  body:not(.no-bg-animation) .deck-role,
+  body:not(.no-bg-animation) .history-panel .history-head,
+  body:not(.no-bg-animation) .history-reserve .history-head {
+    font-family: var(--font-typewriter);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+  /* So are the names of the next and recent songs. */
+  body:not(.no-bg-animation) .next-track-info,
+  body:not(.no-bg-animation) .history-tag {
+    font-family: var(--font-typewriter);
+    font-weight: 400;
+  }
+  body:not(.no-bg-animation) .next-track-title,
+  body:not(.no-bg-animation) .history-tag .history-title { font-weight: 700; }
+  /* The card: aged off-white stock with a fine grain and yellowed edges, a
+     printed double rule in the palette colour along the top, and the title
+     typed in slightly soft ink. */
+  body:not(.no-bg-animation) .title-plate {
+    position: relative;
+    z-index: 1;
+    margin: 0 4px;
+    padding: 18px 24px 16px;
+    border-radius: 3px 3px 0 0;
+    color: #2b2117;
+    background:
+      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 7px / 100% 2px no-repeat,
+      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 11px / 100% 1px no-repeat,
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .32 0 0 0 0 .18 0 0 0 .11 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+      radial-gradient(130% 150% at 50% 40%, rgba(0, 0, 0, 0) 55%, rgba(140, 100, 40, 0.22)),
+      linear-gradient(180deg, #f4ead2, #e9dbb8);
+    box-shadow: 0 -6px 16px -8px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(90, 60, 20, 0.14);
+    --plate-rule: color-mix(in srgb, var(--accent) 70%, #3a2614);
+  }
+  body:not(.no-bg-animation) .title-plate .div-playing-title {
+    font-family: var(--font-typewriter);
+    font-size: clamp(22px, 2.6vw, 28px);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    text-shadow: 0 0 0.6px rgba(43, 33, 23, 0.55);
+  }
+  body:not(.no-bg-animation) .title-plate .div-playing-artist {
+    font-family: var(--font-typewriter);
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    color: color-mix(in srgb, var(--accent) 60%, #1a120a);
+  }
+
+  /* Title plate under the arch: the song in bold type, a fine rule, then the
+     artist on one line in spaced capitals in the palette colour. */
+  body:not(.no-bg-animation) .div-playing-artist {
+    margin-top: 6px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    transition: color 0.5s ease;
+  }
+  body:not(.no-bg-animation) .div-playing-artist:not(:empty)::before {
+    content: "";
+    display: block;
+    width: 44px;
+    height: 1px;
+    margin: 0 auto 9px;
+    background: currentColor;
+    opacity: 0.6;
+  }
+
+  @media (width >= 821px) {
+    /* !important: the wrapper's flex/gap utilities outrank this layer. */
+    body:not(.no-bg-animation) .player-layout {
+      display: grid !important;
+      column-gap: clamp(40px, 4.5vw, 64px) !important;
+      /* Equal side columns keep the record centred under the title. */
+      --jukebox-side: calc(var(--deck-size) * 0.96 + 8px);
+      grid-template-columns: var(--jukebox-side) auto var(--jukebox-side);
+      grid-template-areas: "meta meta meta" "next deck history";
+      align-items: start !important;
+      /* Room for the tonearm's counterweight under the title. */
+      row-gap: clamp(26px, 4vh, 40px) !important;
+      justify-content: center;
+      justify-items: center;
+      /* The top padding keeps the title plate clear of the arch's curve. */
+      padding: 46px 40px 26px;
+    }
+    /* Narrower than the cabinet so its ends stay inside the arch. */
+    body:not(.no-bg-animation) #player-metadata { width: min(100%, calc(var(--deck-size) * 2)); }
+    body:not(.no-bg-animation) .next-panel { grid-area: next; }
+    body:not(.no-bg-animation) .next-track-details { display: none; }
+    body:not(.no-bg-animation) .jukebox-deck { grid-area: deck; }
+    /* The title marquee under the arch names the song; no deck caption needed. */
+    body:not(.no-bg-animation) .now-playing .deck-role { display: none; }
+    body:not(.no-bg-animation) #player-metadata { grid-area: meta; }
+    body:not(.no-bg-animation) .history-panel,
+    body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
+      grid-area: history;
+      width: calc(var(--deck-size) * 0.96 + 8px);
+      margin: 0;
+      --record-size: calc(var(--deck-size) * 0.48);
+    }
+    body:not(.no-bg-animation) .history-panel .history-head,
+    body:not(.no-bg-animation) .history-reserve .history-head {
+      padding-left: 0;
+      text-align: center;
+    }
+    /* Recently played as two horizontal stacks of four, newest first: in each
+       row the front record is on the left and older ones tuck behind it to the
+       right, each a little smaller and darker; the second row is older still.
+       The caption under both rows names the newest record, or whichever one
+       the pointer is on. Grid columns are one "step" wide and each record
+       spills over the columns to its right, which is what makes them overlap. */
+    body:not(.no-bg-animation) .history-panel {
+      --stack-size: calc(var(--deck-size) * 0.44);
+      --stack-step: calc((var(--jukebox-side) - var(--stack-size)) / 3);
+      --stack-gap: 12px;
+      --record-size: var(--stack-size);
+      padding-bottom: 64px; /* room for the caption */
+    }
+    body:not(.no-bg-animation) .history-list,
+    body:not(.no-bg-animation) .history-reserve-row {
+      display: grid;
+      grid-template-columns: repeat(3, var(--stack-step)) var(--stack-size);
+      grid-auto-rows: var(--stack-size);
+      justify-content: start;
+      gap: var(--stack-gap) 0;
+    }
+    body:not(.no-bg-animation) .history-list .history-item:nth-child(n + 5) { display: block; }
+    body:not(.no-bg-animation) .history-panel .history-item,
+    body:not(.no-bg-animation) .history-reserve-slot {
+      width: var(--stack-size);
+      height: var(--stack-size);
+      grid-row: calc(var(--stack-row) + 1);
+      grid-column: calc(var(--stack-pos) + 1);
+    }
+    /* Place in the stack (left to right) and row, by order. */
+    .history-panel .history-item, .history-reserve-slot { --stack-row: 0; --stack-pos: 0; }
+    .history-panel .history-item:nth-child(4n + 2), .history-reserve-slot:nth-child(4n + 2) { --stack-pos: 1; }
+    .history-panel .history-item:nth-child(4n + 3), .history-reserve-slot:nth-child(4n + 3) { --stack-pos: 2; }
+    .history-panel .history-item:nth-child(4n + 4), .history-reserve-slot:nth-child(4n + 4) { --stack-pos: 3; }
+    .history-panel .history-item:nth-child(n + 5) { --stack-row: 1; }
+    body:not(.no-bg-animation) .history-panel .history-item {
+      z-index: calc(20 - var(--record-index, 0));
+      clip-path: none;
+      transform: none;
+      filter: none;
+    }
+    body:not(.no-bg-animation) .history-panel .history-item:hover,
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible { z-index: 30; }
+    body:not(.no-bg-animation) .history-panel .history-item:hover,
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible {
+      transform: none;
+      filter: none;
+    }
+    body:not(.no-bg-animation) .history-panel .history-item[data-history-key] .history-disc {
+      transform: translate(-50%, -50%) perspective(900px) rotateX(var(--platter-tilt))
+        scale(calc(1 - var(--stack-pos) * 0.08));
+      filter: brightness(calc((1 - var(--stack-pos) * 0.14) * (1 - var(--stack-row) * 0.22)));
+      box-shadow: -10px 8px 18px -8px rgba(0, 0, 0, 0.7);
+      transition: transform 250ms ease, filter 250ms ease;
+    }
+    body:not(.no-bg-animation) .history-panel .history-item:hover .history-disc,
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-disc {
+      transform: translate(-50%, -58%) perspective(900px) rotateX(var(--platter-tilt));
+      filter: none;
+    }
+    body:not(.no-bg-animation) .history-reserve-slot .platter {
+      width: 100%;
+      height: 100%;
+      transform: translate(-50%, -50%) perspective(900px) rotateX(var(--platter-tilt));
+    }
+    body:not(.no-bg-animation) .history-panel .history-age-center { display: none; }
+    /* The caption, lined up under the whole stack whichever record it belongs to. */
+    body:not(.no-bg-animation) .history-panel .history-tag {
+      inset: auto;
+      top: calc(100% + 12px + (1 - var(--stack-row)) * (var(--stack-size) + var(--stack-gap)));
+      left: calc(var(--stack-pos) * var(--stack-step) * -1);
+      width: var(--jukebox-side);
+      border-radius: 0;
+      background: none;
+      color: var(--fg);
+      text-align: center;
+      text-shadow: none;
+      opacity: 0;
+      transition: opacity 180ms ease;
+    }
+    body:not(.no-bg-animation) .history-panel .history-item:first-child .history-tag { opacity: 1; }
+    body:not(.no-bg-animation) .history-panel .history-list:has(.history-item:hover, .history-item:focus-visible) .history-tag { opacity: 0; }
+    /* As specific as the hiding rule above, and later, so the hovered one wins. */
+    body:not(.no-bg-animation) .history-panel .history-list .history-item:hover .history-tag,
+    body:not(.no-bg-animation) .history-panel .history-list .history-item:focus-visible .history-tag { opacity: 1; }
+    body:not(.no-bg-animation) .history-panel .history-title,
+    body:not(.no-bg-animation) .history-panel .history-artist {
+      position: static;
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    body:not(.no-bg-animation) .history-panel .history-title { font-size: 15px; }
+    body:not(.no-bg-animation) .history-panel .history-artist { margin-top: 1px; color: var(--muted); font-size: 12px; }
+    body:not(.no-bg-animation) .history-panel .history-age-row {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      opacity: 0.75;
+    }
+
+    /* The cabinet: an arched case with a neon tube in the palette colour. */
+    body:not(.no-bg-animation) .player-layout::before,
+    body:not(.no-bg-animation) .player-layout::after {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      pointer-events: none;
+    }
+    body:not(.no-bg-animation) .player-layout::before {
+      inset: 0;
+      border: 1px solid var(--panel-border);
+      border-radius: 50% 50% 30px 30px / 110px 110px 30px 30px;
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 45%),
+        var(--elev);
+      box-shadow:
+        inset 0 0 0 6px color-mix(in srgb, var(--fg) 4%, transparent),
+        0 40px 90px -36px rgba(0, 0, 0, 0.6);
+    }
+    body:not(.no-bg-animation) .player-layout::after {
+      inset: 9px;
+      border: 2px solid var(--accent);
+      border-radius: 50% 50% 24px 24px / 101px 101px 24px 24px;
+      box-shadow: 0 0 14px var(--accent-glow), inset 0 0 14px var(--accent-glow);
+      opacity: 0.85;
+      -webkit-mask: linear-gradient(#000 0, #000 28%, transparent 60%);
+      mask: linear-gradient(#000 0, #000 28%, transparent 60%);
+      transition: border-color 0.5s ease;
+    }
   }
 
   /* ---- Recently played records ---- */
@@ -1084,6 +1414,7 @@
     gap: 8px;
     min-height: 0;
   }
+  .history-list .history-item:nth-child(n + 5) { display: none; }
   .history-list .history-item {
     flex: none;
     --cluster-x: 0px;
@@ -1230,6 +1561,8 @@
   .history-age-row {
     display: none;
   }
+  /* With effects on the play age is captioned, not printed across the label. */
+  body:not(.no-bg-animation) .history-age-center { display: none; }
   .history-tag {
     position: absolute;
     z-index: 4;
@@ -1552,14 +1885,10 @@
   }
   /* A single square cover with the recently-played list beside it (stacked
      underneath on narrow screens) and the title/artist below. No up-next deck. */
-  body.no-bg-animation .player-layout { --art-size: min(40vmin, 32vh, 400px); }
-  body.no-bg-animation .dj-stage {
+  body.no-bg-animation .player-layout {
+    --art-size: min(40vmin, 32vh, 400px);
     --deck-size: var(--art-size);
-    gap: 0;
-    padding: 0;
   }
-  /* The now-playing wrapper moves between deck slots; hide whichever holds up next. */
-  body.no-bg-animation .deck-slot:has(.next-panel),
   body.no-bg-animation .deck-role,
   body.no-bg-animation .playing-details,
   body.no-bg-animation .plain-progress { display: none; }
@@ -1604,7 +1933,7 @@
       justify-content: center;
       justify-items: center;
     }
-    body.no-bg-animation .dj-stage { grid-area: art; }
+    body.no-bg-animation .jukebox-deck { grid-area: art; }
     body.no-bg-animation #player-metadata { grid-area: meta; }
     body.no-bg-animation .history-panel {
       grid-area: history;

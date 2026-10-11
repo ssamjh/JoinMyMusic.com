@@ -1,15 +1,6 @@
-<aside class="next-panel dj-deck" id="next-panel" aria-label="Next song">
-  <div class="deck-role">Up next</div>
-  <div class="next-deck-surface">
-    <div class="platter" aria-hidden="true"></div>
-    <div id="next-record"></div>
-    <div class="spindle" aria-hidden="true"></div>
-    <div class="tonearm-mount" aria-hidden="true">
-      <div class="tonearm" id="next-tonearm">
-        <div class="tonearm-cw"></div><div class="tonearm-arm"></div>
-        <div class="tonearm-pivot"></div><div class="tonearm-head"></div>
-      </div>
-    </div>
-  </div>
+{/* The jukebox's up-next record, filled by renderNextTrack in app.js. */}
+<aside class="next-panel max-stack:order-2" id="next-panel" aria-label="Next song">
+  <div class="deck-role">Next</div>
+  <div id="next-record"></div>
   <div class="next-track-info" id="next-track-info" aria-live="polite"></div>
 </aside>
