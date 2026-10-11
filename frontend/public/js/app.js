@@ -142,6 +142,9 @@ function cancelChoreography() {
   if (cardEl) cardEl.style.removeProperty("opacity");
   if (cardEl) cardEl.style.removeProperty("transition");
   document.querySelector(".history-item.is-receiving")?.classList.remove("is-receiving");
+  document.querySelector("#next-record .is-unsleeved")?.classList.remove("is-unsleeved");
+  holdNextSlot(false);
+  document.querySelector(".history-item.is-sleeving")?.classList.remove("is-sleeving");
   document.getElementById("player-metadata")?.style.removeProperty("opacity");
   if (titleEl) titleEl.classList.remove('fade-swap-text', 'record-arrive');
   if (artistEl) artistEl.classList.remove('fade-swap-text', 'record-arrive');
@@ -1177,6 +1180,7 @@ function applyPendingMetadata() {
   const stale = () => data.songid !== latestMetadataSongId || revision !== metadataRevision;
   applyPendingColors(JUKEBOX_HANDOVER_MS);
   releaseRecord(); // a song change takes the record out of the hand
+  unsleeveNextRecord(data.songid);
   tonearmChoreography = true;
   const outgoingArm = document.getElementById("tonearm");
   outgoingArm?.classList.add("is-lifted");
@@ -1206,6 +1210,41 @@ function applyPendingMetadata() {
 }
 
 // ---- Jukebox record change ----
+// The up-next record slides out of its sleeve (CSS) while the arm lifts, so it
+// is waiting beside the sleeve when swapRecords flies it onto the platter.
+function unsleeveNextRecord(songid) {
+  const waiting = document.querySelector("#next-record .history-item");
+  if (!recordMotionEnabled() || waiting?.dataset.songid !== songid) return;
+  nextFade?.cancel();
+  waiting.classList.add("is-unsleeved");
+  // Its name leaves with it; the next song's fades in once it is loaded.
+  document.getElementById("next-panel")?.classList.add("is-unsleeving");
+}
+
+// While the up-next record is leaving its slot, the following song (which
+// renderNextTrack loads straight away) stays hidden, name included, so the two
+// never overlap. Released when the record lands or the change is cancelled.
+function holdNextSlot(held) {
+  document.getElementById("next-record")?.classList.toggle("is-held", held);
+  if (!held) document.getElementById("next-panel")?.classList.remove("is-unsleeving");
+}
+
+// A record's untransformed box, moved by however far it is out of its sleeve
+// (--unsleeve-x/-y, in record widths/heights).
+function sleeveRect(disc) {
+  const item = layoutRect(disc?.offsetParent);
+  if (!item || !disc.offsetWidth) return null;
+  const style = getComputedStyle(disc);
+  const x = parseFloat(style.getPropertyValue("--unsleeve-x")) || 0;
+  const y = parseFloat(style.getPropertyValue("--unsleeve-y")) || 0;
+  return {
+    left: item.left + disc.offsetLeft + x * disc.offsetWidth,
+    top: item.top + disc.offsetTop + y * disc.offsetHeight,
+    width: disc.offsetWidth,
+    height: disc.offsetHeight,
+  };
+}
+
 // A flight is a fixed-position copy of a record that travels between a rack
 // slot and the platter while the real element underneath stays hidden.
 function buildFlightRecord(source, angle) {
@@ -1286,13 +1325,14 @@ function swapRecords(songid, apply, land) {
   const tilt = parseFloat(getComputedStyle(document.querySelector(".player-layout")).getPropertyValue("--platter-tilt")) || 0;
   const waiting = document.querySelector("#next-record .history-item");
   const incomingDisc = waiting?.dataset.songid === songid ? waiting.querySelector(".history-disc") : null;
-  const incomingRect = incomingDisc ? layoutRect(waiting) : null;
+  const incomingRect = incomingDisc ? sleeveRect(incomingDisc) : null;
   const outgoingSongId = displayedRecordSongId;
   const outgoingAngle = spinAngle;
   const outgoing = motion ? buildFlightRecord(cardEl, outgoingAngle) : null;
   const incoming = motion && incomingRect
     ? buildFlightRecord(incomingDisc, Number(waiting.dataset.recordAngle) || 0) : null;
 
+  if (incoming) holdNextSlot(true);
   apply();
   if (!motion) { land(); return; }
   cardEl.style.transition = "none";
@@ -1301,9 +1341,12 @@ function swapRecords(songid, apply, land) {
   // The played record lands on the newest history slot, or fades off toward the rack.
   const newest = document.querySelector("#history-list .history-item");
   const slot = newest?.dataset.historyKey?.startsWith(`${outgoingSongId}:`) ? newest : null;
-  const slotRect = layoutRect(slot);
-  // The history records only lie back in the wide two-row stack.
-  const slotTilt = window.matchMedia("(width >= 821px)").matches ? tilt : 0;
+  // On the shelf it lands just out of the newest sleeve, then slides into it.
+  const sleeved = Boolean(slot && visibleRect(slot.querySelector(".history-sleeve")));
+  if (sleeved) slot.classList.add("is-sleeving");
+  const slotRect = sleeved ? sleeveRect(slot.querySelector(".history-disc")) : layoutRect(slot);
+  // The history records only lean back in the wide layout's crate.
+  const slotTilt = slot ? parseFloat(getComputedStyle(slot).getPropertyValue("--rack-tilt")) || 0 : 0;
   if (slotRect) {
     slot.getAnimations().forEach((animation) => animation.cancel());
     slot.classList.add("is-receiving");
@@ -1320,7 +1363,12 @@ function swapRecords(songid, apply, land) {
     duration: JUKEBOX_TIMING.outgoing,
     fadeOut: !slotRect,
     tilt: [tilt, slotRect ? slotTilt : 0],
-    onLand: () => slot?.classList.remove("is-receiving"),
+    onLand: () => {
+      if (!slot) return;
+      slot.classList.remove("is-receiving");
+      void slot.offsetWidth;
+      slot.classList.remove("is-sleeving");
+    },
   });
 
   if (incoming) {
@@ -1329,6 +1377,7 @@ function swapRecords(songid, apply, land) {
       delay: JUKEBOX_TIMING.incomingDelay,
       tilt: [tilt, tilt],
       onLand: () => {
+        holdNextSlot(false);
         // The copy sits exactly over the card, so reveal it without a fade.
         cardEl.style.removeProperty("opacity");
         void cardEl.offsetWidth;
@@ -1920,6 +1969,9 @@ function renderNextTrack(queue) {
   const showDetails = () => {
     const info = document.getElementById("next-track-info");
     if (!info) return;
+    if (!container.classList.contains("is-held")) {
+      document.getElementById("next-panel")?.classList.remove("is-unsleeving");
+    }
     if (!track) { info.textContent = "Nothing queued"; return; }
     info.innerHTML = `<div class="next-track-title">${escapeHtml(track.song || "Unknown track")}</div><div class="next-track-artist">${escapeHtml((track.artist || []).map((artist) => artist.name).join(" · ") || "Unknown artist")}</div><div class="next-track-details">${escapeHtml([track.album, track.year].filter(Boolean).join(" · "))}</div>`;
   };
@@ -1943,8 +1995,13 @@ function renderNextTrack(queue) {
     const artists = (track.artist || []).map((artist) => escapeHtml(artist.name)).join(", ") || "Unknown artist";
     container.innerHTML = `<a class="history-item" data-songid="${escapeHtml(track.songid)}" data-record-angle="${angle}" data-cover="${escapeHtml(track.cover || "")}" href="https://open.spotify.com/track/${encodeURIComponent(track.songid)}" target="_blank" rel="noopener noreferrer" aria-label="Up next: ${title} by ${artists}">
       <span class="history-disc" style="--history-art-angle:${angle}deg"><span class="art-placeholder"></span><span class="record-overlay"></span>${buildHistoryRecordLabel("next", track)}<span class="art-sheen"></span></span>
+      <span class="next-sleeve"></span>
     </a>`;
     if (artwork?.naturalWidth) {
+      const sleeveArt = artwork.cloneNode();
+      sleeveArt.className = "";
+      sleeveArt.alt = "";
+      container.querySelector(".next-sleeve").appendChild(sleeveArt);
       artwork.className = "history-art";
       artwork.alt = "";
       markImageLoading(artwork);
@@ -2033,7 +2090,8 @@ function animateHistorySlots(previous, list) {
     .forEach((entry) => {
       const departing = entry.node;
       prepareHistoryFlight(departing);
-      departing.style.cssText = `--record-size:${entry.rect.width}px;left:${entry.rect.x - panelRect.x}px;top:${entry.rect.y - panelRect.y}px;width:${entry.rect.width}px;height:${entry.rect.height}px;`;
+      const index = entry.node.style.getPropertyValue("--record-index");
+      departing.style.cssText = `--record-index:${index};--record-size:${entry.rect.width}px;left:${entry.rect.x - panelRect.x}px;top:${entry.rect.y - panelRect.y}px;width:${entry.rect.width}px;height:${entry.rect.height}px;`;
       panel.appendChild(departing);
       const motion = departing.animate([
         { opacity: 1, transform: "translateY(0) scale(1)" },
@@ -2165,6 +2223,7 @@ function fillHistoryList(list, items, keys) {
       return `<a class="history-item" data-history-key="${escapeHtml(historyRecordKey(it))}" style="--record-index:${index}" href="https://open.spotify.com/track/${encodeURIComponent(it.songid)}" target="_blank" rel="noopener noreferrer" aria-label="${title} by ${artists} on Spotify">
         <span class="history-platter platter" aria-hidden="true"></span>
         <span class="history-disc" style="--history-art-angle:${historyRecordAngle(it)}deg"><span class="art-placeholder"></span>${cover}<span class="record-overlay"></span>${recordLabel}<span class="art-sheen"></span>${ageCenter}</span>
+        <span class="history-sleeve" aria-hidden="true">${it.cover ? `<img src="${escapeHtml(it.cover)}" alt="" />` : ""}</span>
         <span class="history-tag">
           <span class="history-title">${title}</span>
           <span class="history-artist">${artists}</span>

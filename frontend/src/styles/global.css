@@ -972,10 +972,6 @@
     transform: perspective(900px) rotateX(var(--platter-tilt));
     transform-origin: center;
   }
-  body:not(.no-bg-animation) #next-record .history-item {
-    transform: perspective(900px) rotateX(var(--platter-tilt));
-    transform-origin: center;
-  }
   /* The platter's front edge, so it reads as a solid disc lying back. */
   body:not(.no-bg-animation) .jukebox-deck .platter {
     box-shadow: 0 7px 0 #0b0b0d, 0 8px 0 rgba(255, 255, 255, 0.06), 0 34px 60px -18px rgba(0, 0, 0, 0.8),
@@ -1017,6 +1013,83 @@
   }
   .next-panel .record-label { transform: rotate(var(--history-art-angle, 0deg)); }
   .next-panel .history-platter { display: none !important; }
+  /* With effects on the next record waits in its sleeve, a bare disc peeking out
+     of the open side. On its turn app.js adds .is-unsleeved: the disc slides out
+     toward the deck as the sleeve fades and the cover appears on the disc, then
+     swapRecords flies it from there (it reads --unsleeve-x). Both stand flat
+     until then; the disc lies back to the platter's angle as it comes out. */
+  .next-sleeve, .history-sleeve { display: none; }
+  body:not(.no-bg-animation) #next-record .history-item {
+    left: -7%;
+    overflow: visible;
+    border-radius: 0;
+    clip-path: none;
+  }
+  body:not(.no-bg-animation) .next-sleeve {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: block;
+    overflow: hidden;
+    border-radius: 3px;
+    background: linear-gradient(135deg, #2a2a2f, #111114);
+    box-shadow: 0 16px 26px -14px rgba(0, 0, 0, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    transition: opacity 650ms ease 250ms;
+  }
+  body:not(.no-bg-animation) .next-sleeve > img,
+  body:not(.no-bg-animation) .history-panel .history-sleeve > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* Worn card: a sheen across the front and a darker open edge where the disc comes out. */
+  body:not(.no-bg-animation) .next-sleeve::after,
+  body:not(.no-bg-animation) .history-panel .history-sleeve::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, transparent 94%, rgba(0, 0, 0, 0.35)),
+      linear-gradient(120deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 38%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+  body:not(.no-bg-animation) #next-record .history-disc {
+    --unsleeve-x: 0;
+    --next-tilt: 0deg;
+    top: 4%;
+    left: 22%;
+    width: 92%;
+    height: 92%;
+    /* Bare vinyl: a light catching the top of the disc and a bright rim, so the
+       tip that shows above a sleeve reads against the dark cabinet. */
+    background:
+      conic-gradient(from -40deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.16) 40deg,
+        rgba(255, 255, 255, 0) 80deg 180deg, rgba(255, 255, 255, 0.08) 220deg, rgba(255, 255, 255, 0) 260deg),
+      repeating-radial-gradient(circle, #121215 0 2px, #0c0c0e 2px 4px);
+    box-shadow: 0 12px 20px -12px rgba(0, 0, 0, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    transform: translateX(calc(var(--unsleeve-x) * 100%)) perspective(900px) rotateX(var(--next-tilt));
+    transition: transform 900ms cubic-bezier(.3, .1, .25, 1);
+  }
+  /* In the sleeve the disc is bare vinyl; its cover appears as it comes out. */
+  body:not(.no-bg-animation) #next-record .history-disc > .history-art,
+  body:not(.no-bg-animation) #next-record .history-disc > .art-placeholder {
+    opacity: 0;
+    transition: opacity 700ms ease 200ms;
+  }
+  body:not(.no-bg-animation) #next-record .is-unsleeved .history-disc {
+    --unsleeve-x: 0.36; /* as far as it goes without reaching the platter */
+    --next-tilt: var(--platter-tilt);
+  }
+  body:not(.no-bg-animation) #next-record .is-unsleeved .history-disc > .history-art,
+  body:not(.no-bg-animation) #next-record .is-unsleeved .history-disc > .art-placeholder { opacity: 1; }
+  body:not(.no-bg-animation) #next-record .is-unsleeved .next-sleeve { opacity: 0; }
+  body:not(.no-bg-animation) .next-track-info { transition: opacity 500ms ease; }
+  body:not(.no-bg-animation) .next-panel.is-unsleeving .next-track-info { opacity: 0; }
+  /* Kept empty while the previous up-next record is still beside it (app.js
+     holdNextSlot); !important outranks the arrival animation. */
+  #next-record { transition: opacity 500ms ease; }
+  #next-record.is-held { opacity: 0 !important; }
   body.no-bg-animation .next-panel { display: none; }
   @media (width < 821px) {
     /* Stacked: a small record with its details beside it. */
@@ -1127,24 +1200,36 @@
   }
   body:not(.no-bg-animation) .next-track-title,
   body:not(.no-bg-animation) .history-tag .history-title { font-weight: 700; }
-  /* The card: aged off-white stock with a fine grain and yellowed edges, a
-     printed double rule in the palette colour along the top, and the title
-     typed in slightly soft ink. */
+  /* The card, styled as a jukebox title strip: uncoated card stock (fine
+     grain, long fibres, uneven blotchy tone, edges yellowed and darkened by
+     handling), a printed band and fine rule in the palette colour along the
+     top, the title typed in slightly soft ink, and the artist in bold coloured
+     type inside a pointed printed frame. */
   body:not(.no-bg-animation) .title-plate {
     position: relative;
     z-index: 1;
     margin: 0 4px;
-    padding: 18px 24px 16px;
-    border-radius: 3px 3px 0 0;
+    padding: 22px 24px 14px;
+    border-radius: 2px 2px 0 0;
     color: #2b2117;
     background:
-      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 7px / 100% 2px no-repeat,
-      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 11px / 100% 1px no-repeat,
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .32 0 0 0 0 .18 0 0 0 .11 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
-      radial-gradient(130% 150% at 50% 40%, rgba(0, 0, 0, 0) 55%, rgba(140, 100, 40, 0.22)),
-      linear-gradient(180deg, #f4ead2, #e9dbb8);
-    box-shadow: 0 -6px 16px -8px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(90, 60, 20, 0.14);
-    --plate-rule: color-mix(in srgb, var(--accent) 70%, #3a2614);
+      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 6px / 100% 4px no-repeat,
+      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 13px / 100% 1px no-repeat,
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .4 0 0 0 0 .3 0 0 0 0 .17 0 0 0 .16 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='120'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012 .55' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .36 0 0 0 0 .22 0 0 0 -.9 .36'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='160'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .02' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .4 0 0 0 0 .18 0 0 0 .7 -.25'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E") 0 0 / 420px 160px,
+      /* handled edges: darker, browner along the sides and top */
+      linear-gradient(90deg, rgba(120, 82, 30, 0.22), rgba(120, 82, 30, 0) 7%, rgba(120, 82, 30, 0) 93%, rgba(120, 82, 30, 0.22)),
+      linear-gradient(180deg, rgba(120, 82, 30, 0.14), rgba(120, 82, 30, 0) 22%),
+      /* a little light falling unevenly across it */
+      radial-gradient(90% 140% at 35% 30%, rgba(255, 252, 240, 0.35), rgba(255, 252, 240, 0) 60%),
+      linear-gradient(180deg, #f2e9d2, #e8dbb9);
+    box-shadow:
+      0 -6px 16px -8px rgba(0, 0, 0, 0.7),
+      inset 0 0 0 1px rgba(90, 60, 20, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    --plate-rule: color-mix(in srgb, var(--accent) 75%, #3a2614);
+    --plate-ink: color-mix(in srgb, var(--accent) 65%, #1a120a);
   }
   body:not(.no-bg-animation) .title-plate .div-playing-title {
     font-family: var(--font-typewriter);
@@ -1154,11 +1239,43 @@
     text-transform: uppercase;
     text-shadow: 0 0 0.6px rgba(43, 33, 23, 0.55);
   }
+  /* The artist sits in a pointed frame, printed as a coloured outline (an
+     even-odd ring: outer then inner outline) over a light translucent tint,
+     so the paper shows through both. */
   body:not(.no-bg-animation) .title-plate .div-playing-artist {
+    position: relative;
+    isolation: isolate;
+    width: fit-content;
+    max-width: 100%;
+    margin: 12px auto 0;
+    padding: 5px 34px;
     font-family: var(--font-typewriter);
+    font-size: 15px;
     font-weight: 700;
-    letter-spacing: 0.16em;
-    color: color-mix(in srgb, var(--accent) 60%, #1a120a);
+    letter-spacing: 0.12em;
+    color: var(--plate-ink);
+  }
+  body:not(.no-bg-animation) .title-plate .div-playing-artist:not(:empty)::before,
+  body:not(.no-bg-animation) .title-plate .div-playing-artist:not(:empty)::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    width: auto;
+    height: auto;
+    margin: 0;
+    opacity: 1;
+    clip-path: polygon(0 50%, 18px 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 18px 100%);
+  }
+  body:not(.no-bg-animation) .title-plate .div-playing-artist:not(:empty)::before {
+    background: var(--plate-rule);
+    clip-path: polygon(evenodd,
+      0 50%, 18px 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 18px 100%, 0 50%,
+      2.5px 50%, 19px calc(100% - 1.5px), calc(100% - 19px) calc(100% - 1.5px), calc(100% - 2.5px) 50%,
+      calc(100% - 19px) 1.5px, 19px 1.5px, 2.5px 50%);
+  }
+  body:not(.no-bg-animation) .title-plate .div-playing-artist:not(:empty)::after {
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
   }
 
   /* Title plate under the arch: the song in bold type, a fine rule, then the
@@ -1215,43 +1332,77 @@
       grid-area: history;
       width: calc(var(--deck-size) * 0.96 + 8px);
       margin: 0;
-      --record-size: calc(var(--deck-size) * 0.48);
     }
     body:not(.no-bg-animation) .history-panel .history-head,
     body:not(.no-bg-animation) .history-reserve .history-head {
       padding-left: 0;
       text-align: center;
     }
-    /* Recently played as two horizontal stacks of four, newest first: in each
-       row the front record is on the left and older ones tuck behind it to the
-       right, each a little smaller and darker; the second row is older still.
-       The caption under both rows names the newest record, or whichever one
-       the pointer is on. Grid columns are one "step" wide and each record
-       spills over the columns to its right, which is what makes them overlap. */
-    body:not(.no-bg-animation) .history-panel {
-      --stack-size: calc(var(--deck-size) * 0.44);
-      --stack-step: calc((var(--jukebox-side) - var(--stack-size)) / 3);
-      --stack-gap: 12px;
-      --record-size: var(--stack-size);
+    /* Recently played: two shelves of four sleeves standing almost upright,
+       newest first. On each shelf the front sleeve is on the left and older ones
+       stand behind it to the right, so only part of each cover shows. Hovering
+       a sleeve slides its record up out of it and captions it under the
+       shelves; otherwise no names are shown. app.js lands a played record just
+       out of the newest sleeve (.is-sleeving, read through --unsleeve-y and
+       --rack-tilt; it faces the front while landing) and lets it slide in.
+       Grid columns are one "step" wide and each sleeve spills over the
+       columns to its right, which makes the overlap. */
+    body:not(.no-bg-animation) .history-panel,
+    body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
+      --shelf-size: calc(var(--deck-size) * 0.42);
+      --shelf-step: calc((var(--jukebox-side) - var(--shelf-size)) / 3);
+      --shelf-gap: calc(var(--deck-size) * 0.1);
+      --rack-tilt: 6deg;
+      --rack-turn: -40deg;
+      --record-size: var(--shelf-size);
+    }
+    body:not(.no-bg-animation) .history-panel,
+    body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
       padding-bottom: 64px; /* room for the caption */
     }
     body:not(.no-bg-animation) .history-list,
     body:not(.no-bg-animation) .history-reserve-row {
+      position: relative;
       display: grid;
-      grid-template-columns: repeat(3, var(--stack-step)) var(--stack-size);
-      grid-auto-rows: var(--stack-size);
+      grid-template-columns: repeat(3, var(--shelf-step)) var(--shelf-size);
+      grid-template-rows: repeat(2, var(--shelf-size));
       justify-content: start;
-      gap: var(--stack-gap) 0;
+      gap: var(--shelf-gap) 0;
+    }
+    /* The two shelves the sleeves stand on. */
+    body:not(.no-bg-animation) .history-list::before,
+    body:not(.no-bg-animation) .history-list::after,
+    body:not(.no-bg-animation) .history-reserve-row::before,
+    body:not(.no-bg-animation) .history-reserve-row::after {
+      content: "";
+      position: absolute;
+      z-index: 0;
+      top: var(--shelf-size);
+      left: -10px;
+      right: -10px;
+      height: 12px;
+      border-radius: 1px 1px 3px 3px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0 1px, #34343b 1px 4px, #1d1d22 4px, #0c0c0f),
+        #1d1d22;
+      box-shadow:
+        inset 0 -1px 0 color-mix(in srgb, var(--accent) 35%, transparent),
+        0 16px 22px -10px rgba(0, 0, 0, 0.9);
+      pointer-events: none;
+    }
+    body:not(.no-bg-animation) .history-list::after,
+    body:not(.no-bg-animation) .history-reserve-row::after {
+      top: calc(var(--shelf-size) * 2 + var(--shelf-gap));
     }
     body:not(.no-bg-animation) .history-list .history-item:nth-child(n + 5) { display: block; }
     body:not(.no-bg-animation) .history-panel .history-item,
     body:not(.no-bg-animation) .history-reserve-slot {
-      width: var(--stack-size);
-      height: var(--stack-size);
+      width: var(--shelf-size);
+      height: var(--shelf-size);
       grid-row: calc(var(--stack-row) + 1);
       grid-column: calc(var(--stack-pos) + 1);
     }
-    /* Place in the stack (left to right) and row, by order. */
+    /* Place on the shelf (left to right) and which shelf, by order. */
     .history-panel .history-item, .history-reserve-slot { --stack-row: 0; --stack-pos: 0; }
     .history-panel .history-item:nth-child(4n + 2), .history-reserve-slot:nth-child(4n + 2) { --stack-pos: 1; }
     .history-panel .history-item:nth-child(4n + 3), .history-reserve-slot:nth-child(4n + 3) { --stack-pos: 2; }
@@ -1259,40 +1410,108 @@
     .history-panel .history-item:nth-child(n + 5) { --stack-row: 1; }
     body:not(.no-bg-animation) .history-panel .history-item {
       z-index: calc(20 - var(--record-index, 0));
+      /* Turned away, the row draws narrower than its boxes; re-centre it on the shelf. */
+      left: calc(var(--shelf-size) * -0.15);
+      overflow: visible;
+      border-radius: 0;
       clip-path: none;
       transform: none;
       filter: none;
     }
-    body:not(.no-bg-animation) .history-panel .history-item:hover,
-    body:not(.no-bg-animation) .history-panel .history-item:focus-visible { z-index: 30; }
+    /* Hovering keeps the stacking order, and only the sleeves (as drawn) and the
+       record tips take the pointer: a raised or square hit box would cover the
+       visible edge of its neighbour and skip it. */
+    body:not(.no-bg-animation) .history-panel .history-item {
+      pointer-events: none;
+    }
     body:not(.no-bg-animation) .history-panel .history-item:hover,
     body:not(.no-bg-animation) .history-panel .history-item:focus-visible {
       transform: none;
       filter: none;
     }
+    body:not(.no-bg-animation) .history-panel .history-sleeve,
     body:not(.no-bg-animation) .history-panel .history-item[data-history-key] .history-disc {
-      transform: translate(-50%, -50%) perspective(900px) rotateX(var(--platter-tilt))
-        scale(calc(1 - var(--stack-pos) * 0.08));
-      filter: brightness(calc((1 - var(--stack-pos) * 0.14) * (1 - var(--stack-row) * 0.22)));
-      box-shadow: -10px 8px 18px -8px rgba(0, 0, 0, 0.7);
-      transition: transform 250ms ease, filter 250ms ease;
+      pointer-events: auto;
+    }
+    /* Each sleeve is turned away on its right edge (the left swings back) and leans back
+       a little; its shadow falls on the one behind. */
+    body:not(.no-bg-animation) .history-panel .history-sleeve {
+      position: absolute;
+      z-index: 3;
+      inset: 0;
+      display: block;
+      overflow: hidden;
+      border-radius: 2px;
+      background: linear-gradient(135deg, #2a2a2f, #111114);
+      box-shadow:
+        8px 0 14px -6px rgba(0, 0, 0, 0.75),
+        0 6px 8px -5px rgba(0, 0, 0, 0.9),
+        inset -2px 0 0 rgba(255, 255, 255, 0.16),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      filter: brightness(calc((1 - var(--stack-pos) * 0.12) * (1 - var(--stack-row) * 0.15)));
+      transform: perspective(900px) rotateY(var(--rack-turn)) rotateX(var(--rack-tilt));
+      transform-origin: 100% 100%;
+      transition: opacity 600ms ease, filter 200ms ease, transform 450ms cubic-bezier(.2, .7, .3, 1);
+    }
+    body:not(.no-bg-animation) .history-panel .history-item:hover .history-sleeve,
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-sleeve { filter: none; }
+    /* The record inside, hidden behind its sleeve until it slides up out of it.
+       It pivots on the sleeve's bottom-right corner (104.35% = 96% / 92%),
+       so it turns with the sleeve and slides out along it. */
+    body:not(.no-bg-animation) .history-panel .history-item[data-history-key] .history-disc {
+      --unsleeve-y: 0;
+      top: 4%;
+      left: 4%;
+      width: 92%;
+      height: 92%;
+      /* Bare vinyl: a light catching the top of the disc and a bright rim, so the
+         tip that shows above a sleeve reads against the dark cabinet. */
+      background:
+        conic-gradient(from -40deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.16) 40deg,
+          rgba(255, 255, 255, 0) 80deg 180deg, rgba(255, 255, 255, 0.08) 220deg, rgba(255, 255, 255, 0) 260deg),
+        repeating-radial-gradient(circle, #121215 0 2px, #0c0c0e 2px 4px);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+      transform: perspective(900px) rotateY(var(--rack-turn)) rotateX(var(--rack-tilt))
+        translateY(calc(var(--unsleeve-y) * 100%));
+      transform-origin: 104.35% 104.35%;
+      transition: transform 300ms cubic-bezier(.2, .7, .3, 1);
+    }
+    /* In the sleeve a record is bare vinyl, so the tip shows grooves, not art. */
+    body:not(.no-bg-animation) .history-panel .history-disc > .history-art,
+    body:not(.no-bg-animation) .history-panel .history-disc > .art-placeholder {
+      opacity: 0;
+      transition: opacity 500ms ease;
     }
     body:not(.no-bg-animation) .history-panel .history-item:hover .history-disc,
-    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-disc {
-      transform: translate(-50%, -58%) perspective(900px) rotateX(var(--platter-tilt));
-      filter: none;
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-disc { --unsleeve-y: -0.2; }
+    /* Landing: the played record (still showing its art) waits half out of a
+       straightened sleeve; as .is-sleeving comes off it slides in, the art fades
+       and the sleeve fades in and turns back. */
+    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving { --rack-turn: 0deg; }
+    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-disc {
+      --unsleeve-y: -0.5;
+      transition: none;
     }
-    body:not(.no-bg-animation) .history-reserve-slot .platter {
-      width: 100%;
-      height: 100%;
-      transform: translate(-50%, -50%) perspective(900px) rotateX(var(--platter-tilt));
+    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-disc > .history-art,
+    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-disc > .art-placeholder {
+      opacity: 1;
+      transition: none;
     }
+    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-sleeve { opacity: 0; transition: none; }
+    /* Empty spaces on the shelf before any history arrives. */
+    body:not(.no-bg-animation) .history-reserve-slot {
+      border-radius: 2px;
+      box-shadow: inset 0 0 0 2px var(--panel-border);
+      transform: perspective(900px) rotateY(var(--rack-turn)) rotateX(var(--rack-tilt));
+      transform-origin: 100% 100%;
+    }
+    body:not(.no-bg-animation) .history-reserve-slot .platter { display: none; }
     body:not(.no-bg-animation) .history-panel .history-age-center { display: none; }
-    /* The caption, lined up under the whole stack whichever record it belongs to. */
+    /* The caption, lined up under both shelves whichever sleeve it belongs to. */
     body:not(.no-bg-animation) .history-panel .history-tag {
       inset: auto;
-      top: calc(100% + 12px + (1 - var(--stack-row)) * (var(--stack-size) + var(--stack-gap)));
-      left: calc(var(--stack-pos) * var(--stack-step) * -1);
+      top: calc(100% + 18px + (1 - var(--stack-row)) * (var(--shelf-size) + var(--shelf-gap)));
+      left: calc(var(--shelf-size) * 0.15 - var(--stack-pos) * var(--shelf-step));
       width: var(--jukebox-side);
       border-radius: 0;
       background: none;
@@ -1302,11 +1521,8 @@
       opacity: 0;
       transition: opacity 180ms ease;
     }
-    body:not(.no-bg-animation) .history-panel .history-item:first-child .history-tag { opacity: 1; }
-    body:not(.no-bg-animation) .history-panel .history-list:has(.history-item:hover, .history-item:focus-visible) .history-tag { opacity: 0; }
-    /* As specific as the hiding rule above, and later, so the hovered one wins. */
-    body:not(.no-bg-animation) .history-panel .history-list .history-item:hover .history-tag,
-    body:not(.no-bg-animation) .history-panel .history-list .history-item:focus-visible .history-tag { opacity: 1; }
+    body:not(.no-bg-animation) .history-panel .history-item:hover .history-tag,
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-tag { opacity: 1; }
     body:not(.no-bg-animation) .history-panel .history-title,
     body:not(.no-bg-animation) .history-panel .history-artist {
       position: static;
@@ -1755,13 +1971,11 @@
      history arrives. It takes the panel's place in the flow (same head and row
      sizes), so the player does not move when the real panel appears. */
   .history-reserve { display: none; }
+  /* Wide screens size it as the jukebox's history column (see the jukebox grid). */
   body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    width: min(720px, calc(100vw - 48px));
-    margin-top: -6px;
-    --record-size: min(168px, calc((100vw - 72px) / 4));
   }
   .history-reserve-row {
     display: flex;
@@ -1777,8 +1991,10 @@
   }
   @media (width < 821px) {
     body:not(.no-bg-animation) #history-panel[style*="none"] + .history-reserve {
+      width: min(720px, calc(100vw - 48px));
       min-height: 44px;
       margin-top: 2px;
+      --record-size: min(168px, calc((100vw - 72px) / 4));
     }
     .history-reserve .history-head,
     .history-reserve-row {
