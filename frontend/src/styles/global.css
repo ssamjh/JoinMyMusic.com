@@ -1089,9 +1089,10 @@
   body:not(.no-bg-animation) .next-track-info { transition: opacity 500ms ease; }
   body:not(.no-bg-animation) .next-panel.is-unsleeving .next-track-info { opacity: 0; }
   /* Kept empty while the previous up-next record is still beside it (app.js
-     holdNextSlot); !important outranks the arrival animation. */
+     holdNextSlot); !important outranks the arrival animation. It hides at once,
+     as the slot is emptied in the same frame and would show its empty ring. */
   #next-record { transition: opacity 500ms ease; }
-  #next-record.is-held { opacity: 0 !important; }
+  #next-record.is-held { opacity: 0 !important; transition: none; }
   body.no-bg-animation .next-panel { display: none; }
   @media (width < 821px) {
     /* Stacked: a small record with its details beside it. */
