@@ -14,7 +14,6 @@
 .jmm-monitor:not(.embedded) button:hover:not(:disabled) { border-color: #3a4252; }
 .jmm-monitor:not(.embedded) button:disabled { opacity: .45; cursor: not-allowed; }
 .jmm-monitor button:focus-visible, .jmm-monitor input:focus-visible, .jmm-monitor textarea:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
-.jmm-monitor button.danger { border-color: #7f1d1d; color: #fca5a5; }
 .jmm-monitor .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .jmm-monitor .muted { color: var(--muted); }
 .jmm-monitor .spacer { flex: 1; }
@@ -69,10 +68,6 @@
 .jmm-monitor:not(.embedded) .seg button:first-child { border-radius: 6px 0 0 6px; }
 .jmm-monitor:not(.embedded) .seg button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 .jmm-monitor:not(.embedded) .seg button[aria-pressed=true] { background: #223047; border-color: #38bdf8; color: #fff; }
-.jmm-monitor .st { font-size: 11px; color: var(--muted); min-height: 1em; }
-.jmm-monitor .st.pending { color: var(--amber); }
-.jmm-monitor .st.ok { color: var(--ok); }
-.jmm-monitor .st.err { color: var(--err); }
 .jmm-monitor footer { max-width: 1200px; margin: 0 auto; padding: 4px 16px 24px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .jmm-monitor footer .note { color: var(--muted); font-size: 12px; margin-left: auto; }
 .jmm-monitor #jm-toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 20; max-width: min(340px, calc(100vw - 32px)); }

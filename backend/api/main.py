@@ -51,7 +51,6 @@ from storage import (
     normalize_ban_ip,
     normalize_songid,
     listeners,
-    submission_ids,
     upcoming_queue,
     vote_skips,
 )
@@ -487,7 +486,7 @@ async def vote_skip(payload: SkipPayload, request: Request):
             vote_skips.pop(song_id, None)
             await broadcast_both("skipvotes", {"song": song_id, "count": 0, "needed": needed})
             return {"success": True, "message": "Song skipped successfully"}
-        except Exception as e:
+        except Exception:
             raise HTTPException(status_code=500, detail="Failed to skip the song")
 
     await broadcast_both("skipvotes", {"song": song_id, "count": count, "needed": needed})

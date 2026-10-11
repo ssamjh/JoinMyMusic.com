@@ -301,13 +301,6 @@ def preflight_error(ffmpeg: str, graph: str) -> str | None:
     return None
 
 
-def preflight(ffmpeg: str, graph: str) -> bool:
-    error = preflight_error(ffmpeg, graph)
-    if error is not None:
-        log(error)
-    return error is None
-
-
 # ---------------------------------------------------------------------------
 # Live parameter control
 # ---------------------------------------------------------------------------
@@ -486,7 +479,7 @@ class LiveControl:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ApiError(400, "value must be a finite number")
         with self._lock:
-            param = self._live_param(target, name)
+            self._live_param(target, name)
             number = float(value)
             self._send(f"{target} {name} {format_wire(number)}")
             self._values[(target, name)] = number

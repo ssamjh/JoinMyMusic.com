@@ -22,7 +22,6 @@ services:
       API_BASE_URL: "https://api.joinmymusic.com"
       AUTH_KEY: "change_me"
       TURNSTILE_SECRET: ""
-      TURNSTILE_SITE_KEY: ""
       TOKEN_CACHE_FILE: "/data/token_cache.json"
       DB_FILE: "/data/music_sync.db"
       PORT: "8080"

@@ -6,7 +6,7 @@
  * `stroke` icons inherit `currentColor` unless a caller overrides it; `fill`
  * icons (play/stop/github) declare their own paint.
  */
-export type IconName =
+type IconName =
   | "waveform"
   | "sun"
   | "moon"
@@ -20,16 +20,13 @@ export type IconName =
   | "volume-high"
   | "github"
   | "check"
-  | "close"
-  | "plus";
+  | "close";
 
 interface Props {
   name: IconName;
   size?: number;
   stroke?: string;
   strokeWidth?: number;
-  class?: string;
-  style?: string;
 }
 
 const {
@@ -37,8 +34,6 @@ const {
   size = 24,
   stroke = "currentColor",
   strokeWidth,
-  class: className,
-  style,
 } = Astro.props;
 
 /** Icons drawn with fills rather than strokes. */
@@ -60,8 +55,6 @@ const strokeAttrs = isFilled
   width={size}
   height={size}
   viewBox="0 0 24 24"
-  class={className}
-  style={style}
   {...strokeAttrs}
 >
   {name === "waveform" && <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3" />}
@@ -144,14 +137,6 @@ const strokeAttrs = isFilled
       <>
         <line x1="6" y1="6" x2="18" y2="18" />
         <line x1="18" y1="6" x2="6" y2="18" />
-      </>
-    )
-  }
-  {
-    name === "plus" && (
-      <>
-        <line x1="12" y1="5" x2="12" y2="19" />
-        <line x1="5" y1="12" x2="19" y2="12" />
       </>
     )
   }

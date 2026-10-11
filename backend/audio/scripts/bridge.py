@@ -603,7 +603,6 @@ class Bridge:
         try:
             while True:
                 block = _read_exact(self._in_fd, IN_BLOCK_BYTES)
-                events: list = []
                 with self._lock:
                     if self._stopping:
                         return

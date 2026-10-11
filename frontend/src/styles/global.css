@@ -11,12 +11,10 @@
    resolving it once at :root, which is what lets a utility pick up whichever
    theme is currently active. */
 @theme inline {
-  --color-bg: var(--bg);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-elev: var(--elev);
   --color-line: var(--panel-border);
-  --color-surface: var(--modal-surface);
   --color-accent: var(--accent);
   --color-danger: #ff4d4f;
 
@@ -33,9 +31,7 @@
   --text-xs--line-height: normal;
   --text-sm--line-height: normal;
   --text-base--line-height: normal;
-  --text-lg--line-height: normal;
   --text-xl--line-height: normal;
-  --text-2xl--line-height: normal;
 
   /* Below this width the turntable, metadata and history stack into one column
      (see max-stack:* in NowPlaying.astro). 821, not 820, because Tailwind emits
@@ -51,9 +47,6 @@
     /* The record's centre label: fixed black paper with cream ink */
     --label-paper: #111113;
     --label-ink: rgba(246, 240, 228, 0.92);
-    --c1: #e07a3f;
-    --c2: #3b1d10;
-
     --font-typewriter: "Courier Prime", "Courier New", Courier, monospace;
     --platter-tilt: 5deg; /* 0 = top-down, 90 = edge-on; higher = flatter/more 3D */
     --tonearm-lift: 34px; /* how far the arm floats above the platter surface */

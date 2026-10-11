@@ -343,11 +343,9 @@ function ensureSpin() {
 }
 
 // Background / song-change globals
-let bgHasBeenSet = false;
 let pendingMetadata = null;       // { data, imgSrc } waiting to be applied
 let latestMetadataSnapshot = null;
 let latestMetadataReceivedAt = 0;
-let lastDisplayedSongId = null;   // currently shown song, for change detection
 
 function generateUUID() {
   // crypto.randomUUID is only exposed in secure contexts (https or localhost),
@@ -612,7 +610,7 @@ function playNativeHls() {
   audioStream.removeEventListener("error", icecastFallbackHandler);
   audioStream.src = HLS_STREAM_URL;
   audioStream.addEventListener("error", icecastFallbackHandler, { once: true });
-  audioStream.play().catch(function (e) {});
+  audioStream.play().catch(function () {});
 }
 
 function startHlsJs() {
@@ -631,7 +629,7 @@ function startHlsJs() {
     audioStream.play().catch(function (e) { console.warn("HLS play failed:", e); });
   });
 
-  hlsInstance.on(Hls.Events.ERROR, function (event, data) {
+  hlsInstance.on(Hls.Events.ERROR, function (_event, data) {
     if (data.fatal) {
       console.warn("HLS fatal error, falling back to Icecast", data);
       hlsFailed = true;
@@ -1017,7 +1015,7 @@ function drawBgLoop(timestamp) {
     bgPresence = blendPaletteColor(paletteTransition.bgPresence, bgPresenceTarget, eased);
     vizPrimary = blendPaletteColor(paletteTransition.vizPrimary, bgPrimaryTarget, eased);
     vizPresence = blendPaletteColor(paletteTransition.vizPresence, bgPresenceTarget, eased);
-    applyAccentVars(vizPrimary, vizPresence);
+    applyAccentVars(vizPrimary);
     bgForceDraw = true;
     if (progress === 1) paletteTransition = null;
   }
@@ -1109,7 +1107,6 @@ function applyPendingMetadata() {
   const artistEl = document.querySelector('.div-playing-artist');
 
   const isChange = lastDeckSongId !== null && lastDeckSongId !== data.songid;
-  lastDisplayedSongId = data.songid;
 
   // `land` = false leaves the arm parked and the record still, for a jukebox
   // record change that lowers the arm once the new record is on the platter.
@@ -2129,7 +2126,7 @@ function animateHistorySlots(previous, list) {
     motion.finished.then(cleanup, () => {});
   };
   const targets = [...list.children];
-  targets.forEach((item, index) => {
+  targets.forEach((item) => {
     const before = previous.find((entry) => entry.key === item.dataset.historyKey);
     const after = item.getBoundingClientRect();
     // A computed "none" can't be combined with other transforms.
@@ -2545,12 +2542,10 @@ function rgbToHex(c) {
 }
 
 // Drive the design's accent / glow CSS variables from album art colours
-function applyAccentVars(primary, presence) {
+function applyAccentVars(primary) {
   const root = document.documentElement.style;
   root.setProperty("--accent", rgbToHex(primary));
   root.setProperty("--accent-glow", `rgba(${primary.r}, ${primary.g}, ${primary.b}, 0.55)`);
-  root.setProperty("--c1", rgbToHex(primary));
-  root.setProperty("--c2", rgbToHex(presence));
 }
 
 // Live input mode: the API's "source" event says the stream is the live input
@@ -2575,7 +2570,6 @@ function updateBackgroundColors(colors) {
     primary: parseRgb(colors.primary),
     presence: parseRgb(colors.presence),
   };
-  bgHasBeenSet = true;
   applyPendingMetadata();
 }
 
@@ -2605,7 +2599,7 @@ function applyPendingColors(duration = PALETTE_FADE_MS) {
     bgPresence = { ...bgPresenceTarget };
     vizPrimary = { ...bgPrimaryTarget };
     vizPresence = { ...bgPresenceTarget };
-    applyAccentVars(vizPrimary, vizPresence);
+    applyAccentVars(vizPrimary);
   }
   hasAppliedPalette = true;
   bgForceDraw = true;
