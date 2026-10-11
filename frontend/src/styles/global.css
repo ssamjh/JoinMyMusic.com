@@ -142,7 +142,8 @@
     height: 100%;
     z-index: -2;
     pointer-events: none;
-    filter: blur(20px);
+    /* No CSS blur: the glows are radial gradients drawn at 1/8 size and scaled
+       up, already soft, and a full-screen filter would re-run every frame. */
     opacity: 1;
     transition: opacity 0.9s ease;
   }
@@ -236,7 +237,8 @@
     background: var(--elev);
     color: var(--fg);
     cursor: pointer;
-    backdrop-filter: blur(20px);
+    /* No backdrop blur: the glow behind is already soft, and a blur here would
+       re-run every frame the animated background changes. */
     transition: transform 0.25s var(--ease-dock), background 0.3s, color 0.3s;
   }
   .icon-btn:hover {
@@ -262,7 +264,7 @@
     background: var(--elev);
     color: var(--fg);
     cursor: pointer;
-    backdrop-filter: blur(20px);
+    /* No backdrop blur, as for .icon-btn. */
     transition: transform 0.25s var(--ease-dock), background 0.3s, color 0.3s,
       opacity 0.3s;
   }
@@ -385,6 +387,13 @@
   }
   body:not(.no-bg-animation) .record-label {
     opacity: 1;
+  }
+  /* The spinning layers get their own compositor layers, so turning them (JS
+     ramps, scratching, or the cruise animation) never repaints the record. */
+  body:not(.no-bg-animation) #playing-image,
+  body:not(.no-bg-animation) #art-card > .art-placeholder,
+  body:not(.no-bg-animation) #record-label {
+    will-change: transform;
   }
   .record-label .label-paper {
     fill: var(--label-paper);
@@ -827,7 +836,7 @@
     background: var(--modal-surface);
     border: 1px solid var(--panel-border);
     box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(40px);
+    /* No blur of its own: the near-opaque surface sits on the overlay's blur. */
     overflow: hidden;
     animation: modalpop 0.35s var(--ease-dock) both;
     color: var(--fg);
@@ -1146,8 +1155,8 @@
      at the window's bottom edge. */
   body:not(.no-bg-animation) #player-metadata {
     position: relative;
-    padding: 38px 30px 0;
-    border-radius: 50% 50% 20px 20px / 64px 64px 20px 20px;
+    padding: 40px 26px 0;
+    border-radius: 50% 50% 18px 18px / 64px 64px 18px 18px;
     background:
       radial-gradient(120% 90% at 50% 115%, color-mix(in srgb, var(--accent) 38%, transparent), transparent 70%),
       repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 2px, rgba(0, 0, 0, 0.12) 2px 9px),
@@ -1169,7 +1178,7 @@
   body:not(.no-bg-animation) .title-slot {
     position: relative;
     overflow: hidden;
-    padding: 10px 12px 0;
+    padding: 8px 10px 0;
   }
   /* The card rises out of the window's bottom edge: a soft shadow along it. */
   body:not(.no-bg-animation) .title-slot::before {
@@ -1208,16 +1217,17 @@
   body:not(.no-bg-animation) .title-plate {
     position: relative;
     z-index: 1;
-    margin: 0 4px;
-    padding: 22px 24px 14px;
+    /* The card keeps its own size; the window around it is wider. */
+    width: min(100%, calc(var(--deck-size) * 2 - 80px));
+    margin: 0 auto;
+    padding: 16px 18px 10px;
     border-radius: 2px 2px 0 0;
     color: #2b2117;
     background:
-      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 6px / 100% 4px no-repeat,
-      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 13px / 100% 1px no-repeat,
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .4 0 0 0 0 .3 0 0 0 0 .17 0 0 0 .16 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='120'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012 .55' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .36 0 0 0 0 .22 0 0 0 -.9 .36'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='160'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .02' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .4 0 0 0 0 .18 0 0 0 .7 -.25'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E") 0 0 / 420px 160px,
+      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 5px / 100% 3px no-repeat,
+      linear-gradient(var(--plate-rule), var(--plate-rule)) 0 10px / 100% 1px no-repeat,
+      /* grain, long fibres and blotchy tone, pre-rendered as one seamless tile */
+      url("/img/paper.webp") 0 0 / 300px 160px,
       /* handled edges: darker, browner along the sides and top */
       linear-gradient(90deg, rgba(120, 82, 30, 0.22), rgba(120, 82, 30, 0) 7%, rgba(120, 82, 30, 0) 93%, rgba(120, 82, 30, 0.22)),
       linear-gradient(180deg, rgba(120, 82, 30, 0.14), rgba(120, 82, 30, 0) 22%),
@@ -1231,11 +1241,16 @@
     --plate-rule: color-mix(in srgb, var(--accent) 75%, #3a2614);
     --plate-ink: color-mix(in srgb, var(--accent) 65%, #1a120a);
   }
+  /* One line, like a strip: long titles end in an ellipsis instead of growing the card. */
   body:not(.no-bg-animation) .title-plate .div-playing-title {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-family: var(--font-typewriter);
-    font-size: clamp(22px, 2.6vw, 28px);
+    font-size: clamp(17px, 1.9vw, 21px);
     font-weight: 700;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     text-shadow: 0 0 0.6px rgba(43, 33, 23, 0.55);
   }
@@ -1247,10 +1262,10 @@
     isolation: isolate;
     width: fit-content;
     max-width: 100%;
-    margin: 12px auto 0;
-    padding: 5px 34px;
+    margin: 7px auto 0;
+    padding: 3px 24px;
     font-family: var(--font-typewriter);
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.12em;
     color: var(--plate-ink);
@@ -1265,14 +1280,14 @@
     height: auto;
     margin: 0;
     opacity: 1;
-    clip-path: polygon(0 50%, 18px 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 18px 100%);
+    clip-path: polygon(0 50%, 12px 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 12px 100%);
   }
   body:not(.no-bg-animation) .title-plate .div-playing-artist:not(:empty)::before {
     background: var(--plate-rule);
     clip-path: polygon(evenodd,
-      0 50%, 18px 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 18px 100%, 0 50%,
-      2.5px 50%, 19px calc(100% - 1.5px), calc(100% - 19px) calc(100% - 1.5px), calc(100% - 2.5px) 50%,
-      calc(100% - 19px) 1.5px, 19px 1.5px, 2.5px 50%);
+      0 50%, 12px 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 12px 100%, 0 50%,
+      2.5px 50%, 13px calc(100% - 1.5px), calc(100% - 13px) calc(100% - 1.5px), calc(100% - 2.5px) 50%,
+      calc(100% - 13px) 1.5px, 13px 1.5px, 2.5px 50%);
   }
   body:not(.no-bg-animation) .title-plate .div-playing-artist:not(:empty)::after {
     background: color-mix(in srgb, var(--accent) 13%, transparent);
@@ -1320,7 +1335,7 @@
       padding: 46px 40px 26px;
     }
     /* Narrower than the cabinet so its ends stay inside the arch. */
-    body:not(.no-bg-animation) #player-metadata { width: min(100%, calc(var(--deck-size) * 2)); }
+    body:not(.no-bg-animation) #player-metadata { width: min(100%, calc(var(--deck-size) * 2.4)); }
     body:not(.no-bg-animation) .next-panel { grid-area: next; }
     body:not(.no-bg-animation) .next-track-details { display: none; }
     body:not(.no-bg-animation) .jukebox-deck { grid-area: deck; }
@@ -1448,13 +1463,22 @@
         0 6px 8px -5px rgba(0, 0, 0, 0.9),
         inset -2px 0 0 rgba(255, 255, 255, 0.16),
         inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-      filter: brightness(calc((1 - var(--stack-pos) * 0.12) * (1 - var(--stack-row) * 0.15)));
       transform: perspective(900px) rotateY(var(--rack-turn)) rotateX(var(--rack-tilt));
       transform-origin: 100% 100%;
-      transition: opacity 600ms ease, filter 200ms ease, transform 450ms cubic-bezier(.2, .7, .3, 1);
+      transition: opacity 600ms ease, transform 450ms cubic-bezier(.2, .7, .3, 1);
     }
-    body:not(.no-bg-animation) .history-panel .history-item:hover .history-sleeve,
-    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-sleeve { filter: none; }
+    /* Sleeves further back are darker: a black layer over the cover (cheaper
+       than a filter on a 3D-transformed element), lifted on hover. */
+    body:not(.no-bg-animation) .history-panel .history-sleeve::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: #000;
+      opacity: calc(1 - (1 - var(--stack-pos) * 0.12) * (1 - var(--stack-row) * 0.15));
+      transition: opacity 200ms ease;
+    }
+    body:not(.no-bg-animation) .history-panel .history-item:hover .history-sleeve::before,
+    body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-sleeve::before { opacity: 0; }
     /* The record inside, hidden behind its sleeve until it slides up out of it.
        It pivots on the sleeve's bottom-right corner (104.35% = 96% / 92%),
        so it turns with the sleeve and slides out along it. */
@@ -1476,11 +1500,19 @@
       transform-origin: 104.35% 104.35%;
       transition: transform 300ms cubic-bezier(.2, .7, .3, 1);
     }
-    /* In the sleeve a record is bare vinyl, so the tip shows grooves, not art. */
+    /* In the sleeve a record is bare vinyl, so the tip shows grooves, not art.
+       Its cover and label are not rendered at all (no image decode, no SVG
+       raster) except while a played record lands (.is-sleeving) and fades its
+       art away as it slides in (.is-sliding-in). */
     body:not(.no-bg-animation) .history-panel .history-disc > .history-art,
-    body:not(.no-bg-animation) .history-panel .history-disc > .art-placeholder {
+    body:not(.no-bg-animation) .history-panel .history-disc > .art-placeholder,
+    body:not(.no-bg-animation) .history-panel .history-disc > .history-record-label {
+      display: none;
       opacity: 0;
       transition: opacity 500ms ease;
+    }
+    body:not(.no-bg-animation) .history-panel .history-item:is(.is-sleeving, .is-sliding-in) .history-disc > :is(.history-art, .art-placeholder, .history-record-label) {
+      display: block;
     }
     body:not(.no-bg-animation) .history-panel .history-item:hover .history-disc,
     body:not(.no-bg-animation) .history-panel .history-item:focus-visible .history-disc { --unsleeve-y: -0.2; }
@@ -1492,8 +1524,7 @@
       --unsleeve-y: -0.5;
       transition: none;
     }
-    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-disc > .history-art,
-    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-disc > .art-placeholder {
+    body:not(.no-bg-animation) .history-panel .history-item.is-sleeving .history-disc > :is(.history-art, .art-placeholder, .history-record-label) {
       opacity: 1;
       transition: none;
     }

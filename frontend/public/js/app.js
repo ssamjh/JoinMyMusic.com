@@ -247,7 +247,37 @@ let scratchMoved = false, scratchRafId = null, scratchFramePrev = 0;
 function fxOn() {
   return !document.body.classList.contains("no-bg-animation");
 }
+// A steady spin (the usual state while playing) is handed to a Web Animation on
+// each spinning layer, which the browser runs on the compositor: no per-frame
+// JS or style work, and it stays smooth if the page is busy. Anything that
+// changes the speed or the angle (ramps, scratching, a song change) calls
+// stopCruise first, which reads the angle back and returns to the JS engine.
+let spinCruise = null; // { anims, from, speed }
+function cruiseAngle() {
+  return (spinCruise.from + (spinCruise.anims[0].currentTime || 0) * spinCruise.speed) % 360;
+}
+function startCruise() {
+  if (!spinEls?.length || spinSpeed <= 0) return false;
+  const from = spinAngle;
+  const frames = [{ transform: `rotate(${from}deg)` }, { transform: `rotate(${from + 360}deg)` }];
+  const timing = { duration: 360 / spinSpeed, iterations: Infinity };
+  spinCruise = { anims: spinEls.map((el) => el.animate(frames, timing)), from, speed: spinSpeed };
+  return true;
+}
+function stopCruise() {
+  if (!spinCruise) return false;
+  spinAngle = cruiseAngle();
+  spinCruise.anims.forEach((animation) => animation.cancel());
+  spinCruise = null;
+  spinEls?.forEach((el) => (el.style.transform = `rotate(${spinAngle}deg)`));
+  return true;
+}
+// The record's current angle, including a cruise in progress.
+function currentSpinAngle() {
+  return spinCruise ? cruiseAngle() : spinAngle;
+}
 function startSpinRamp(to, dur, ease) {
+  stopCruise();
   spinRampFrom = spinSpeed;
   spinRampTo = to;
   spinRampStart = performance.now();
@@ -274,10 +304,14 @@ function spinFrame(t) {
   }
   spinAngle = (spinAngle + spinSpeed * dt) % 360;
   if (spinEls) spinEls.forEach((el) => (el.style.transform = `rotate(${spinAngle}deg)`));
-  // Keep animating while spinning or still ramping. Once fully at rest, stop
-  // the loop and leave the record at its current angle — no snap to upright.
-  if (spinSpeed > 0 || spinRampDur > 0) {
+  // Keep animating while ramping; a steady spin cruises on the compositor. Once
+  // fully at rest, stop the loop and leave the record at its current angle — no
+  // snap to upright.
+  if (spinRampDur > 0) {
     spinRafId = requestAnimationFrame(spinFrame);
+  } else if (spinSpeed > 0) {
+    spinRafId = null;
+    if (!startCruise()) spinRafId = requestAnimationFrame(spinFrame);
   } else {
     spinRafId = null;
   }
@@ -293,13 +327,16 @@ function ensureSpin() {
   if (recordGrabbed) return;       // a scratch is driving the record directly
   if (tonearmChoreography) return; // song-change sequence is driving the spin
   if (!fxOn()) {
-    // Effects off — clear to upright (now if idle, else on the next frame).
+    // Effects off — clear to upright (now if idle, else on the next frame). A
+    // stopped cruise has no frame to do that, so stop the record here, or
+    // turning effects back on would think it is still spinning.
+    if (stopCruise()) { spinSpeed = 0; spinRampDur = 0; }
     if (spinRafId) spinPrev = 0;
     else if (spinEls) spinEls.forEach((el) => (el.style.transform = ""));
   } else if (document.body.classList.contains("is-playing")) {
     // Playing — spin up to full speed from wherever the record is resting.
     if (spinSpeed < SPIN_FULL) startSpinRamp(SPIN_FULL, SPIN_UP_MS, EASE_IN);
-  } else if (spinSpeed > 0 || spinRafId) {
+  } else if (spinSpeed > 0 || spinRafId || spinCruise) {
     // Paused — ease the record to a stop, leaving it where it lands.
     startSpinRamp(0, 1500, EASE_OUT);
   }
@@ -846,7 +883,8 @@ function onRecordPointerDown(e) {
   scratchVel = 0;
   scratchPendingDeg = 0;
   scratchPrevAngle = pointerAngleDeg(e);
-  // Take over the spin engine: freeze any ramp and stop its rAF loop.
+  // Take over the spin engine: freeze any ramp or cruise and stop its rAF loop.
+  stopCruise();
   spinRampDur = 0;
   if (spinRafId) { cancelAnimationFrame(spinRafId); spinRafId = null; }
   if (card.setPointerCapture) { try { card.setPointerCapture(e.pointerId); } catch (_) {} }
@@ -1040,16 +1078,22 @@ function drawBgLoop(timestamp) {
   bgCtx.fillRect(0, 0, W, H);
 }
 
-// Centre point for the background glow, aligned vertically with the album art
+// Centre point for the background glow, aligned vertically with the album art.
+// Measured at most twice a second: reading layout on every drawn frame would
+// force a layout pass each time.
+let bgGlowCache = null;
 function bgGlowCenter() {
   const W = bgCanvas.width, H = bgCanvas.height;
+  const now = performance.now();
+  if (bgGlowCache && bgGlowCache.W === W && bgGlowCache.H === H && now - bgGlowCache.at < 500) return bgGlowCache;
   let cy = H / 2;
   const card = document.getElementById('art-card');
   if (card) {
     const rect = card.getBoundingClientRect();
     if (rect.height) cy = ((rect.top + rect.height / 2) / window.innerHeight) * H;
   }
-  return { cx: W / 2, cy };
+  bgGlowCache = { cx: W / 2, cy, W, H, at: now };
+  return bgGlowCache;
 }
 
 function applyPendingMetadata() {
@@ -1077,6 +1121,7 @@ function applyPendingMetadata() {
       // The up-next record becomes the playing one, keeping its angle.
       const nextRecord = document.getElementById("next-record");
       const waiting = nextRecord?.querySelector(".history-item");
+      stopCruise();
       if (spinRafId) cancelAnimationFrame(spinRafId);
       spinRafId = null;
       spinAngle = waiting?.dataset.songid === data.songid ? Number(waiting.dataset.recordAngle) || 0 : 0;
@@ -1112,16 +1157,20 @@ function applyPendingMetadata() {
       artwork.width = 400;
       artwork.height = 400;
       markImageLoading(artwork);
+      // A cruise animates the old image element; restart it on the new one.
+      const cruising = stopCruise();
       artwork.style.transform = previousImage.style.transform;
       previousImage.replaceWith(artwork);
       playingImage = artwork;
       if (spinEls) spinEls = spinEls.map((element) => element === previousImage ? artwork : element);
+      if (cruising) startCruise();
     } else if (artwork) {
       // A failed cover uses the placeholder, never the previous song's picture.
       playingImage.style.opacity = "0";
     }
     document.getElementById("playing-link").dataset.artReady = "true";
     titleEl.innerHTML  = createLink('https://open.spotify.com/track/', data.songid, data.song);
+    titleEl.title = data.song || ""; // the title card cuts long titles to one line
     artistEl.innerHTML = data.artist
       .map((a) => createLink('https://open.spotify.com/artist/', a.id, a.name))
       .join(', ');
@@ -1327,7 +1376,7 @@ function swapRecords(songid, apply, land) {
   const incomingDisc = waiting?.dataset.songid === songid ? waiting.querySelector(".history-disc") : null;
   const incomingRect = incomingDisc ? sleeveRect(incomingDisc) : null;
   const outgoingSongId = displayedRecordSongId;
-  const outgoingAngle = spinAngle;
+  const outgoingAngle = currentSpinAngle();
   const outgoing = motion ? buildFlightRecord(cardEl, outgoingAngle) : null;
   const incoming = motion && incomingRect
     ? buildFlightRecord(incomingDisc, Number(waiting.dataset.recordAngle) || 0) : null;
@@ -1367,6 +1416,11 @@ function swapRecords(songid, apply, land) {
       if (!slot) return;
       slot.classList.remove("is-receiving");
       void slot.offsetWidth;
+      // Keep the art rendered while it fades (see .is-sliding-in in the CSS).
+      if (slot.classList.contains("is-sleeving")) {
+        slot.classList.add("is-sliding-in");
+        setTimeout(() => slot.classList.remove("is-sliding-in"), 600);
+      }
       slot.classList.remove("is-sleeving");
     },
   });
@@ -1434,21 +1488,27 @@ function stopViz() {
   smoothedBass = 0;
   smoothedPresence = 0;
   vizLastTime = 0;
+  vizCleared = false;
 }
 
-const VIZ_FPS = 60;
+// The visualizer is soft glows drawn at 1/5 resolution: 30fps reads the same as
+// 60 for half the work.
+const VIZ_FPS = 30;
 const VIZ_INTERVAL = 1000 / VIZ_FPS;
 let vizLastTime = 0;
+let vizCleared = false;
 
-// The background is just slowly-drifting radial glows — 30fps is imperceptible
-// and halves its per-frame gradient work vs. the audio-reactive visualizer.
-const BG_FPS = 30;
+// The background is just slowly-drifting radial glows — 20fps is imperceptible.
+const BG_FPS = 20;
 const BG_INTERVAL = 1000 / BG_FPS;
 
 function drawViz(timestamp) {
   vizRafId = requestAnimationFrame(drawViz);
   if (!analyser) return;
   if (timestamp - vizLastTime < VIZ_INTERVAL) return;
+  // Easing is per elapsed time, so the glow responds the same at any frame rate.
+  const frameMs = vizLastTime ? Math.min(timestamp - vizLastTime, 100) : VIZ_INTERVAL;
+  const ease = (rate) => 1 - Math.pow(1 - rate, frameMs / (1000 / 60));
   vizLastTime = timestamp;
 
   const bufferLength = analyser.frequencyBinCount;
@@ -1479,7 +1539,7 @@ function drawViz(timestamp) {
   let bass = 0;
   for (let i = bassStart; i <= bassEnd; i++) bass += dataArray[i];
   bass = Math.pow(bass / (bassEnd - bassStart + 1) / 255, 0.55);
-  smoothedBass += (bass - smoothedBass) * 0.2;
+  smoothedBass += (bass - smoothedBass) * ease(0.2);
 
   // Vocal presence 1500–3500 Hz
   const presStart = Math.round(1500 / hzPerBin);
@@ -1487,8 +1547,12 @@ function drawViz(timestamp) {
   let mid = 0;
   for (let i = presStart; i <= presEnd; i++) mid += dataArray[i];
   mid = Math.pow(mid / (presEnd - presStart + 1) / 255, 0.55);
-  smoothedPresence += (mid - smoothedPresence) * 0.16;
+  smoothedPresence += (mid - smoothedPresence) * ease(0.16);
 
+  // Silence (or a pause) leaves nothing to draw: clear once, then skip.
+  const quiet = smoothedBass <= 0.02 && smoothedPresence <= 0.01;
+  if (quiet && vizCleared) return;
+  vizCleared = quiet;
   vizCtx.clearRect(0, 0, W, H);
 
   // Light mode: deepen colours and push opacity so glows read against the bright bg
