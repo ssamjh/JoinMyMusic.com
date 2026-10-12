@@ -66,10 +66,12 @@ else
   duck_hold = 0.6
   duck_attack_db_s = 30.0
   duck_release_db_s = 8.0
-  duck_step = 0.02
   duck_gain_db = ref(0.)
   duck_held = ref(0.)
+  # Called once per frame. The step is the frame duration, so the rates and the hold stay
+  # in real time whatever the frame size.
   def duck_update() =
+    duck_step = frame.duration()
     level = vban_fast.rms()
     if level > 0. and dB_of_lin(level) > duck_threshold_db then
       duck_held := duck_hold
@@ -84,11 +86,11 @@ else
       duck_gain_db := !duck_gain_db + min(change, duck_release_db_s * duck_step)
     end
   end
-  if duck_db < 0. then thread.run(every=duck_step, duck_update) end
-  add(normalize=false, [
+  mixed = add(normalize=false, [
     amplify({lin_of_dB(!duck_gain_db)}, raw),
     amplify(lin_of_dB(vban_trim_db), vban_in)
   ])
+  if duck_db < 0. then source.on_frame(mixed, duck_update) else mixed end
 end
 
 # A copy of the input mix, before the AGC, for the admin monitor's input meters. It is
@@ -104,11 +106,11 @@ if monitor_fifo != "" then
   ))
 end
 
-# Input AGC: a gated leveler. Every 20 ms it moves its gain toward the gain that would
-# put the input RMS (agc_window) at agc_target_db, at fixed rates: agc_attack_db_s when
-# turning down and agc_release_db_s when turning up. Fixed rates move small and large
-# level differences at the same pace, so the gain rides the programme level rather than
-# following phrases. The ratio is infinite (full levelling) within agc_range_db.
+# Input AGC: a gated leveler. On every frame (40 ms at the default frame duration) it moves
+# its gain toward the gain that would put the input RMS (agc_window) at agc_target_db, at
+# fixed rates: agc_attack_db_s when turning down and agc_release_db_s when turning up.
+# Fixed rates move small and large level differences at the same pace, so the gain rides
+# the programme level rather than following phrases. The ratio is infinite (full levelling) within agc_range_db.
 # Two thresholds stop it chasing quiet material:
 # - gating: input more than agc_gate_db below the target may turn the gain down but not
 #   up, so quiet passages, breaths and room noise are not pumped up;
@@ -124,7 +126,6 @@ agc_release_db_s = 2.0
 agc_gate_db = -30.0
 agc_freeze_db = -50.0
 agc_window = 0.3
-agc_step = 0.02
 control_socket = getenv("LIQUIDSOAP_SOCKET")
 if control_socket != "" then
   settings.server.socket.set(true)
@@ -136,7 +137,9 @@ radio = if getenv("JMM_AGC_BYPASS") == "1" then
 else
   measured = rms(duration=agc_window, radio)
   agc_gain_db = ref(0.)
+  # Called once per frame, with the frame duration as the step (see duck_update).
   def agc_update() =
+    agc_step = frame.duration()
     level = dB_of_lin(measured.rms())
     if level > agc_freeze_db then
       wanted = max(0. - agc_range_db, min(agc_range_db, agc_target_db - level))
@@ -148,17 +151,17 @@ else
       end
     end
   end
-  thread.run(every=agc_step, agc_update)
   # The AGC gain in dB, read by the admin monitor's AGC meter.
   server.register(
     description="Input AGC gain in dB.",
     "agc_gain",
     fun (_) -> string_of(!agc_gain_db)
   )
-  add(normalize=false, [
+  leveled = add(normalize=false, [
     amplify({if agc_bypass() then 0. else lin_of_dB(!agc_gain_db) end}, measured),
     amplify({if agc_bypass() then 1. else 0. end}, radio)
   ])
+  source.on_frame(leveled, agc_update)
 end
 
 # Headroom for the 16-bit link to FFmpeg. When speech starts over music the AGC takes

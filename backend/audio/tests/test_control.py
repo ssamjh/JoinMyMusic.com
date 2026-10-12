@@ -10,6 +10,7 @@ import http.client
 import importlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 PROCESSING = ROOT / "config" / "processing.ffmpeg"
+# Makeup gain and wide-band ratio as set in processing.ffmpeg, so retuning the file does not break these tests.
+_PROCESSING_TEXT = PROCESSING.read_text(encoding="utf-8")
+MAKEUP_DB = float(re.search(r"volume@makeup=(-?[\d.]+)dB", _PROCESSING_TEXT).group(1))
+WIDE_RATIO = float(re.search(r"acompressor@wide=threshold=[^:]+:ratio=([\d.]+)", _PROCESSING_TEXT).group(1))
 sys.path.insert(0, str(SCRIPTS))
 import control  # noqa: E402
 import run as runtime  # noqa: E402
@@ -111,7 +116,7 @@ class GraphParsingTest(unittest.TestCase):
         makeup = self.filters["volume@makeup"].params[0]
         self.assertEqual(makeup.name, "volume")
         self.assertTrue(makeup.db)
-        self.assertAlmostEqual(makeup.value, 10 ** (8 / 20), places=5)
+        self.assertAlmostEqual(makeup.value, 10 ** (MAKEUP_DB / 20), places=5)
         self.assertTrue(makeup.live)
         final = self.filters["alimiter@final"]
         self.assertNotIn("level", [p.name for p in final.params])
@@ -451,7 +456,7 @@ class HttpApiTest(unittest.TestCase):
         volume = makeup["params"][0]
         self.assertEqual(volume["name"], "volume")
         self.assertAlmostEqual(volume["value"], volume["default"])
-        self.assertAlmostEqual(volume["value"], 10 ** (8 / 20), places=5)
+        self.assertAlmostEqual(volume["value"], 10 ** (MAKEUP_DB / 20), places=5)
         self.assertTrue(volume["live"])
 
     def test_param_sends_the_command_and_echoes_the_value(self):
@@ -513,10 +518,10 @@ class HttpApiTest(unittest.TestCase):
         status, state = self.json_request("POST", "/api/reset")
         self.assertEqual(status, 200)
         self.assertFalse(state["bypass"])
-        self.assertIn("acompressor@wide ratio 3", self.transport.commands)
+        self.assertIn(f"acompressor@wide ratio {WIDE_RATIO:g}", self.transport.commands)
         self.assertEqual(self.transport.commands[-2:], ["volume@jmm_wet volume 1", "volume@jmm_dry volume 0"])
         wide = next(item for item in state["filters"] if item["id"] == "acompressor@wide")
-        self.assertEqual(next(p for p in wide["params"] if p["name"] == "ratio")["value"], 3.0)
+        self.assertEqual(next(p for p in wide["params"] if p["name"] == "ratio")["value"], WIDE_RATIO)
 
     def test_export_writes_live_values_into_the_file(self):
         self.json_request("POST", "/api/param", {"target": "acompressor@wide", "name": "ratio", "value": 2.5})

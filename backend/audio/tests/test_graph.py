@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -44,10 +45,22 @@ def processing_source() -> str:
     return PROCESSING.read_text(encoding="utf-8")
 
 
-def edited(source: str, old: str = "acompressor@wide=threshold=0.316:ratio=3",
-           new: str = "acompressor@wide=threshold=0.316:ratio=2.5") -> str:
+WIDE_RATIO = re.compile(r"(acompressor@wide=threshold=[^:]+:ratio=)([\d.]+)")
+
+
+def edited(source: str, old: str, new: str) -> str:
     assert old in source, "test text is out of date"
     return source.replace(old, new)
+
+
+def with_ratio(source: str, ratio: str = "2.5") -> str:
+    """The source with the wide compressor ratio set to ratio, whatever value processing.ffmpeg holds."""
+    assert WIDE_RATIO.search(source), "acompressor@wide ratio is missing from processing.ffmpeg"
+    return WIDE_RATIO.sub(lambda match: match.group(1) + ratio, source, count=1)
+
+
+def config_ratio(source: str) -> str:
+    return WIDE_RATIO.search(source).group(2)
 
 
 class FakeProcess:
@@ -173,7 +186,7 @@ class GraphControllerTest(unittest.TestCase):
 
     def test_valid_edit_is_swapped_in_with_warm_up_and_marked_edited(self):
         controller, bridge, session = self.started()
-        result = controller.apply(edited(self.source))
+        result = controller.apply(with_ratio(self.source))
         self.assertEqual(result["origin"], "edited")
         self.assertIn("ratio=2.5", result["text"])
         _, warmup, crossfade = bridge.offers[-1]
@@ -209,7 +222,7 @@ class GraphControllerTest(unittest.TestCase):
         self.assertTrue(controller._swap_lock.acquire(blocking=False))
         try:
             with self.assertRaises(ApiError) as busy:
-                controller.apply(edited(self.source))
+                controller.apply(with_ratio(self.source))
             self.assertEqual(busy.exception.status, 409)
         finally:
             controller._swap_lock.release()
@@ -219,7 +232,7 @@ class GraphControllerTest(unittest.TestCase):
         before = controller.state()["text"]
         bridge.fail_next = "it exited with status 3"
         with self.assertRaises(ApiError) as failed:
-            controller.apply(edited(self.source))
+            controller.apply(with_ratio(self.source))
         self.assertEqual(failed.exception.status, 503)
         self.assertIn("previous one keeps running", failed.exception.message)
         self.assertEqual(controller.state()["text"], before)
@@ -227,15 +240,15 @@ class GraphControllerTest(unittest.TestCase):
 
     def test_reload_runs_the_file_contents(self):
         controller, _, _ = self.started()
-        controller.apply(edited(self.source))
+        controller.apply(with_ratio(self.source))
         state = controller.reload()
         self.assertEqual(state["origin"], "file")
-        self.assertIn("ratio=3", state["text"])
+        self.assertIn(f"ratio={config_ratio(self.source)}", state["text"])
 
     def test_file_change_is_applied_once_it_settles_and_bad_changes_are_not(self):
         controller, bridge, _ = self.started()
         offers = len(bridge.offers)
-        self.path.write_text(edited(self.source, "acompressor@wide=threshold=0.316:ratio=3", "acompressor@wide=threshold=0.316:ratio=2"), encoding="utf-8")
+        self.path.write_text(with_ratio(self.source, "2"), encoding="utf-8")
         self.wait_for(lambda: len(bridge.offers) > offers, "a settled file change was not applied")
         self.assertIn("ratio=2", controller.state()["text"])
         self.assertEqual(controller.state()["origin"], "file")
@@ -248,7 +261,7 @@ class GraphControllerTest(unittest.TestCase):
 
     def test_failed_processor_is_restarted_with_the_running_graph_and_live_values(self):
         controller, bridge, session = self.started()
-        controller.apply(edited(self.source))
+        controller.apply(with_ratio(self.source))
         session.live.attach(FakeTransport())
         live_value = session.live.set_param("acompressor@wide", "ratio", 1.75)
         self.assertEqual(live_value, 1.75)
@@ -337,7 +350,7 @@ class GraphHttpTest(unittest.TestCase):
         self.assertIn("filters", payload)
 
     def test_post_graph_applies_an_edit(self):
-        status, payload = self.request("POST", "/api/graph", {"text": edited(self.source)})
+        status, payload = self.request("POST", "/api/graph", {"text": with_ratio(self.source)})
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["origin"], "edited")
         self.assertIn("ratio=2.5", payload["text"])
@@ -366,7 +379,7 @@ class GraphHttpTest(unittest.TestCase):
     def test_post_graph_while_a_swap_runs_is_409(self):
         self.assertTrue(self.controller._swap_lock.acquire(blocking=False))
         try:
-            status, payload = self.request("POST", "/api/graph", {"text": edited(self.source)})
+            status, payload = self.request("POST", "/api/graph", {"text": with_ratio(self.source)})
         finally:
             self.controller._swap_lock.release()
         self.assertEqual(status, 409)
@@ -374,19 +387,19 @@ class GraphHttpTest(unittest.TestCase):
 
     def test_post_graph_reports_a_candidate_that_failed_as_503(self):
         self.bridge.fail_next = "it exited with status 3"
-        status, payload = self.request("POST", "/api/graph", {"text": edited(self.source)})
+        status, payload = self.request("POST", "/api/graph", {"text": with_ratio(self.source)})
         self.assertEqual(status, 503)
         self.assertIn("previous one keeps running", payload["error"])
 
     def test_reload_restores_the_file(self):
-        self.request("POST", "/api/graph", {"text": edited(self.source)})
+        self.request("POST", "/api/graph", {"text": with_ratio(self.source)})
         status, payload = self.request("POST", "/api/graph/reload", {})
         self.assertEqual(status, 200)
         self.assertEqual(payload["origin"], "file")
-        self.assertIn("ratio=3", payload["text"])
+        self.assertIn(f"ratio={config_ratio(self.source)}", payload["text"])
 
     def test_export_follows_the_applied_graph_and_live_values(self):
-        self.request("POST", "/api/graph", {"text": edited(self.source)})
+        self.request("POST", "/api/graph", {"text": with_ratio(self.source)})
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         conn.request("GET", "/api/export")
         text = conn.getresponse().read().decode()

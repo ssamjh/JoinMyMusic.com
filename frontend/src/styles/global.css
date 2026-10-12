@@ -725,12 +725,6 @@
   .div-playing-artist:not(:empty) {
     animation: fadein 0.3s ease;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .div-playing-title:empty::before,
-    .div-playing-artist:empty::before {
-      animation: none;
-    }
-  }
   .live-dot {
     display: inline-block;
     width: 7px;
@@ -981,10 +975,6 @@
   }
   .jukebox-deck #playing-link[data-art-ready="false"] { visibility: visible; }
   .jukebox-deck #playing-link[data-art-ready="false"] #art-card { visibility: hidden; }
-  @media (prefers-reduced-motion: reduce) { .jukebox-deck .tonearm { transition: opacity 200ms ease; } }
-  @media (prefers-reduced-motion: reduce) {
-    .jukebox-deck .tonearm-arm, .jukebox-deck .tonearm-head { transition: none; }
-  }
 
   /* Up next: one record waiting in the rack, with its details underneath. */
   .next-panel {
@@ -2077,14 +2067,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .history-item,
-  .history-disc,
-  .history-tag {
-    transition: none !important;
-  }
-}
-
 /* ---- Keyframes ---- */
 @keyframes modalpop {
   from {
@@ -2217,12 +2199,6 @@
   }
   body.no-bg-animation img.blur-load {
     filter: none;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    img.blur-load {
-      filter: none;
-      transition: opacity 0.4s ease;
-    }
   }
 }
 

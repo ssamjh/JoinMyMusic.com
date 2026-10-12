@@ -1778,8 +1778,7 @@ let pendingRecordTransfer = null;
 let historyMotionCleanups = [];
 
 function recordMotionEnabled() {
-  return !document.body.classList.contains("no-bg-animation")
-    && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return !document.body.classList.contains("no-bg-animation");
 }
 
 function historyMotionEnabled() {
@@ -2618,14 +2617,11 @@ function migrateBgAnimationCookie() {
 // Background animation toggle
 // Default: OFF. Only auto-enable on capable desktop devices.
 // Cheap upfront gate. Kept deliberately permissive — it only rules out devices
-// that clearly can't cope (reduced-motion, phones/tablets, very low core/RAM).
+// that clearly can't cope (phones/tablets, very low core/RAM).
 // The real decision is made at runtime by the FPS probe below, which measures
 // actual performance with the real workload instead of guessing from specs
 // (browsers don't expose enough hardware detail to judge "grunt" reliably).
 function shouldEnableAnimations() {
-  // Hard opt-out: user prefers reduced motion
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-
   // Phones/tablets. userAgentData.mobile covers Chromium; the UA pattern covers
   // the rest. iPadOS in desktop mode reports a Mac user agent, so it is caught
   // by the Mac check plus a touch-point count (real Macs report none).

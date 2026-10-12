@@ -11,6 +11,7 @@ from __future__ import annotations
 import array
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,8 +63,10 @@ class HotSwapFFmpegTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="jmm-hotswap-") as temp:
             work = Path(temp)
             source = PROCESSING.read_text(encoding="utf-8")
-            second_source = source.replace("volume@makeup=8dB", "volume@makeup=2dB")
-            self.assertNotEqual(second_source, source, "the makeup gain to change is missing from processing.ffmpeg")
+            makeup = re.compile(r"volume@makeup=-?[\d.]+dB")
+            self.assertIsNotNone(makeup.search(source), "the makeup gain to change is missing from processing.ffmpeg")
+            second_source = makeup.sub("volume@makeup=2dB", source, count=1)
+            self.assertNotEqual(second_source, source, "the makeup gain is already 2 dB in processing.ffmpeg")
             env = {
                 "FFMPEG_BIN": FFMPEG,
                 "RTMP_URL": str(work / "stream.flv"),
