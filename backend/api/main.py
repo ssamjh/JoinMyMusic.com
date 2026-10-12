@@ -3,12 +3,14 @@ import json
 import logging
 import re
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -23,6 +25,7 @@ AUDIO_CONTROL_URL = os.environ.get("AUDIO_CONTROL_URL", "http://audio:8090").rst
 ALLOWED_ORIGINS = os.environ.get(
     "ALLOWED_ORIGINS", "https://joinmymusic.com,https://www.joinmymusic.com"
 )
+from automate import AutomateController
 from librespot import LibrespotClient
 from spotify import COVER_ID_RE, SpotifyClient
 from sse import (
@@ -31,7 +34,10 @@ from sse import (
     cleanup_listeners,
     current_track_snapshot,
     cleanup_old_requests,
+    REALTIME_SNAPSHOT_MAX_AGE,
+    latest_snapshot,
     live_input_state,
+    spotify_playing,
     live_metadata_for_clients,
     committed_metadata_for_clients,
     poll_live_input,
@@ -50,6 +56,7 @@ from storage import (
     check_rate_limit,
     check_submission_id,
     delete_ban,
+    delete_pending_request,
     delete_song_ban,
     get_history,
     get_request,
@@ -58,12 +65,16 @@ from storage import (
     is_banned,
     is_song_banned,
     list_admin_requests,
+    list_deleted_requests,
     list_bans,
     list_song_bans,
     normalize_ban_ip,
     normalize_songid,
     listeners,
     read_auto_approve,
+    read_automate,
+    move_pending_request,
+    restore_deleted_request,
     set_request_status,
     upcoming_queue,
     vote_skips,
@@ -77,6 +88,8 @@ logger = logging.getLogger(__name__)
 
 spotify_client = SpotifyClient()
 librespot = LibrespotClient(spotify_client)
+automate_controller = AutomateController(librespot)
+request_moderation_lock = asyncio.Lock()
 
 # Shared outbound HTTP clients, one per upstream. Created in the lifespan and closed on
 # shutdown; http_client() also creates one on first use so code paths that run without
@@ -112,6 +125,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(cleanup_listeners(listeners)),
         asyncio.create_task(refresh_token_loop(spotify_client)),
         asyncio.create_task(cleanup_old_requests()),
+        asyncio.create_task(automate_controller.run()),
     ]
     try:
         yield
@@ -451,14 +465,13 @@ async def add_request(payload: RequestPayload, request: Request):
 
     auto_approve = (await asyncio.to_thread(read_auto_approve)) == "true"
 
+    status = "pending"
+    message = "Thanks, your request has been added to the queue for approval!"
     if auto_approve:
         await librespot.add_to_queue(payload.uri)
         await refresh_queue_now(librespot)
         status = "approved"
         message = "Your request has been automatically approved and added to the queue!"
-    else:
-        status = "pending"
-        message = "Thanks, your request has been added to the queue for approval!"
 
     await asyncio.to_thread(
         insert_request,
@@ -473,7 +486,6 @@ async def add_request(payload: RequestPayload, request: Request):
             status,
         ),
     )
-
     return {"success": True, "message": message}
 
 # ─── Vote Skip ───────────────────────────────────────────────────────────────
@@ -614,6 +626,32 @@ ADMIN_HTML = """<!DOCTYPE html>
         .section-header { font-size: 1rem; font-weight: 600; text-transform: uppercase;
                           letter-spacing: 0.05em; color: var(--bs-secondary-color);
                           margin: 1rem 0 0.5rem; border-bottom: 1px solid var(--bs-border-color); padding-bottom: 0.25rem; }
+        /* Deck: transport, toggles, progress and the input graph in one card. */
+        .jmm-deck .deck-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+        .jmm-deck .deck-controls .btn { min-height: 3rem; font-size: 1rem; font-weight: 600; }
+        .jmm-deck .btn-toggle { background: transparent; color: var(--bs-body-color); border: 2px solid var(--bs-border-color); }
+        .jmm-deck .btn-toggle[aria-pressed="true"] { color: #fff; border-color: transparent; }
+        #automateToggle[aria-pressed="true"] { background: #198754; }
+        #st-listen[aria-pressed="true"] { background: #0d6efd; }
+        #st-mic-toggle[aria-pressed="true"] { background: #dc3545; animation: deck-live 1.2s ease-in-out infinite; }
+        @keyframes deck-live { 50% { box-shadow: 0 0 0 4px rgba(220, 53, 69, 0.35); } }
+        @media (min-width: 768px) { .jmm-deck .deck-controls { grid-template-columns: repeat(6, 1fr); } }
+        .jmm-deck .deck-aux { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin-top: 0.6rem; font-size: 0.8rem; }
+        .jmm-deck .deck-aux label { white-space: nowrap; margin: 0; }
+        .jmm-deck .deck-vol { width: 8rem; margin: 0; }
+        .jmm-deck .deck-mic { width: auto; max-width: 16rem; }
+        .jmm-deck .deck-meter { width: 7rem; }
+        .jmm-deck .deck-now { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.75rem; }
+        .jmm-deck .deck-upnext { display: flex; gap: 0.5rem; align-items: center; min-width: 0; margin-top: 0.6rem; font-size: 0.8rem; color: var(--bs-secondary-color); }
+        .jmm-deck .deck-upnext[hidden] { display: none; }
+        .jmm-deck .deck-upnext-cover { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+        .jmm-deck .deck-upnext-blank { width: 32px; height: 32px; border-radius: 4px; flex-shrink: 0; }
+        .jmm-deck .deck-upnext-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .jmm-deck .deck-bar { height: 6px; border-radius: 3px; background: var(--bs-border-color); overflow: hidden; }
+        .jmm-deck .deck-bar-fill { height: 100%; width: 0; background: #0d6efd; }
+        .jmm-deck .deck-time { font-variant-numeric: tabular-nums; }
+        .jmm-deck .deck-input { margin-top: 0.75rem; }
+        #request-action-status:empty { display: none; }
     </style>
 </head>
 <body>
@@ -631,6 +669,58 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Deck: transport, toggles, the Spotify progress and the input graph. The listen and mic
+         controls are bound by studio.js, which talks to the audio container through the admin proxy.
+         The input graph is the audio monitor's input view; studio.js shows it only while Listen is on. -->
+
+    <div id="deck" class="card jmm-deck jmm-studio" data-base="/admin/audio/">
+        <div class="card-body">
+            <div class="deck-controls">
+                <button id="deckPrev" type="button" class="btn btn-outline-secondary" title="Previous track">&#9664;&#9664; Prev</button>
+                <button id="deckPlay" type="button" class="btn btn-outline-primary" title="Play or pause">Play / Pause</button>
+                <button id="deckNext" type="button" class="btn btn-outline-secondary" title="Next track">Next &#9654;&#9654;</button>
+                <button id="automateToggle" type="button" class="btn btn-toggle" aria-pressed="false"
+                        title="Carry playback on into the next song">Automate: Off</button>
+                <button id="st-listen" type="button" class="btn btn-toggle" aria-pressed="false"
+                        title="Listen to the Spotify input, before processing">Listen: Off</button>
+                <button id="st-mic-toggle" type="button" class="btn btn-toggle" aria-pressed="false"
+                        title="Send the microphone into the audio input">Mic: Off</button>
+            </div>
+            <div class="deck-aux">
+                <label for="st-vol">Listen <span id="st-volVal" class="font-monospace">5%</span></label>
+                <input id="st-vol" type="range" class="form-range deck-vol" min="0" max="100" value="5">
+                <select id="st-mic" class="form-select form-select-sm deck-mic" aria-label="Microphone device"
+                        title="Use headphones: the speakers would feed back into the mic"></select>
+                <div class="meter deck-meter" aria-hidden="true"><div id="st-meter"></div></div>
+                <span id="st-listenStatus" class="text-secondary" role="status">Off</span>
+                <span id="st-micStatus" class="text-secondary" role="status">Off</span>
+            </div>
+            <div class="deck-now">
+                <img id="deckCover" class="album-art" alt="" hidden>
+                <div id="deckCoverBlank" class="album-art-placeholder bg-secondary-subtle"></div>
+                <div class="flex-grow-1 overflow-hidden">
+                    <div class="d-flex justify-content-between align-items-baseline gap-2">
+                        <div id="deckTitle" class="track-title text-truncate">Nothing playing</div>
+                        <span id="deckState" class="badge bg-secondary">Unknown</span>
+                    </div>
+                    <div id="deckArtist" class="track-meta text-truncate"></div>
+                    <div class="deck-bar mt-1"><div id="deckFill" class="deck-bar-fill"></div></div>
+                    <div class="d-flex justify-content-between track-meta deck-time mt-1">
+                        <span id="deckElapsed">0:00</span><span id="deckDuration">0:00</span>
+                    </div>
+                </div>
+            </div>
+            <div id="deckUpNext" class="deck-upnext" hidden>
+                <img id="deckUpNextCover" class="deck-upnext-cover" alt="" hidden>
+                <div id="deckUpNextBlank" class="deck-upnext-blank bg-secondary-subtle"></div>
+                <span class="flex-shrink-0">Up next:</span>
+                <span id="deckUpNextText" class="deck-upnext-text"></span>
+            </div>
+            <div id="deckInput" class="deck-input" data-jmm-monitor data-embedded data-input-only data-base="/admin/audio/" hidden></div>
+        </div>
+    </div>
+    <script src="/admin/audio/studio.js"></script>
+
     <!-- Audio monitor: collapsed by default; it loads and streams meters only while shown. -->
     <div class="section-header d-flex align-items-center justify-content-between mt-0">
         <span>Audio</span>
@@ -644,7 +734,14 @@ ADMIN_HTML = """<!DOCTYPE html>
         <!-- Requests column -->
         <div class="col-lg-8">
             <div class="section-header">Pending Requests <span id="pending-count" class="badge bg-warning text-dark ms-1">0</span></div>
+            <p class="small text-secondary mb-2">Move requests to set approval order. Each approval sends that song to the player queue.</p>
+            <div id="request-action-status" class="small mb-2" role="status" aria-live="polite"></div>
             <div id="pending-list"></div>
+
+            <details class="mt-3">
+                <summary class="section-header">Deleted Requests <span id="deleted-count" class="badge bg-secondary ms-1">0</span></summary>
+                <div id="deleted-list" class="mt-2"></div>
+            </details>
 
             <div class="section-header mt-3">Approved Requests <span id="approved-count" class="badge bg-success ms-1">0</span></div>
             <div id="approved-list"></div>
@@ -663,36 +760,51 @@ ADMIN_HTML = """<!DOCTYPE html>
 <script>
     const authKey = new URLSearchParams(window.location.search).get('key') || '';
     let requestsById = {};
+    let requestMutationInFlight = false;
 
     // Audio monitor (meters, bypasses, processing graph) from the audio container, through
     // the admin proxy. Nothing is fetched until it is first shown, and hiding it stops the
     // meter stream and polling. Its calls carry the admin key like the rest of this page.
+    let monitorScript = null;
+    // Loads the monitor's styles and script once, then mounts the monitor into box and resolves
+    // with its { start, stop } handle. The studio deck's input graph uses the same loader.
+    function loadAudioMonitor(box) {
+        if (!monitorScript) {
+            monitorScript = new Promise((resolve, reject) => {
+                const q = authKey ? '?key=' + encodeURIComponent(authKey) : '';
+                const css = document.createElement('link');
+                css.rel = 'stylesheet';
+                css.href = '/admin/audio/monitor.css' + q;
+                document.head.append(css);
+                const js = document.createElement('script');
+                js.src = '/admin/audio/monitor.js' + q;
+                js.onload = resolve;
+                js.onerror = () => { monitorScript = null; reject(new Error('the audio monitor could not load')); };
+                document.head.append(js);
+            });
+        }
+        return monitorScript.then(() => {
+            box.dataset.key = authKey;
+            return window.JmmMonitor.mount(box);
+        });
+    }
+    window.loadAudioMonitor = loadAudioMonitor;
+
     (() => {
         const box = document.getElementById('audioMonitor');
         const toggle = document.getElementById('audioToggle');
-        let requested = false;
         toggle.addEventListener('click', () => {
             const show = box.hidden;
             box.hidden = !show;
             toggle.textContent = show ? 'Hide' : 'Show';
             toggle.setAttribute('aria-expanded', String(show));
-            if (box.jmmMonitor) {
-                if (show) box.jmmMonitor.start(); else box.jmmMonitor.stop();
+            if (!show) {
+                if (box.jmmMonitor) box.jmmMonitor.stop();
                 return;
             }
-            if (!show || requested) return;
-            requested = true;
-            const q = authKey ? '?key=' + encodeURIComponent(authKey) : '';
-            box.dataset.key = authKey;
-            const css = document.createElement('link');
-            css.rel = 'stylesheet';
-            css.href = '/admin/audio/monitor.css' + q;
-            document.head.append(css);
-            const js = document.createElement('script');
-            js.src = '/admin/audio/monitor.js' + q;
-            // Hidden again before the script arrived: start, then stop at once.
-            js.onload = () => { if (box.hidden && box.jmmMonitor) box.jmmMonitor.stop(); };
-            document.body.append(js);
+            // Hidden again before the monitor loaded: the check keeps it from starting.
+            loadAudioMonitor(box).then((monitor) => { if (!box.hidden) monitor.start(); })
+                .catch((err) => console.error(err));
         });
     })();
 
@@ -702,11 +814,11 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     function renderRequests(requests, pending) {
         if (requests.length === 0) return '<p class="text-secondary">None.</p>';
-        return requests.map(r => `
+        return requests.map((r, index) => `
             <div class="card ${pending ? '' : 'border-success'}">
                 <div class="card-body d-flex gap-2 align-items-center">
                     ${r.cover_url
-                        ? `<img src="${esc(r.cover_url)}" class="album-art">`
+                        ? `<img src="${esc(r.cover_url)}" class="album-art" alt="">`
                         : `<div class="album-art-placeholder bg-secondary-subtle"></div>`}
                     <div class="flex-grow-1 overflow-hidden">
                         <div class="track-title text-truncate">${esc(r.track_name || r.spotify_uri)}
@@ -718,8 +830,10 @@ ADMIN_HTML = """<!DOCTYPE html>
                     </div>
                     <div class="d-flex flex-column gap-1">
                         ${pending ? `
-                        <button class="btn btn-success btn-sm" onclick="approveRequest(${r.id})">&#10003;</button>
-                        <button class="btn btn-danger btn-sm" onclick="deleteRequest(${r.id})">&#10005;</button>` : ''}
+                        ${index > 0 ? `<button class="btn btn-outline-secondary btn-sm" aria-label="Move ${esc(r.track_name || 'request')} up" title="Move up" ${requestMutationInFlight ? 'disabled' : ''} onclick="moveRequest(${r.id}, 'up')">&#8593;</button>` : ''}
+                        ${index < requests.length - 1 ? `<button class="btn btn-outline-secondary btn-sm" aria-label="Move ${esc(r.track_name || 'request')} down" title="Move down" ${requestMutationInFlight ? 'disabled' : ''} onclick="moveRequest(${r.id}, 'down')">&#8595;</button>` : ''}
+                        <button class="btn btn-success btn-sm" aria-label="Approve ${esc(r.track_name || 'request')}" ${requestMutationInFlight ? 'disabled' : ''} onclick="approveRequest(${r.id})">Approve</button>
+                        <button class="btn btn-danger btn-sm" aria-label="Delete ${esc(r.track_name || 'request')}" ${requestMutationInFlight ? 'disabled' : ''} onclick="deleteRequest(${r.id})">Delete</button>` : ''}
                         <button class="btn btn-outline-danger btn-sm" title="Ban requester IP" ${r.requester_banned ? 'disabled' : ''} onclick="banUser('${esc(r.requester_ip || '')}', '')">&#128683;</button>
                         <button class="btn btn-outline-warning btn-sm" title="Ban this song" ${r.song_banned ? 'disabled' : ''} onclick="banSong(${r.id})">&#9835;</button>
                     </div>
@@ -775,10 +889,11 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     async function loadData() {
-        const [reqRes, lisRes, settingsRes] = await Promise.all([
+        const [reqRes, lisRes, settingsRes, deletedRes] = await Promise.all([
             fetch('/admin/requests?key=' + authKey),
             fetch('/admin/listeners?key=' + authKey),
             fetch('/admin/settings?key=' + authKey),
+            fetch('/admin/requests/deleted?key=' + authKey),
         ]);
         if (!reqRes.ok) {
             document.querySelector('.container-fluid').innerHTML = '<p class="text-danger mt-4">Access denied.</p>';
@@ -787,6 +902,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         const requests = await reqRes.json();
         const listenersData = await lisRes.json();
         const settings = await settingsRes.json();
+        const deleted = deletedRes.ok ? await deletedRes.json() : [];
 
         requestsById = {};
         requests.forEach(r => { requestsById[r.id] = r; });
@@ -798,6 +914,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
         document.getElementById('pending-count').textContent = pending.length;
         document.getElementById('approved-count').textContent = approved.length;
+        document.getElementById('deleted-count').textContent = deleted.length;
         // Match the public count (people only), noting kiosks separately.
         const displays = listenersData.filter(l => l.display).length;
         document.getElementById('listener-count').textContent =
@@ -805,22 +922,54 @@ ADMIN_HTML = """<!DOCTYPE html>
 
         document.getElementById('pending-list').innerHTML = renderRequests(pending, true);
         document.getElementById('approved-list').innerHTML = renderRequests(approved, false);
+        document.getElementById('deleted-list').innerHTML = deleted.length ? deleted.map(r => `
+            <div class="card">
+                <div class="card-body d-flex gap-2 align-items-center">
+                    ${r.cover_url ? `<img src="${esc(r.cover_url)}" class="album-art" alt="">` : '<div class="album-art-placeholder bg-secondary-subtle"></div>'}
+                    <div class="flex-grow-1 overflow-hidden">
+                        <div class="track-title text-truncate">${esc(r.track_name || r.spotify_uri)} ${r.song_banned ? '<span class="badge bg-danger">song banned</span>' : ''}</div>
+                        <div class="track-meta text-truncate">${esc(r.artist_name || '')} &middot; From ${esc(r.requester_name || 'Anonymous')} &middot; ${esc(r.created_at || '')}</div>
+                    </div>
+                    <button class="btn btn-outline-primary btn-sm" aria-label="Restore ${esc(r.track_name || 'request')}" ${requestMutationInFlight || r.song_banned ? 'disabled' : ''} onclick="restoreRequest(${r.id})">Restore</button>
+                </div>
+            </div>`).join('') : '<p class="text-secondary">None.</p>';
         document.getElementById('listener-list').innerHTML = renderListeners(listenersData);
     }
 
-    async function approveRequest(id) {
-        const res = await fetch('/admin/requests/' + id + '/approve?key=' + authKey, {
-            method: 'POST', headers: {'Content-Type': 'application/json'}
-        });
-        const data = await res.json();
-        if (!data.success) alert(data.detail || 'Failed to approve');
-        loadData();
+    async function moderateRequest(id, action, options = {}) {
+        if (requestMutationInFlight) return;
+        requestMutationInFlight = true;
+        const status = document.getElementById('request-action-status');
+        status.className = 'small text-secondary';
+        status.textContent = 'Updating request…';
+        document.querySelectorAll('#pending-list button, #deleted-list button').forEach(button => { button.disabled = true; });
+        try {
+            const res = await fetch('/admin/requests/' + id + action + '?key=' + encodeURIComponent(authKey), {
+                method: action === '' ? 'DELETE' : 'POST',
+                signal: AbortSignal.timeout(15000),
+                ...(options.body ? {headers: {'Content-Type': 'application/json'}, body: JSON.stringify(options.body)} : {})
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || 'Request update failed');
+            status.textContent = options.success || 'Request updated.';
+        } catch (error) {
+            status.className = 'small text-danger';
+            status.textContent = error.message || 'Request update failed';
+        } finally {
+            requestMutationInFlight = false;
+            try {
+                await loadData();
+            } catch (error) {
+                status.className = 'small text-danger';
+                status.textContent = 'Request action finished, but the lists could not refresh. ' + (error.message || '');
+            }
+        }
     }
 
-    async function deleteRequest(id) {
-        await fetch('/admin/requests/' + id + '?key=' + authKey, {method: 'DELETE'});
-        loadData();
-    }
+    function approveRequest(id) { return moderateRequest(id, '/approve', {success: 'Approved and added to the player queue.'}); }
+    function deleteRequest(id) { return moderateRequest(id, '', {success: 'Request moved to Deleted Requests.'}); }
+    function moveRequest(id, direction) { return moderateRequest(id, '/move', {body: {direction}, success: 'Request order updated.'}); }
+    function restoreRequest(id) { return moderateRequest(id, '/restore', {success: 'Request restored to the end of the pending list.'}); }
 
     document.getElementById('autoApproveToggle').addEventListener('change', async function() {
         await fetch('/admin/auto-approve?key=' + authKey, {
@@ -911,6 +1060,164 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     // The admin_key cookie keeps navigation authenticated; only carry the key
     // in the URL when this page itself was opened with one.
+    // Deck: transport, automate and the Spotify progress bar. Track and playing state come from
+    // the undelayed poller, polled every second. The progress bar is interpolated between polls
+    // from the position and the time it arrived. The input graph under it is studio.js's concern.
+    const deckPlay = document.getElementById('deckPlay');
+    const automateButton = document.getElementById('automateToggle');
+    const deckFill = document.getElementById('deckFill');
+    const deckElapsed = document.getElementById('deckElapsed');
+    const deckDuration = document.getElementById('deckDuration');
+    const deckState = document.getElementById('deckState');
+    const deckTitle = document.getElementById('deckTitle');
+    const deckArtist = document.getElementById('deckArtist');
+    const deckCover = document.getElementById('deckCover');
+    const deckCoverBlank = document.getElementById('deckCoverBlank');
+    const deckUpNext = document.getElementById('deckUpNext');
+    const deckUpNextText = document.getElementById('deckUpNextText');
+    const deckUpNextCover = document.getElementById('deckUpNextCover');
+    const deckUpNextBlank = document.getElementById('deckUpNextBlank');
+
+    let deckPlaying = null;   // true, false, or null before the first poll
+    let deckTrack = null;     // {songid, title, artist, cover, progress_ms, duration_ms}
+    let deckAnchor = null;    // {progress_ms, at}: position at the moment the poll was read
+    let deckSongId = null;
+    let deckNextId = null;
+    let deckShownSecond = -1;
+
+    function fmtTime(ms) {
+        const s = Math.max(0, Math.floor(ms / 1000));
+        return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    }
+
+    function renderAutomate(on) {
+        automateButton.textContent = 'Automate: ' + (on ? 'On' : 'Off');
+        automateButton.setAttribute('aria-pressed', String(on));
+    }
+
+    function renderPlayState() {
+        deckPlay.innerHTML = deckPlaying === true ? '&#10074;&#10074; Pause'
+            : deckPlaying === false ? '&#9654; Play' : 'Play / Pause';
+        deckState.textContent = deckPlaying === true ? 'Playing' : deckPlaying === false ? 'Paused' : 'Unknown';
+        deckState.className = 'badge ' + (deckPlaying === true ? 'bg-success' : 'bg-secondary');
+    }
+
+    function renderTrack(track) {
+        const songId = track ? track.songid : null;
+        if (songId !== deckSongId) {
+            deckSongId = songId;
+            deckTitle.textContent = track ? track.title || 'Unknown title' : 'Nothing playing';
+            deckArtist.textContent = track ? track.artist || '' : '';
+            if (track && track.cover) {
+                deckCover.src = track.cover;
+                deckCover.hidden = false;
+                deckCoverBlank.hidden = true;
+            } else {
+                deckCover.removeAttribute('src');
+                deckCover.hidden = true;
+                deckCoverBlank.hidden = false;
+            }
+        }
+        deckDuration.textContent = track ? fmtTime(track.duration_ms) : '0:00';
+    }
+
+    // The queued song, one line under the deck. Text is set with textContent, so titles are not parsed as HTML.
+    function renderUpNext(next) {
+        const nextId = next ? next.songid : null;
+        if (nextId !== deckNextId) {
+            deckNextId = nextId;
+            if (next && next.cover) {
+                deckUpNextCover.src = next.cover;
+                deckUpNextCover.hidden = false;
+                deckUpNextBlank.hidden = true;
+            } else {
+                deckUpNextCover.removeAttribute('src');
+                deckUpNextCover.hidden = true;
+                deckUpNextBlank.hidden = false;
+            }
+        }
+        deckUpNext.hidden = !next;
+        if (!next) return;
+        const text = (next.title || 'Unknown title') + (next.artist ? ' — ' + next.artist : '');
+        deckUpNextText.textContent = text;
+        deckUpNextText.title = text;
+    }
+
+    // Position now: the polled position, moved on by the time since the poll while playing.
+    function deckPosition() {
+        if (!deckTrack || !deckAnchor) return 0;
+        const moved = deckPlaying === true ? performance.now() - deckAnchor.at : 0;
+        const pos = deckAnchor.progress_ms + moved;
+        return Math.min(Math.max(0, pos), deckTrack.duration_ms || pos);
+    }
+
+    async function pollPlayback() {
+        const res = await fetch('/admin/playback?key=' + authKey);
+        if (!res.ok) return;
+        const play = await res.json();
+        deckPlaying = play.playing === true ? true : play.playing === false ? false : null;
+        deckTrack = play.track || null;
+        deckAnchor = deckTrack ? {progress_ms: deckTrack.progress_ms, at: performance.now()} : null;
+        renderTrack(deckTrack);
+        renderUpNext(play.next || null);
+        renderPlayState();
+    }
+
+    async function loadSettings() {
+        const res = await fetch('/admin/settings?key=' + authKey);
+        if (!res.ok) return;
+        const settings = await res.json();
+        renderAutomate(settings.automate !== 'false');
+    }
+
+    async function playerControl(action) {
+        const res = await fetch('/admin/player/' + action + '?key=' + authKey, {method: 'POST'});
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Playback command failed');
+        }
+        setTimeout(pollPlayback, 300);
+    }
+
+    document.getElementById('deckPrev').addEventListener('click', () => playerControl('prev'));
+    document.getElementById('deckNext').addEventListener('click', () => playerControl('next'));
+    deckPlay.addEventListener('click', () => playerControl('playpause'));
+
+    automateButton.addEventListener('click', async function() {
+        const res = await fetch('/admin/automate?key=' + authKey, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: this.getAttribute('aria-pressed') !== 'true'})
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.detail || 'Failed to change automate');
+        }
+        loadSettings();
+    });
+
+    function frame(now) {
+        deckFill.style.width = deckTrack && deckTrack.duration_ms
+            ? (deckPosition() / deckTrack.duration_ms * 100).toFixed(2) + '%' : '0%';
+        const second = Math.floor(deckPosition() / 1000);
+        if (second !== deckShownSecond) {
+            deckShownSecond = second;
+            deckElapsed.textContent = fmtTime(deckPosition());
+        }
+        requestAnimationFrame(frame);
+    }
+
+    function applyVisibility() {
+        if (document.visibilityState === 'visible') pollPlayback();
+    }
+
+    document.addEventListener('visibilitychange', applyVisibility);
+    setInterval(() => { if (document.visibilityState === 'visible') pollPlayback(); }, 1000);
+    setInterval(() => { if (document.visibilityState === 'visible') loadSettings(); }, 5000);
+    loadSettings();
+    requestAnimationFrame(frame);
+    applyVisibility();
+
     document.getElementById('bansLink').href = '/admin/bans/view' + (authKey ? '?key=' + encodeURIComponent(authKey) : '');
 
     loadData();
@@ -1079,17 +1386,23 @@ BANS_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-# The audio monitor drawn in the admin panel. Its script and styles live here; its data
-# comes from the audio container's control API, which is reachable only over the Compose
-# network. Only admins reach either, and only these control paths, by method.
+# The audio monitor and studio drawn in the admin panel. Their scripts and styles live here;
+# their data comes from the audio container's control API, which is reachable only over the
+# Compose network. Only admins reach either, and only these control paths, by method.
 AUDIO_MONITOR_FILES = {
     "monitor.js": ("audio-monitor.js", "text/javascript; charset=utf-8"),
     "monitor.css": ("audio-monitor.css", "text/css; charset=utf-8"),
+    "studio.js": ("studio.js", "text/javascript; charset=utf-8"),
+    "studio.css": ("studio.css", "text/css; charset=utf-8"),
 }
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 AUDIO_CONTROL_ROUTES = {
     "GET": {"api/state", "api/graph", "api/meters"},
     "POST": {"api/bypass", "api/agc", "api/graph", "api/graph/reload"},
+}
+# Routes whose body is relayed as it arrives, with no read timeout, and their media types.
+AUDIO_STREAM_ROUTES = {
+    "api/meters": "text/event-stream",
 }
 
 
@@ -1106,14 +1419,14 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
     if path not in AUDIO_CONTROL_ROUTES.get(request.method, set()):
         raise HTTPException(status_code=404, detail="Not found")
     url = f"{AUDIO_CONTROL_URL}/{path}"
-    if path == "api/meters":
-        # Server-sent events: relay the stream as it arrives.
+    if path in AUDIO_STREAM_ROUTES:
+        # Meters (server-sent events): relay the stream as it arrives.
         client = http_client("audio")
-        # No read timeout: the stream stays open for as long as the viewer watches.
-        meter_timeout = httpx.Timeout(10, read=None)
+        # No read timeout: the stream stays open for as long as the viewer listens or watches.
+        stream_timeout = httpx.Timeout(10, read=None)
         try:
             upstream = await client.send(
-                client.build_request("GET", url, timeout=meter_timeout), stream=True
+                client.build_request("GET", url, timeout=stream_timeout), stream=True
             )
         except httpx.HTTPError:
             return JSONResponse({"error": "audio control is unreachable"}, status_code=502)
@@ -1129,7 +1442,7 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
         return StreamingResponse(
             relay(),
             status_code=upstream.status_code,
-            media_type="text/event-stream",
+            media_type=AUDIO_STREAM_ROUTES[path],
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
     headers = {}
@@ -1152,6 +1465,220 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
     )
 
 
+# Studio audio rides WebSockets. The microphone (s16le mono 44.1 kHz) is relayed into the
+# control API's POST /api/mic; the listen feed (s16le stereo 44.1 kHz) is relayed out of its
+# GET /api/listen. Each backlog holds 0.5 s; past that the oldest audio is dropped, so a slow
+# peer costs audio instead of adding latency.
+MIC_MAX_BACKLOG_BYTES = 44100
+MIC_UPSTREAM_TIMEOUT = 10
+LISTEN_MAX_BACKLOG_BYTES = 88200
+LISTEN_MESSAGE_BYTES = 3528  # 20 ms of stereo 16-bit 44.1 kHz; a multiple of the 4-byte frame
+LISTEN_DRAIN_TIMEOUT = 2
+
+
+class ByteBacklog:
+    """Byte-bounded FIFO of audio chunks, read as the body of one upstream request or as WebSocket messages."""
+
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max_bytes
+        self.chunks: deque = deque()
+        self.size = 0
+        self.closed = False
+        self.ready = asyncio.Event()
+
+    def put(self, chunk: bytes) -> None:
+        self.chunks.append(chunk)
+        self.size += len(chunk)
+        # Keep the newest chunk even if it alone is over the limit.
+        while self.size > self.max_bytes and len(self.chunks) > 1:
+            self.size -= len(self.chunks.popleft())
+        self.ready.set()
+
+    def close(self) -> None:
+        self.closed = True
+        self.ready.set()
+
+    async def get(self) -> Optional[bytes]:
+        while not self.chunks:
+            if self.closed:
+                return None
+            self.ready.clear()
+            await self.ready.wait()
+        chunk = self.chunks.popleft()
+        self.size -= len(chunk)
+        return chunk
+
+    async def body(self):
+        while (chunk := await self.get()) is not None:
+            yield chunk
+
+
+def is_admin_websocket(websocket: WebSocket) -> bool:
+    """require_admin for a WebSocket handshake, taking the key from the same places."""
+    key = (
+        websocket.headers.get("X-Auth-Key")
+        or websocket.query_params.get("key")
+        or websocket.cookies.get("admin_key")
+    )
+    return key == AUTH_KEY
+
+
+def is_same_origin_websocket(websocket: WebSocket) -> bool:
+    """Only the API's own origin may open the mic. Browsers always send Origin on a WebSocket,
+    and a page on another site would otherwise ride on the admin cookie. Only the host is
+    compared, so this holds whether or not a TLS-terminating proxy forwards the scheme."""
+    origin = websocket.headers.get("origin")
+    host = websocket.headers.get("host")
+    if not origin or not host:
+        return False
+    return urlsplit(origin).netloc.lower() == host.lower()
+
+
+async def relay_mic(backlog: ByteBacklog) -> Optional[str]:
+    """Send the backlog to the control API as one chunked request. Returns why the session
+    ended early, or None when the body ended normally (a newer session replaced this one)."""
+    try:
+        upstream = await http_client("audio").post(
+            f"{AUDIO_CONTROL_URL}/api/mic",
+            content=backlog.body(),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+    except httpx.ConnectError:
+        return "audio control is unreachable"
+    except httpx.HTTPError:
+        # The control API can answer and close while the body is still being written.
+        return "audio control closed the mic connection"
+    if upstream.status_code == 404:
+        return "mic input is disabled"
+    if upstream.status_code != 200:
+        return f"audio control returned {upstream.status_code}"
+    return None
+
+
+async def receive_mic(websocket: WebSocket, backlog: ByteBacklog) -> None:
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+        if message.get("bytes"):
+            backlog.put(message["bytes"])
+
+
+@app.websocket("/admin/audio/mic")
+async def admin_audio_mic(websocket: WebSocket):
+    if not (is_same_origin_websocket(websocket) and is_admin_websocket(websocket)):
+        # Closing before accept refuses the handshake; the browser sees a failed connection.
+        await websocket.close(code=1008, reason="Forbidden")
+        return
+    await websocket.accept()
+    backlog = ByteBacklog(MIC_MAX_BACKLOG_BYTES)
+    upstream = asyncio.create_task(relay_mic(backlog))
+    receiver = asyncio.create_task(receive_mic(websocket, backlog))
+    await asyncio.wait({upstream, receiver}, return_when=asyncio.FIRST_COMPLETED)
+    if receiver.done():
+        # The studio closed the socket: end the upstream body and let the request finish.
+        backlog.close()
+        await asyncio.wait({upstream}, timeout=MIC_UPSTREAM_TIMEOUT)
+        upstream.cancel()
+        await asyncio.gather(upstream, return_exceptions=True)
+        return
+    # The upstream session ended first: mic disabled, unreachable, or replaced.
+    receiver.cancel()
+    backlog.close()
+    reason = upstream.result()
+    try:
+        if reason is None:
+            await websocket.close(code=1000, reason="mic session replaced")
+        else:
+            await websocket.close(code=1011, reason=reason)
+    except (RuntimeError, WebSocketDisconnect):
+        pass
+
+
+async def read_listen(upstream: httpx.Response, backlog: ByteBacklog) -> Optional[str]:
+    """Cut the upstream PCM into whole 20 ms messages. A partial message waits for the next chunk,
+    so every message starts on a frame boundary. Returns why the feed failed, or None at the end."""
+    pending = b""
+    try:
+        async for chunk in upstream.aiter_raw():
+            data = pending + chunk
+            usable = len(data) - len(data) % LISTEN_MESSAGE_BYTES
+            for start in range(0, usable, LISTEN_MESSAGE_BYTES):
+                backlog.put(data[start:start + LISTEN_MESSAGE_BYTES])
+            pending = data[usable:]
+    except httpx.HTTPError:
+        return "audio control closed the listen feed"
+    return None
+
+
+async def send_listen(websocket: WebSocket, backlog: ByteBacklog) -> None:
+    async for chunk in backlog.body():
+        await websocket.send_bytes(chunk)
+
+
+async def watch_disconnect(websocket: WebSocket) -> None:
+    """The listener sends nothing; this only notices when the socket goes away."""
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+
+
+async def close_socket(websocket: WebSocket, code: int, reason: str) -> None:
+    try:
+        await websocket.close(code=code, reason=reason)
+    except (RuntimeError, WebSocketDisconnect):
+        pass
+
+
+@app.websocket("/admin/audio/listen")
+async def admin_audio_listen(websocket: WebSocket):
+    if not (is_same_origin_websocket(websocket) and is_admin_websocket(websocket)):
+        await websocket.close(code=1008, reason="Forbidden")
+        return
+    await websocket.accept()
+    client = http_client("audio")
+    try:
+        # No read timeout: the feed stays open for as long as the studio listens.
+        upstream = await client.send(
+            client.build_request("GET", f"{AUDIO_CONTROL_URL}/api/listen", timeout=httpx.Timeout(10, read=None)),
+            stream=True,
+        )
+    except httpx.HTTPError:
+        await close_socket(websocket, 1011, "audio control is unreachable")
+        return
+    if upstream.status_code != 200:
+        await upstream.aclose()
+        await close_socket(websocket, 1011, f"audio control returned {upstream.status_code}")
+        return
+
+    backlog = ByteBacklog(LISTEN_MAX_BACKLOG_BYTES)
+    reader = asyncio.create_task(read_listen(upstream, backlog))
+    sender = asyncio.create_task(send_listen(websocket, backlog))
+    watcher = asyncio.create_task(watch_disconnect(websocket))
+    tasks = {reader, sender, watcher}
+    error = None
+    try:
+        finished, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if reader in finished:
+            error = reader.result()
+            if error is None:
+                # The feed ended cleanly: send what is still queued, then close.
+                backlog.close()
+                await asyncio.wait({sender}, timeout=LISTEN_DRAIN_TIMEOUT)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await upstream.aclose()
+    if reader in finished:
+        # The upstream ended first: 1011 with the reason on failure, 1000 on a clean end.
+        if error is None:
+            await close_socket(websocket, 1000, "listen feed ended")
+        else:
+            await close_socket(websocket, 1011, error)
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_panel(request: Request):
     return admin_page_response(request, ADMIN_HTML)
@@ -1162,25 +1689,70 @@ async def admin_get_requests(_: None = Depends(require_admin)):
     return await asyncio.to_thread(list_admin_requests)
 
 
+@app.get("/admin/requests/deleted")
+async def admin_get_deleted_requests(_: None = Depends(require_admin)):
+    return await asyncio.to_thread(list_deleted_requests)
+
+
 @app.post("/admin/requests/{request_id}/approve")
 async def admin_approve_request(request_id: int, _: None = Depends(require_admin)):
-    try:
-        row = await asyncio.to_thread(get_request, request_id)
-        if not row:
-            raise HTTPException(status_code=404, detail="Request not found")
-        await librespot.add_to_queue(row["spotify_uri"])
-        await refresh_queue_now(librespot)
-        await asyncio.to_thread(set_request_status, request_id, "approved")
-        return {"success": True}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    async with request_moderation_lock:
+        try:
+            row = await asyncio.to_thread(get_request, request_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Request not found")
+            if row["status"] != "pending":
+                raise HTTPException(status_code=409, detail="Request is no longer pending")
+            if await asyncio.to_thread(is_song_banned, row["spotify_uri"]):
+                raise HTTPException(status_code=409, detail="This song is banned")
+            await librespot.add_to_queue(row["spotify_uri"])
+            await refresh_queue_now(librespot)
+            await asyncio.to_thread(set_request_status, request_id, "approved")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return {"success": True}
+
+
+class RequestMovePayload(BaseModel):
+    direction: Literal["up", "down"]
+
+
+@app.post("/admin/requests/{request_id}/move")
+async def admin_move_request(request_id: int, payload: RequestMovePayload, _: None = Depends(require_admin)):
+    async with request_moderation_lock:
+        outcome = await asyncio.to_thread(move_pending_request, request_id, payload.direction)
+    if outcome == "missing":
+        raise HTTPException(status_code=404, detail="Request not found")
+    if outcome == "wrong_status":
+        raise HTTPException(status_code=409, detail="Only pending requests can be moved")
+    if outcome == "boundary":
+        raise HTTPException(status_code=409, detail="Request is already at that end of the queue")
+    return {"success": True}
 
 
 @app.delete("/admin/requests/{request_id}")
 async def admin_delete_request(request_id: int, _: None = Depends(require_admin)):
-    await asyncio.to_thread(set_request_status, request_id, "deleted")
+    async with request_moderation_lock:
+        outcome = await asyncio.to_thread(delete_pending_request, request_id)
+    if outcome == "missing":
+        raise HTTPException(status_code=404, detail="Request not found")
+    if outcome == "wrong_status":
+        raise HTTPException(status_code=409, detail="Only pending requests can be deleted")
+    return {"success": True}
+
+
+@app.post("/admin/requests/{request_id}/restore")
+async def admin_restore_request(request_id: int, _: None = Depends(require_admin)):
+    async with request_moderation_lock:
+        outcome = await asyncio.to_thread(restore_deleted_request, request_id)
+    if outcome == "missing":
+        raise HTTPException(status_code=404, detail="Request not found")
+    if outcome == "wrong_status":
+        raise HTTPException(status_code=409, detail="Only deleted requests can be restored")
+    if outcome == "song_banned":
+        raise HTTPException(status_code=409, detail="This song is banned and cannot be restored")
     return {"success": True}
 
 
@@ -1207,7 +1779,11 @@ async def admin_get_listeners(_: None = Depends(require_admin)):
 @app.get("/admin/settings")
 async def admin_get_settings(_: None = Depends(require_admin)):
     value = await asyncio.to_thread(read_auto_approve)
-    return {"auto_approve": value if value is not None else "false"}
+    automate = await asyncio.to_thread(read_automate)
+    return {
+        "auto_approve": value if value is not None else "false",
+        "automate": "true" if automate else "false",
+    }
 
 
 class AutoApprovePayload(BaseModel):
@@ -1219,6 +1795,89 @@ async def admin_set_auto_approve(payload: AutoApprovePayload, _: None = Depends(
     value = "true" if payload.enabled else "false"
     await asyncio.to_thread(write_auto_approve, value)
     return {"success": True, "auto_approve": value}
+
+
+class AutomatePayload(BaseModel):
+    enabled: bool
+
+
+@app.post("/admin/automate")
+async def admin_set_automate(payload: AutomatePayload, _: None = Depends(require_admin)):
+    try:
+        await automate_controller.set_enabled(payload.enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"success": True, "automate": "true" if payload.enabled else "false"}
+
+
+PLAYER_ACTIONS = ("prev", "playpause", "next")
+
+
+@app.post("/admin/player/{action}")
+async def admin_player_control(action: str, _: None = Depends(require_admin)):
+    if action not in PLAYER_ACTIONS:
+        raise HTTPException(status_code=400, detail="Unknown playback action")
+    try:
+        await automate_controller.player_action(action)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"success": True}
+
+
+def _admin_track_info(current: dict) -> dict:
+    return {
+        "songid": current["songid"],
+        "title": current.get("song", ""),
+        "artist": ", ".join(a.get("name", "") for a in current.get("artist") or []),
+        "album": current.get("album", ""),
+        "cover": current.get("cover", ""),
+    }
+
+
+def _admin_playback_snapshot() -> Optional[dict]:
+    """The poller's latest snapshot while it is fresh enough to show, else None."""
+    snapshot = latest_snapshot
+    if snapshot["monotonic"] is None:
+        return None
+    if time.monotonic() - snapshot["monotonic"] > REALTIME_SNAPSHOT_MAX_AGE:
+        return None
+    return snapshot
+
+
+def _admin_track() -> Optional[dict]:
+    """The poller's latest undelayed track, with its position moved on to now while playing.
+
+    None when nothing is playing or the poller's read is too old to trust.
+    """
+    snapshot = _admin_playback_snapshot()
+    current = snapshot["current"] if snapshot else None
+    if not current or not current.get("songid"):
+        return None
+    progress_ms = current.get("progress_ms", 0)
+    if current.get("playing"):
+        progress_ms += (time.monotonic() - snapshot["monotonic"]) * 1000
+    return {
+        **_admin_track_info(current),
+        "progress_ms": int(progress_ms),
+        "duration_ms": current.get("duration_ms", 0),
+    }
+
+
+def _admin_next_track() -> Optional[dict]:
+    """The track go-librespot has queued next, from the same poll as the current track."""
+    snapshot = _admin_playback_snapshot()
+    queue = snapshot["queue"] if snapshot else []
+    if not queue or not queue[0].get("songid"):
+        return None
+    return _admin_track_info(queue[0])
+
+
+@app.get("/admin/playback")
+async def admin_get_playback(_: None = Depends(require_admin)):
+    # Undelayed Spotify state from the poller: playing is true, false, or null before its first
+    # poll. track is the song on the deck (paused included), or null when nothing is loaded.
+    # next is the song queued after it, or null.
+    return {"playing": spotify_playing["value"], "track": _admin_track(), "next": _admin_next_track()}
 
 # ─── Remote control ──────────────────────────────────────────────────────────
 # Push commands to connected clients over SSE. Targeting is best-effort: SSE is

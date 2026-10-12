@@ -94,6 +94,18 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Pending requests have a durable, host-controlled position. Existing rows are
+    # seeded oldest-first so their initial order reads as a queue.
+    request_columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+    if "queue_order" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN queue_order INTEGER")
+        pending_ids = conn.execute(
+            "SELECT id FROM requests WHERE status='pending' ORDER BY created_at ASC, id ASC"
+        ).fetchall()
+        conn.executemany(
+            "UPDATE requests SET queue_order=? WHERE id=?",
+            ((index, row[0]) for index, row in enumerate(pending_ids)),
+        )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -123,6 +135,7 @@ def init_db():
     # (newest first) and the 12-hour cleanup; the table is small, so nothing else is indexed.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_created_at ON requests(created_at)")
     conn.execute("INSERT OR IGNORE INTO settings VALUES ('auto_approve', 'true')")
+    conn.execute("INSERT OR IGNORE INTO settings VALUES ('automate', 'true')")
     conn.commit()
     conn.close()
 
@@ -284,6 +297,28 @@ def write_auto_approve(value: str) -> None:
         conn.close()
 
 
+def read_automate() -> bool:
+    """Whether automate is on. Defaults to on until a value has been stored."""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key='automate'").fetchone()
+        return row is None or row["value"] != "false"
+    finally:
+        conn.close()
+
+
+def write_automate(enabled: bool) -> None:
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings VALUES ('automate', ?)",
+            ("true" if enabled else "false",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_request(request_id: int) -> Optional[dict]:
     conn = get_db()
     try:
@@ -302,16 +337,98 @@ def set_request_status(request_id: int, status: str) -> None:
         conn.close()
 
 
+def move_pending_request(request_id: int, direction: str) -> str:
+    """Move a pending request one place. Returns missing, wrong_status, boundary, or moved."""
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT id, status, queue_order FROM requests WHERE id=?", (request_id,)
+        ).fetchone()
+        if row is None:
+            return "missing"
+        if row["status"] != "pending":
+            return "wrong_status"
+        rows = conn.execute(
+            "SELECT id, queue_order FROM requests WHERE status='pending' "
+            "ORDER BY queue_order ASC, created_at ASC, id ASC"
+        ).fetchall()
+        index = next(i for i, item in enumerate(rows) if item["id"] == request_id)
+        neighbor_index = index - 1 if direction == "up" else index + 1
+        if neighbor_index < 0 or neighbor_index >= len(rows):
+            conn.rollback()
+            return "boundary"
+        current, neighbor = rows[index], rows[neighbor_index]
+        # Swap ranks so moving remains a constant-size update and persisted order is stable.
+        conn.execute("UPDATE requests SET queue_order=? WHERE id=?", (neighbor["queue_order"], current["id"]))
+        conn.execute("UPDATE requests SET queue_order=? WHERE id=?", (current["queue_order"], neighbor["id"]))
+        conn.commit()
+        return "moved"
+    finally:
+        conn.close()
+
+
+def delete_pending_request(request_id: int) -> str:
+    """Archive a pending request. Returns missing, wrong_status, or deleted."""
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT status FROM requests WHERE id=?", (request_id,)).fetchone()
+        if row is None:
+            return "missing"
+        if row["status"] != "pending":
+            return "wrong_status"
+        conn.execute("UPDATE requests SET status='deleted', queue_order=NULL WHERE id=?", (request_id,))
+        conn.commit()
+        return "deleted"
+    finally:
+        conn.close()
+
+
+def restore_deleted_request(request_id: int) -> str:
+    """Restore a deleted row at the end of the pending queue."""
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT status, spotify_uri FROM requests WHERE id=?", (request_id,)).fetchone()
+        if row is None:
+            return "missing"
+        if row["status"] != "deleted":
+            return "wrong_status"
+        if is_song_banned_in(load_song_bans(conn), row["spotify_uri"]):
+            conn.rollback()
+            return "song_banned"
+        last = conn.execute(
+            "SELECT COALESCE(MAX(queue_order), -1) FROM requests WHERE status='pending'"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE requests SET status='pending', queue_order=? WHERE id=?",
+            (last + 1, request_id),
+        )
+        conn.commit()
+        return "restored"
+    finally:
+        conn.close()
+
+
 def insert_request(values: tuple) -> None:
     """Insert a request row; ``values`` follows the column order of the INSERT below."""
     conn = get_db()
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        if values[-1] == "pending":
+            last = conn.execute(
+                "SELECT COALESCE(MAX(queue_order), -1) FROM requests WHERE status='pending'"
+            ).fetchone()[0]
+            queue_order = last + 1
+        else:
+            queue_order = None
         conn.execute(
             """INSERT INTO requests
                (spotify_uri, track_name, artist_name, album_name, cover_url,
-                requester_name, requester_ip, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            values,
+                requester_name, requester_ip, status, queue_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (*values, queue_order),
         )
         conn.commit()
     finally:
@@ -326,7 +443,14 @@ def list_admin_requests(limit: int = 100) -> List[dict]:
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM requests WHERE status IN ('pending', 'approved') ORDER BY created_at DESC LIMIT ?",
+            """SELECT * FROM requests
+               WHERE status='pending' OR id IN (
+                   SELECT id FROM requests WHERE status='approved'
+                   ORDER BY created_at DESC, id DESC LIMIT ?
+               )
+               ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,
+                        CASE WHEN status='pending' THEN queue_order END ASC,
+                        created_at DESC, id DESC""",
             (limit,),
         ).fetchall()
         bans = load_active_bans(conn)
@@ -336,9 +460,32 @@ def list_admin_requests(limit: int = 100) -> List[dict]:
     result = []
     for r in rows:
         d = dict(r)
+        d.pop("queue_order", None)
         d["requester_banned"] = ban_matches(bans, d.get("requester_ip"))
         d["song_banned"] = is_song_banned_in(song_bans, d.get("spotify_uri"))
         result.append(d)
+    return result
+
+
+def list_deleted_requests(limit: int = 100) -> List[dict]:
+    """Recently deleted requests, with the same moderation flags as the main admin list."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM requests WHERE status='deleted' ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        bans = load_active_bans(conn)
+        song_bans = load_song_bans(conn)
+    finally:
+        conn.close()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item.pop("queue_order", None)
+        item["requester_banned"] = ban_matches(bans, item.get("requester_ip"))
+        item["song_banned"] = is_song_banned_in(song_bans, item.get("spotify_uri"))
+        result.append(item)
     return result
 
 

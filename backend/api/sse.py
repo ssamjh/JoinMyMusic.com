@@ -39,7 +39,7 @@ deck_state: dict = {"songid": "", "side": "left"}
 # wall-clock instant it was read, and the monotonic clock at that moment (for age checks).
 # New realtime connections and vote lookups reuse it instead of calling go-librespot again.
 REALTIME_SNAPSHOT_MAX_AGE = 3.0  # seconds
-latest_snapshot: dict = {"current": None, "polled_at": None, "monotonic": None}
+latest_snapshot: dict = {"current": None, "queue": [], "polled_at": None, "monotonic": None}
 
 # Empty "now playing" payload clients already treat as no track (clear UI).
 _EMPTY_CURRENT = {
@@ -335,7 +335,8 @@ async def poll_spotify(librespot, listeners_state: dict, vote_skips_state: dict)
             progress_ms = current.get("progress_ms", 0)
             polled_at = datetime.now(timezone.utc)
             latest_snapshot.update(
-                current=dict(current), polled_at=polled_at, monotonic=time.monotonic()
+                current=dict(current), queue=list(metadata.get("queue", [])),
+                polled_at=polled_at, monotonic=time.monotonic(),
             )
 
             # Expire history entries older than the TTL, even if nothing else changed.
@@ -444,7 +445,7 @@ async def poll_live_input():
             try:
                 resp = await http.get("/api/source")
                 if resp.status_code == 200:
-                    level = resp.json().get("vban_level_db")
+                    level = resp.json().get("live_level_db")
             except (httpx.HTTPError, ValueError):
                 pass
             now = loop.time()

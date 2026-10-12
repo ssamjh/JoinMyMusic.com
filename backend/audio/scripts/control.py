@@ -4,7 +4,10 @@ The supervisor (run.py) calls prepare() once at startup. It returns a Session wi
 write end of the encoder's monitor pipe and a Monitor whose threads drain that pipe, and,
 when CONTROL_PORT is set, the HTTP control API and the live parameter control. The API
 is reached only over the Compose network: the API container's admin panel draws the
-monitor page and proxies these calls. A
+monitor page and proxies these calls. GET /api/listen streams the Spotify input as raw PCM
+to any number of listeners (ListenFeed, fed by the pump in run.py before processing, with no
+microphone or VBAN in it), and POST /api/mic writes a chunked microphone session into
+the live input (see MicInput). A
 GraphController owns the running processor: it validates graphs, replaces the processor
 through the bridge (bridge.py), watches processing.ffmpeg and restarts a failed processor.
 Live control needs the azmq filter and pyzmq; without them meters and graph editing still
@@ -31,7 +34,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from bridge import (
     COMMITTED,
@@ -41,6 +44,7 @@ from bridge import (
     Processor,
     SwapFailed,
     name_current_thread,
+    shrink_pipe,
 )
 
 DEFAULT_CONTROL_PORT = 8090
@@ -59,6 +63,13 @@ WATCH_SECONDS = 5.0  # analysis runs only while a meter client has asked this re
 FRAME_BYTES = 2 * 2  # one stereo s16le frame
 METER_BACKLOG_BYTES = SAMPLE_RATE * FRAME_BYTES * 3 // 2  # 1.5 s per side waiting for the analyser
 IDLE_BYTES = 8 * COLUMN_BYTES  # 80 ms per side kept while nobody watches
+LISTEN_BUFFER_BYTES = SAMPLE_RATE * FRAME_BYTES  # 1 s queued per /api/listen client (the pump's blocks are whole frames)
+LISTEN_WAIT = 1.0  # seconds a listener waits for audio in one go
+# Microphone blocks: a multiple of the 4-byte stereo frame and at most PIPE_BUF (4096), so each
+# write to the FIFO is either fully written or refused, and the stream stays frame-aligned.
+MIC_WRITE_BYTES = 1024
+MIC_READ_BYTES = 16_384
+MIC_LINE_BYTES = 256  # longest chunk-size or trailer line accepted
 GRAPH_INPUT = "[0:a:0]"
 GRAPH_OUTPUT = "[proc]"
 BYPASS_WET = "volume@jmm_wet"
@@ -370,9 +381,9 @@ class LiquidsoapControl:
         if "set" not in text.lower():
             raise ApiError(409, f"Liquidsoap refused {name}: {text or 'no reply'}")
 
-    def vban_level_db(self) -> float | None:
-        """The VBAN input's RMS level in dBFS, or None when the receiver is off."""
-        return self._float("vban_level")
+    def live_level_db(self) -> float | None:
+        """The live input bus's RMS level in dBFS (VBAN and microphone), or None when neither is on."""
+        return self._float("live_level")
 
     def agc_gain_db(self) -> float | None:
         """The input AGC's gain in dB, or None when the AGC is compiled out."""
@@ -521,8 +532,8 @@ class LiveControl:
             raise
         self._bypass = bypass
 
-    def vban_level_db(self) -> float | None:
-        return self._liquidsoap.vban_level_db()
+    def live_level_db(self) -> float | None:
+        return self._liquidsoap.live_level_db()
 
     def agc_gain_db(self) -> float | None:
         """The AGC gain, read at most every AGC_GAIN_MAX_AGE. While another thread is reading
@@ -648,6 +659,67 @@ class _AudioQueue:
             del self._data[:whole_frames]
 
 
+class Listener:
+    """One /api/listen client: a bounded queue of whole-frame blocks from the ListenFeed.
+
+    push() only copies bytes under a short lock and never waits for the client. A client that
+    falls behind loses its oldest whole frames, so it hears the newest audio.
+    """
+
+    def __init__(self, limit: int = LISTEN_BUFFER_BYTES) -> None:
+        self._data = bytearray()
+        self._limit = limit
+        self._ready = threading.Condition(threading.Lock())
+        self.dropped = 0  # bytes discarded for falling behind
+
+    def push(self, block: bytes | bytearray) -> None:
+        with self._ready:
+            self._data += block
+            excess = len(self._data) - self._limit
+            if excess > 0:
+                whole = -(-excess // FRAME_BYTES) * FRAME_BYTES  # round up, so the cut stays aligned
+                del self._data[:whole]
+                self.dropped += whole
+            self._ready.notify()
+
+    def take(self, timeout: float) -> bytes:
+        """Everything queued, waiting up to timeout for some. Returns b"" when nothing arrived."""
+        with self._ready:
+            if not self._data:
+                self._ready.wait(timeout)
+            data = bytes(self._data)
+            self._data.clear()
+            return data
+
+
+class ListenFeed:
+    """Fan-out of the Spotify input, as the pump sends it to Liquidsoap, to the /api/listen clients.
+
+    The pump calls push() once per block. The clients live in a tuple that attach() and
+    detach() replace under a lock, so push() reads it without locking: with no listeners it
+    costs one tuple check, and with listeners it copies each block into their bounded queues.
+    A new client starts with the next block, which is always a whole number of frames.
+    """
+
+    def __init__(self) -> None:
+        self._listeners: tuple[Listener, ...] = ()
+        self._lock = threading.Lock()
+
+    def attach(self) -> Listener:
+        listener = Listener()
+        with self._lock:
+            self._listeners = self._listeners + (listener,)
+        return listener
+
+    def detach(self, listener: Listener) -> None:
+        with self._lock:
+            self._listeners = tuple(item for item in self._listeners if item is not listener)
+
+    def push(self, block: bytes | bytearray) -> None:
+        for listener in self._listeners:
+            listener.push(block)
+
+
 class Monitor:
     """Meters for the input (the mix before the AGC) and output (after the safety limiter).
 
@@ -763,6 +835,122 @@ class Monitor:
 
 
 # ---------------------------------------------------------------------------
+# Microphone input
+# ---------------------------------------------------------------------------
+
+
+def read_chunks(stream) -> Iterator[bytes]:
+    """The payload pieces of a chunked request body (RFC 9112, section 7.1), read from a buffered stream.
+
+    Chunk extensions and trailers are skipped. A malformed or short body raises ApiError(400).
+    """
+    while True:
+        line = stream.readline(MIC_LINE_BYTES)
+        if not line.endswith(b"\n"):
+            raise ApiError(400, "the body ended or a chunk size line is too long")
+        size_text = line.split(b";", 1)[0].strip()
+        if not re.fullmatch(rb"[0-9A-Fa-f]+", size_text):
+            raise ApiError(400, "malformed chunk size")
+        size = int(size_text, 16)
+        if size == 0:
+            while True:
+                trailer = stream.readline(MIC_LINE_BYTES)
+                if trailer in (b"\r\n", b"\n"):
+                    return
+                if not trailer.endswith(b"\n"):
+                    raise ApiError(400, "malformed trailer")
+        remaining = size
+        while remaining:
+            piece = stream.read(min(remaining, MIC_READ_BYTES))
+            if not piece:
+                raise ApiError(400, "the body ended early")
+            remaining -= len(piece)
+            yield piece
+        if stream.readline(3) not in (b"\r\n", b"\n"):
+            raise ApiError(400, "malformed chunk")
+
+
+@dataclass
+class MicSession:
+    """One chunked POST. connection is shut for reading when a newer session replaces it."""
+
+    connection: socket.socket
+    carry: bytes = b""  # an odd byte left over from a chunk, waiting for its pair
+
+
+class MicInput:
+    """Writes the browser microphone into the mic FIFO that Liquidsoap reads as stereo.
+
+    The FIFO is held open for reading and writing here, so Liquidsoap's reader never sees
+    end-of-file between sessions and writes never fail for lack of a reader. Only one session
+    is current; begin() ends the previous one. Writes never wait: when the FIFO is full the
+    block is dropped, so a stalled Liquidsoap cannot hold up the HTTP thread.
+    """
+
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
+        self._lock = threading.Lock()
+        self._current: MicSession | None = None
+
+    def begin(self, connection: socket.socket) -> MicSession:
+        with self._lock:
+            previous = self._current
+            session = MicSession(connection)
+            self._current = session
+            if previous is not None:
+                # Ends the previous body: its blocked read returns end-of-file.
+                try:
+                    previous.connection.shutdown(socket.SHUT_RD)
+                except OSError:
+                    pass
+            return session
+
+    def is_current(self, session: MicSession) -> bool:
+        with self._lock:
+            return session is self._current
+
+    def end(self, session: MicSession) -> None:
+        with self._lock:
+            if self._current is session:
+                self._current = None
+
+    def write(self, session: MicSession, chunk: bytes) -> None:
+        """Mono s16le in, stereo s16le out (each sample to both channels). Ignored once superseded."""
+        with self._lock:
+            if session is not self._current:
+                return
+            data = session.carry + chunk
+            whole = len(data) - len(data) % 2
+            session.carry = data[whole:]
+            if not whole:
+                return
+            mono = data[:whole]
+            stereo = bytearray(2 * whole)
+            stereo[0::4] = mono[0::2]
+            stereo[1::4] = mono[1::2]
+            stereo[2::4] = mono[0::2]
+            stereo[3::4] = mono[1::2]
+            for start in range(0, len(stereo), MIC_WRITE_BYTES):
+                try:
+                    os.write(self._fd, stereo[start:start + MIC_WRITE_BYTES])
+                except BlockingIOError:
+                    pass  # the FIFO is full: drop this block rather than wait
+
+
+def open_mic_input(path: str | None) -> MicInput | None:
+    """The mic input for the FIFO at path, or None when the mic is disabled or the FIFO cannot be opened."""
+    if path is None:
+        return None
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as exc:
+        log(f"mic input disabled: cannot open {path}: {exc}")
+        return None
+    shrink_pipe(fd)
+    return MicInput(fd)
+
+
+# ---------------------------------------------------------------------------
 # HTTP interface
 # ---------------------------------------------------------------------------
 
@@ -771,10 +959,13 @@ class ControlServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], live: LiveControl, monitor: Monitor,
-                 graphs: GraphController | None = None) -> None:
+                 graphs: GraphController | None = None, mic: MicInput | None = None,
+                 listen: ListenFeed | None = None) -> None:
         self.live = live
         self.monitor = monitor
         self.graphs = graphs
+        self.mic = mic
+        self.listen = listen if listen is not None else ListenFeed()
         super().__init__(address, ControlHandler)
 
     def server_bind(self) -> None:
@@ -815,8 +1006,10 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif path == "/api/meters":
                 self._meters()
             elif path == "/api/source":
-                # Read by the API to tell when the stream is the VBAN input alone.
-                self._json(200, {"vban_level_db": self.live.vban_level_db()})
+                # Read by the API to tell when the stream is live input alone.
+                self._json(200, {"live_level_db": self.live.live_level_db()})
+            elif path == "/api/listen":
+                self._listen()
             else:
                 self._json(404, {"error": "not found"})
         except ApiError as exc:
@@ -861,6 +1054,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif path == "/api/graph/reload":
                 self._read_json()
                 self._json(200, self._graphs().reload())
+            elif path == "/api/mic":
+                self._mic()
             else:
                 self._json(404, {"error": "not found"})
         except ApiError as exc:
@@ -875,6 +1070,43 @@ class ControlHandler(BaseHTTPRequestHandler):
         if self.server.graphs is None:  # type: ignore[attr-defined]
             raise ApiError(404, "processing graph control is not available")
         return self.server.graphs  # type: ignore[attr-defined]
+
+    def _listen(self) -> None:
+        """Raw Spotify input (s16le stereo, 44.1 kHz) until the client disconnects. Starts now."""
+        listener = self.server.listen.attach()  # type: ignore[attr-defined]
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            while True:
+                data = listener.take(LISTEN_WAIT)
+                if data:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionError):
+            pass
+        finally:
+            self.server.listen.detach(listener)  # type: ignore[attr-defined]
+
+    def _mic(self) -> None:
+        """One chunked session of mono s16le 44.1 kHz audio. A new session ends the previous one."""
+        mic: MicInput | None = self.server.mic  # type: ignore[attr-defined]
+        if mic is None:
+            raise ApiError(404, "mic input is disabled")
+        if "chunked" not in self.headers.get("Transfer-Encoding", "").lower():
+            raise ApiError(400, "send the audio with Transfer-Encoding: chunked")
+        session = mic.begin(self.connection)
+        try:
+            for piece in read_chunks(self.rfile):
+                mic.write(session, piece)
+        except ApiError:
+            if mic.is_current(session):
+                raise
+            # Superseded: the newer session shut this connection for reading, which ends the body.
+        finally:
+            mic.end(session)
+        self._json(200, {"ok": True})
 
     def _read_json(self, limit: int = MAX_BODY_BYTES) -> dict:
         media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -998,6 +1230,8 @@ class Session:
     zmq_base: int | None = None  # live control ports are zmq_base and zmq_base + 1; None disables wrapping
     filters: list[NamedFilter] = field(default_factory=list)
     filter_help: FilterHelp | None = None
+    mic: MicInput | None = None
+    listen: ListenFeed = field(default_factory=ListenFeed)  # the pump feeds it; /api/listen reads it
 
     def start(self, graphs: "GraphController") -> None:
         if self.server is None:
@@ -1007,11 +1241,12 @@ class Session:
         log(f"control API on port {self.server.server_address[1]}")
 
 
-def prepare(source: str, processing: str) -> Session:
+def prepare(source: str, processing: str, mic_fifo: str | None = None) -> Session:
     """Set up the monitor, the control API and live control. Never raises for control failures.
 
     source is the processing file as written (comments kept, used for export and the graph editor).
-    processing is the comment-stripped graph.
+    processing is the comment-stripped graph. mic_fifo is the microphone FIFO that Liquidsoap
+    reads, or None when the microphone input is disabled.
     """
     read_fd, write_fd = os.pipe()
     port = _port_setting("CONTROL_PORT", DEFAULT_CONTROL_PORT)
@@ -1030,8 +1265,9 @@ def prepare(source: str, processing: str) -> Session:
         log(f"control API disabled: {exc}")
         return session
     session.live = LiveControl(session.filters, source, help_.options)
+    session.mic = open_mic_input(mic_fifo)
     try:
-        session.server = ControlServer(("0.0.0.0", port), session.live, monitor)
+        session.server = ControlServer(("0.0.0.0", port), session.live, monitor, mic=session.mic, listen=session.listen)
     except OSError as exc:
         log(f"control API not started on port {port}: {exc}")
 

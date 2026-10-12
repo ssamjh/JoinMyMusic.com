@@ -179,13 +179,36 @@ VBAN_RECEIVER_QUALITY = {"optimal": 0.1, "fast": 0.2, "medium": 0.4, "slow": 0.8
 
 
 VBAN_TRIM_DB = -6.0
-VBAN_DUCK_DB = -10.0
+MIC_TRIM_DB = -6.0
+LIVE_DUCK_DB = -10.0
 
 
 def validate_db(value: object, name: str, low: float, high: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
         raise SystemExit(f"{name} must be a number of dB from {low:g} to {high:g}")
     return float(value)
+
+
+def load_live_input_config() -> dict[str, float]:
+    """live_input in audio.yml: how far Spotify is ducked while a live input (VBAN or the mic) is on air."""
+    section = load_audio_config().get("live_input", {})
+    if not isinstance(section, dict):
+        raise SystemExit("The 'live_input' section in audio.yml must be a mapping")
+    return {"duck_db": validate_db(section.get("duck_db", LIVE_DUCK_DB), "live_input.duck_db", -40.0, 0.0)}
+
+
+def load_mic_config() -> dict[str, object]:
+    """The browser microphone input (control API /api/mic), mixed in with the VBAN input."""
+    mic = load_audio_config().get("mic", {})
+    if not isinstance(mic, dict):
+        raise SystemExit("The 'mic' section in audio.yml must be a mapping")
+    enabled = mic.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise SystemExit("mic.enabled must be true or false")
+    return {
+        "enabled": enabled,
+        "trim_db": validate_db(mic.get("trim_db", MIC_TRIM_DB), "mic.trim_db", -40.0, 12.0),
+    }
 
 
 def load_vban_receiver_config() -> dict[str, object]:
@@ -216,11 +239,12 @@ def load_vban_receiver_config() -> dict[str, object]:
     quality = receiver.get("quality", "medium")
     if quality not in VBAN_RECEIVER_QUALITY:
         raise SystemExit("vban_receiver.quality must be one of: " + ", ".join(VBAN_RECEIVER_QUALITY))
+    if "duck_db" in receiver:
+        raise SystemExit("vban_receiver.duck_db moved to live_input.duck_db in audio.yml")
     return {
         "enabled": True,
         "quality": quality,
         "trim_db": validate_db(receiver.get("trim_db", VBAN_TRIM_DB), "vban_receiver.trim_db", -40.0, 12.0),
-        "duck_db": validate_db(receiver.get("duck_db", VBAN_DUCK_DB), "vban_receiver.duck_db", -40.0, 0.0),
         "sender_ip": str(parsed_address),
         "port": validate_port(receiver.get("port", 6980), "vban_receiver"),
         "stream_name": validate_stream_name(receiver.get("stream_name", "Stream1"), "vban_receiver"),
@@ -509,9 +533,12 @@ def check_helpers(helpers: list[tuple[str, subprocess.Popen[bytes]]]) -> None:
 def pump_fifo(
     path: str,
     alive: Callable[[], None],
+    listen: control.ListenFeed,
 ) -> None:
     """Pace the raw FIFO at 44.1 kHz and preserve silence across pauses.
 
+    Every block is also offered to the /api/listen feed, so listeners hear the Spotify input in
+    real time, before processing and without the microphone or VBAN.
     alive() raises when any child process or the bridge has failed; the pump then stops.
     """
     # Opening both ends prevents EOF spin when Spotify closes its writer between
@@ -526,6 +553,7 @@ def pump_fifo(
 
     def send(block: bytearray) -> None:
         assert output_fd is not None
+        listen.push(block)  # copies into listener queues only; never waits on them
         view = memoryview(block)
         while view and not stopping:
             alive()
@@ -642,6 +670,15 @@ def prepare_vban_receiver_fifo(enabled: bool) -> None:
     os.mkfifo(path, 0o600)
 
 
+def mic_fifo_path() -> str:
+    return os.environ.get("MIC_INPUT_FIFO", "/run/audio/mic-in.pcm")
+
+
+def prepare_mic_fifo(enabled: bool) -> None:
+    if enabled:
+        prepare_fifo_at(mic_fifo_path(), "Mic input")
+
+
 def supervise() -> int:
     global stopping
     signal.signal(signal.SIGTERM, request_stop)
@@ -669,9 +706,16 @@ def supervise() -> int:
     prepare_vban_fifo(vban_on)
     receiver_config = load_vban_receiver_config()
     spotify_trim_db = load_spotify_trim_db()
+    live_config = load_live_input_config()
+    mic_config = load_mic_config()
     prepare_vban_receiver_fifo(bool(receiver_config.get("enabled")))
-    # Control page, meters and live control. Control failures degrade; they never stop the stream.
-    session = control.prepare(source_text, processing)
+    prepare_mic_fifo(bool(mic_config["enabled"]))
+    # Control page, meters, live control and the listen and mic endpoints. Control failures degrade; they never stop the stream.
+    session = control.prepare(
+        source_text,
+        processing,
+        mic_fifo=mic_fifo_path() if mic_config["enabled"] else None,
+    )
     vban: subprocess.Popen[bytes] | None = None
     receiver: subprocess.Popen[bytes] | None = None
     helpers: list[tuple[str, subprocess.Popen[bytes]]] = []
@@ -713,7 +757,12 @@ def supervise() -> int:
             radio_env["VBAN_INPUT_FIFO"] = vban_receiver_fifo_path()
             radio_env["VBAN_INPUT_BUFFER"] = str(VBAN_RECEIVER_QUALITY[str(receiver_config["quality"])])
             radio_env["VBAN_INPUT_TRIM_DB"] = str(receiver_config["trim_db"])
-            radio_env["VBAN_DUCK_DB"] = str(receiver_config["duck_db"])
+        radio_env.pop("MIC_INPUT_FIFO", None)
+        if mic_config["enabled"]:
+            radio_env["MIC_INPUT_FIFO"] = mic_fifo_path()
+            radio_env["MIC_INPUT_TRIM_DB"] = str(mic_config["trim_db"])
+        # Ducking applies to the whole live input bus (VBAN and mic); processing.liq ignores it when neither is on.
+        radio_env["LIVE_DUCK_DB"] = str(live_config["duck_db"])
         liquidsoap = subprocess.Popen(
             [liquidsoap_bin, processing_script],
             stdin=subprocess.DEVNULL,
@@ -751,7 +800,7 @@ def supervise() -> int:
             if bridge is not None:
                 bridge.check()
 
-        pump_fifo(fifo_path(), alive)
+        pump_fifo(fifo_path(), alive, session.listen)
         return 0
     except (OSError, RuntimeError, ValueError) as exc:
         if not stopping:

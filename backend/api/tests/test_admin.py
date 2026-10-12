@@ -58,11 +58,11 @@ class AdminRequestTests(ApiTestCase):
 
     def test_settings_reflect_auto_approve(self):
         self.assertEqual(
-            self.client.get("/admin/settings", headers=ADMIN).json(), {"auto_approve": "true"}
+            self.client.get("/admin/settings", headers=ADMIN).json()["auto_approve"], "true"
         )
         self.set_auto_approve(False)
         self.assertEqual(
-            self.client.get("/admin/settings", headers=ADMIN).json(), {"auto_approve": "false"}
+            self.client.get("/admin/settings", headers=ADMIN).json()["auto_approve"], "false"
         )
 
     def test_list_includes_columns_and_ban_flags(self):

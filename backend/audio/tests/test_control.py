@@ -8,10 +8,12 @@ from __future__ import annotations
 import array
 import http.client
 import importlib
+import io
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -33,7 +35,9 @@ import control  # noqa: E402
 import run as runtime  # noqa: E402
 from control import (  # noqa: E402
     ControlServer,
+    Listener,
     LiveControl,
+    MicInput,
     Monitor,
     OptionInfo,
     TransportError,
@@ -43,6 +47,7 @@ from control import (  # noqa: E402
     measure,
     parse_help_options,
     parse_named_filters,
+    read_chunks,
     substitute_values,
 )
 
@@ -677,6 +682,290 @@ def free_port() -> int:
     port = listener.getsockname()[1]
     listener.close()
     return port
+
+
+class ListenerQueueTest(unittest.TestCase):
+    def test_every_listener_gets_the_same_bytes_in_order(self):
+        first, second = Listener(), Listener()
+        for block in (b"\x01\x02\x03\x04", b"\x05\x06\x07\x08\x09\x0a\x0b\x0c"):
+            first.push(block)
+            second.push(block)
+        expected = b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c"
+        self.assertEqual(first.take(0), expected)
+        self.assertEqual(second.take(0), expected)
+        self.assertEqual(first.take(0), b"")
+
+    def test_a_slow_listener_keeps_the_newest_whole_frames(self):
+        listener = Listener(limit=16)
+        stream = bytes(index % 256 for index in range(100))
+        for start in range(0, len(stream), 7):  # blocks that do not line up with frames
+            listener.push(stream[start:start + 7])
+        data = listener.take(0)
+        self.assertLessEqual(len(data), 16)
+        self.assertEqual(len(data) % control.FRAME_BYTES, 0)
+        self.assertEqual(data, stream[len(stream) - len(data):])
+        self.assertEqual(listener.dropped + len(data), len(stream))
+
+    def test_take_waits_for_audio_and_then_returns_empty(self):
+        listener = Listener()
+        self.assertEqual(listener.take(0.01), b"")
+        threading.Timer(0.02, listener.push, args=(b"\x00\x01\x02\x03",)).start()
+        self.assertEqual(listener.take(2.0), b"\x00\x01\x02\x03")
+
+
+class ListenFeedTest(unittest.TestCase):
+    def test_push_with_no_listeners_does_nothing(self):
+        feed = control.ListenFeed()
+        feed.push(bytes(3528))
+        self.assertEqual(feed._listeners, ())
+
+    def test_every_listener_gets_each_block_in_order(self):
+        feed = control.ListenFeed()
+        first, second = feed.attach(), feed.attach()
+        feed.push(bytes(range(8)))
+        feed.push(bytearray(range(8, 12)))
+        self.assertEqual(first.take(0), bytes(range(12)))
+        self.assertEqual(second.take(0), bytes(range(12)))
+
+    def test_a_listener_that_never_reads_does_not_slow_push(self):
+        feed = control.ListenFeed()
+        feed.attach()  # never taken from
+        block = bytes(3528)  # one 20 ms block
+        started = time.monotonic()
+        for _ in range(2000):  # 40 s of audio
+            feed.push(block)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_a_detached_listener_gets_nothing_more(self):
+        feed = control.ListenFeed()
+        listener = feed.attach()
+        feed.push(bytes(8))
+        feed.detach(listener)
+        feed.push(bytes(8))
+        self.assertEqual(listener.take(0), bytes(8))
+        self.assertEqual(feed._listeners, ())
+
+    def test_the_monitor_output_is_not_offered_to_listeners(self):
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        monitor = Monitor(enabled=False)
+        monitor.start(read_fd)
+        feed = control.ListenFeed()
+        listener = feed.attach()
+        os.write(write_fd, bytes(range(16)))  # the encoder's monitor output
+        time.sleep(0.2)  # long enough for the drain to read it
+        self.assertEqual(listener.take(0), b"")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "the pump reads a FIFO")
+    def test_pump_offers_every_block_it_sends_to_liquidsoap(self):
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory, True)
+        source = os.path.join(directory, "spotify.pcm")
+        os.mkfifo(source)
+        writer = os.open(source, os.O_RDWR)  # stands in for go-librespot and keeps the FIFO open
+        self.addCleanup(os.close, writer)
+        payload = bytes(range(256)) * 64  # whole frames, under a second of audio
+        os.write(writer, payload)
+
+        out_read, out_write = os.pipe()
+        self.addCleanup(os.close, out_read)
+        received = bytearray()  # what Liquidsoap reads from the input FIFO
+
+        def read_out() -> None:
+            while True:
+                chunk = os.read(out_read, 65536)
+                if not chunk:
+                    return
+                received.extend(chunk)
+
+        reader = threading.Thread(target=read_out, daemon=True)
+        feed = control.ListenFeed()
+        listener = feed.attach()
+        heard = bytearray()
+        with patch.object(runtime, "stopping", False), \
+                patch.object(runtime, "open_radio_fifo_writer", return_value=out_write):
+            pump = threading.Thread(target=runtime.pump_fifo, args=(source, lambda: None, feed), daemon=True)
+            reader.start()
+            pump.start()
+            deadline = time.monotonic() + 5
+            while len(heard) < len(payload) and time.monotonic() < deadline:
+                heard += listener.take(0.1)
+            runtime.stopping = True
+            pump.join(5)
+            reader.join(5)
+        heard += listener.take(0)
+        self.assertFalse(pump.is_alive())
+        self.assertEqual(bytes(heard[:len(payload)]), payload)  # the input, in order, before processing
+        self.assertEqual(len(heard) % control.FRAME_BYTES, 0)
+        self.assertEqual(bytes(received), bytes(heard))  # listeners hear exactly the blocks Liquidsoap gets
+
+    def test_listen_endpoint_streams_the_input_until_the_client_leaves(self):
+        live = LiveControl(parse_named_filters(processing_graph(), static_options), PROCESSING.read_text(encoding="utf-8"), static_options)
+        feed = control.ListenFeed()
+        server = ControlServer(("127.0.0.1", 0), live, Monitor(enabled=False), listen=feed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+            conn.request("GET", "/api/listen")
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "application/octet-stream")
+            self.assertIsNone(response.getheader("Content-Length"))
+            deadline = time.monotonic() + 5
+            while not feed._listeners and time.monotonic() < deadline:
+                time.sleep(0.005)
+            payload = bytes(range(16))
+            feed.push(payload)
+            self.assertEqual(response.read(16), payload)
+            conn.close()
+            deadline = time.monotonic() + 5
+            while feed._listeners and time.monotonic() < deadline:
+                feed.push(b"\x00" * 4)  # the next block finds the closed client
+                time.sleep(0.05)
+            self.assertEqual(feed._listeners, ())
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class ChunkedBodyTest(unittest.TestCase):
+    def test_sizes_extensions_and_trailers_are_handled(self):
+        body = b"4\r\nabcd\r\n3;ext=1\r\nxyz\r\nA\r\n0123456789\r\n0\r\nTrailer: x\r\n\r\n"
+        self.assertEqual(list(read_chunks(io.BytesIO(body))), [b"abcd", b"xyz", b"0123456789"])
+        self.assertEqual(list(read_chunks(io.BytesIO(b"0\r\n\r\n"))), [])
+
+    def test_malformed_and_short_bodies_are_400(self):
+        bodies = (
+            b"x\r\n",             # not hex
+            b"+2\r\nab\r\n0\r\n\r\n",  # signs are not part of a chunk size
+            b"4\r\nab",           # body ends inside a chunk
+            b"2\r\nabXY0\r\n\r\n",  # missing CRLF after the data
+            b"4\r\nabcd",         # no terminator and no final chunk
+            b"2\r\nab\r\n0\r\nTrailer",  # trailer without its end
+        )
+        for body in bodies:
+            with self.subTest(body=body), self.assertRaises(control.ApiError) as raised:
+                list(read_chunks(io.BytesIO(body)))
+            self.assertEqual(raised.exception.status, 400)
+
+
+class FakeConnection:
+    def __init__(self) -> None:
+        self.shut: list[int] = []
+
+    def shutdown(self, how: int) -> None:
+        self.shut.append(how)
+
+
+class MicInputTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.read_fd, self.write_fd = os.pipe()
+        os.set_blocking(self.read_fd, False)
+        os.set_blocking(self.write_fd, False)
+        self.mic = MicInput(self.write_fd)
+
+    def tearDown(self) -> None:
+        os.close(self.read_fd)
+        os.close(self.write_fd)
+
+    def drained(self) -> bytes:
+        out = bytearray()
+        while True:
+            try:
+                chunk = os.read(self.read_fd, 65536)
+            except BlockingIOError:
+                return bytes(out)
+            if not chunk:
+                return bytes(out)
+            out += chunk
+
+    def test_mono_samples_go_to_both_channels(self):
+        session = self.mic.begin(FakeConnection())
+        self.mic.write(session, b"\x01\x02\x03\x04")
+        self.assertEqual(self.drained(), b"\x01\x02\x01\x02\x03\x04\x03\x04")
+
+    def test_a_sample_split_across_chunks_is_joined(self):
+        session = self.mic.begin(FakeConnection())
+        self.mic.write(session, b"\x01")  # half a sample: held until its pair arrives
+        self.assertEqual(self.drained(), b"")
+        self.mic.write(session, b"\x02\x03\x04\x05")  # two whole samples and one byte held back
+        self.assertEqual(self.drained(), b"\x01\x02\x01\x02\x03\x04\x03\x04")
+
+    def test_a_new_session_ends_the_previous_one(self):
+        first, second = FakeConnection(), FakeConnection()
+        old = self.mic.begin(first)
+        new = self.mic.begin(second)
+        self.assertEqual(first.shut, [socket.SHUT_RD])
+        self.assertEqual(second.shut, [])
+        self.assertFalse(self.mic.is_current(old))
+        self.assertTrue(self.mic.is_current(new))
+        self.mic.write(old, b"\x09\x00")  # ignored once superseded
+        self.assertEqual(self.drained(), b"")
+        self.mic.write(new, b"\x07\x00")
+        self.assertEqual(self.drained(), b"\x07\x00\x07\x00")
+        self.mic.end(new)
+        self.assertFalse(self.mic.is_current(new))
+
+    def test_a_full_fifo_drops_blocks_instead_of_waiting(self):
+        session = self.mic.begin(FakeConnection())
+        worker = threading.Thread(target=self.mic.write, args=(session, b"\x01\x00" * 200_000), daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive(), "a full FIFO held up the writer")
+        data = self.drained()
+        self.assertGreater(len(data), 0)
+        self.assertEqual(len(data) % 4, 0, "dropped blocks must keep the stream frame-aligned")
+
+
+class MicEndpointTest(unittest.TestCase):
+    def serve(self, mic: MicInput | None) -> ControlServer:
+        live = LiveControl(parse_named_filters(processing_graph(), static_options), PROCESSING.read_text(encoding="utf-8"), static_options)
+        server = ControlServer(("127.0.0.1", 0), live, Monitor(enabled=False), mic=mic)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_disabled_mic_answers_404(self):
+        server = self.serve(None)
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        conn.request("POST", "/api/mic", body=[b"\x01\x00"], headers={"Content-Type": "application/octet-stream"}, encode_chunked=True)
+        response = conn.getresponse()
+        self.assertEqual(response.status, 404)
+        self.assertEqual(json.loads(response.read()), {"error": "mic input is disabled"})
+        conn.close()
+
+    def test_chunked_body_is_written_as_stereo_and_answered_ok(self):
+        read_fd, write_fd = os.pipe()
+        os.set_blocking(read_fd, False)
+        os.set_blocking(write_fd, False)
+        self.addCleanup(os.close, read_fd)
+        self.addCleanup(os.close, write_fd)
+        server = self.serve(MicInput(write_fd))
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        conn.request("POST", "/api/mic", body=[b"\x01\x02", b"\x03\x04"], encode_chunked=True)
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.read()), {"ok": True})
+        conn.close()
+        self.assertEqual(os.read(read_fd, 4096), b"\x01\x02\x01\x02\x03\x04\x03\x04")
+
+    def test_a_body_that_is_not_chunked_is_400(self):
+        server = self.serve(MicInput(os.open(os.devnull, os.O_WRONLY)))
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        conn.request("POST", "/api/mic", body=b"\x01\x00", headers={"Content-Length": "2"})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 400)
+        conn.close()
+
+    def test_source_reports_the_live_input_level_key(self):
+        server = self.serve(None)
+        with patch.object(LiveControl, "live_level_db", return_value=-21.5):
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+            conn.request("GET", "/api/source")
+            response = conn.getresponse()
+            self.assertEqual(json.loads(response.read()), {"live_level_db": -21.5})
+            conn.close()
 
 
 if __name__ == "__main__":

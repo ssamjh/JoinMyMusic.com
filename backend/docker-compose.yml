@@ -10,6 +10,8 @@ services:
       - audio
     volumes:
       - ./data:/data  # SQLite DB + Spotify token cache
+      # Read-only: the automate hold reads crossfade_duration from spotify.yml.
+      - ./audio/config:/etc/jmm:ro
     environment:
       SPOTIFY_CLIENT_ID: ""
       SPOTIFY_CLIENT_SECRET: ""

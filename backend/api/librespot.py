@@ -57,6 +57,9 @@ class LibrespotClient:
         # track id -> {"ok": bool, "data": {...}, "retry_at": monotonic seconds}
         self._track_cache: OrderedDict[str, dict] = OrderedDict()
         self._inflight: dict[str, asyncio.Task] = {}
+        # time.monotonic() of the last track-change command sent (skip, previous). The
+        # automate loop treats a track change shortly after this as requested. 0 = none.
+        self.track_request_at = 0.0
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -172,20 +175,46 @@ class LibrespotClient:
         }
         return {"current": current, "queue": self._next_track_from_status(status)}
 
-    async def add_to_queue(self, track_id: str) -> None:
+    async def _player_post(self, path: str, failure: str, json: Optional[dict] = None) -> None:
         try:
-            resp = await self._http.post(
-                "/player/add_to_queue", json={"uri": f"spotify:track:{track_id}"}
-            )
+            resp = await self._http.post(path, json=json)
         except httpx.HTTPError as e:
             raise ValueError(f"Playback service unreachable: {type(e).__name__}")
         if not resp.is_success:
-            raise ValueError(f"Failed to add track to queue (HTTP {resp.status_code})")
+            raise ValueError(f"{failure} (HTTP {resp.status_code})")
+
+    async def _track_change_post(self, path: str, failure: str) -> None:
+        # Marked before the request: the change can be observed before the POST returns.
+        self.track_request_at = time.monotonic()
+        try:
+            await self._player_post(path, failure)
+        except Exception:
+            self.track_request_at = 0.0
+            raise
+
+    async def add_to_queue(self, track_id: str) -> None:
+        await self._player_post(
+            "/player/add_to_queue",
+            "Failed to add track to queue",
+            json={"uri": f"spotify:track:{track_id}"},
+        )
 
     async def skip(self) -> None:
-        try:
-            resp = await self._http.post("/player/next")
-        except httpx.HTTPError as e:
-            raise ValueError(f"Playback service unreachable: {type(e).__name__}")
-        if not resp.is_success:
-            raise ValueError(f"Failed to skip track (HTTP {resp.status_code})")
+        await self._track_change_post("/player/next", "Failed to skip track")
+
+    async def previous(self) -> None:
+        await self._track_change_post("/player/prev", "Failed to go to previous track")
+
+    async def play_pause(self) -> None:
+        await self._player_post("/player/playpause", "Failed to toggle playback")
+
+    async def pause(self) -> None:
+        await self._player_post("/player/pause", "Failed to pause playback")
+
+    async def resume(self) -> None:
+        await self._player_post("/player/resume", "Failed to resume playback")
+
+    async def seek(self, position_ms: int) -> None:
+        await self._player_post(
+            "/player/seek", "Failed to seek", json={"position": int(position_ms)}
+        )

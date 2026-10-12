@@ -39,12 +39,17 @@ intentionally separate containers; never merge them. Both are defined as the
   runtime) -> bridge -> FFmpeg encoder (RADIO_FILTER, safety limiter) -> stereo AAC to an
   RTMP server and an Icecast server (optional VBAN in/out via `config/audio.yml`). It is
   documented in the root `README.md`; there is no separate audio README. Its control API
-  (`backend/audio/scripts/control.py`, JSON only, port 8090, not published) serves meters,
-  the bypasses and the processing graph. The audio monitor UI lives in the API
+  (`backend/audio/scripts/control.py`, port 8090, not published) serves meters, the
+  bypasses, the processing graph, a raw PCM listen feed of the Spotify input before processing (`/api/listen`) and the
+  browser mic input (`/api/mic`, chunked PCM into a FIFO that Liquidsoap mixes with VBAN). The audio monitor UI lives in the API
   (`backend/api/static/audio-monitor.js`/`.css`, scoped under `.jmm-monitor`); the admin
   panel draws it and reaches the control API through an admin-only proxy at
   `/admin/audio/` over the Compose network (`AUDIO_CONTROL_URL`, default
-  `http://audio:8090`).
+  `http://audio:8090`). The admin "Studio" (`backend/api/static/studio.js`) plays that
+  feed over a same-origin WebSocket (`/admin/audio/listen`) and sends the mic over
+  `/admin/audio/mic`; the API relays both to the control API. The admin
+  "Playback" controls and Automate switch live in `backend/api/automate.py`; with Automate
+  off, playback pauses at the end of the current song.
 - The API reads now-playing, the next track, skips and queues songs through the audio
   container's go-librespot REST API (`LIBRESPOT_API_URL`, default `http://audio:3678`).
   It polls go-librespot status and exposes the single `next_track` as the queue

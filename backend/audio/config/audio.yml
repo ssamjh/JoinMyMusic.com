@@ -1,8 +1,14 @@
 # Spotify input level. trim_db is the gain in dB applied to Spotify before it is mixed
-# with the VBAN input and reaches the AGC (-40 to 12; default -12). Lower it to leave
-# more room for the VBAN input; the AGC levels the result either way.
+# with the live inputs (VBAN and the mic) and reaches the AGC (-40 to 12; default -12). Lower it
+# to leave more room for the live inputs; the AGC levels the result either way.
 spotify:
   trim_db: 3
+
+# Live input ducking. While a live input (the VBAN receiver or the microphone) is above its
+# threshold, Spotify is turned down by duck_db so speech sits over the music (-40 to 0;
+# default -10; 0 turns ducking off). It applies to the whole live input bus, whichever inputs are enabled.
+live_input:
+  duck_db: -14
 
 # Optional VBAN output. Set enabled: true and replace ip_address with the
 # receiver's IPv4 address to send the processed radio stream over UDP.
@@ -14,9 +20,7 @@ vban:
 
 # Optional VBAN receiver. Set enabled: true to mix an incoming VBAN stream (for
 # example a mic from another machine) with Spotify, before the radio processing.
-# trim_db is the input's gain in dB (-40 to 12; default -6). duck_db turns Spotify down
-# by that much while the input is live, so speech sits over the music (-40 to 0;
-# default -10; 0 turns ducking off). The sender must send 16-bit PCM at 44.1 kHz, the rate of the whole chain;
+# trim_db is the input's gain in dB (-40 to 12; default -6). The sender must send 16-bit PCM at 44.1 kHz, the rate of the whole chain;
 # nothing is resampled. channels picks the two stream channels to use: '1,2' for stereo, '1,1'
 # for a mono sender. Packets from other addresses are ignored. quality sets the receive
 # jitter buffer: optimal (0.1 s), fast (0.2 s), medium (0.4 s),
@@ -25,8 +29,15 @@ vban_receiver:
   enabled: false
   quality: medium
   trim_db: 4
-  duck_db: -14
   sender_ip: 192.168.1.50
   port: 6980
   stream_name: Stream1
   channels: '1,2'
+
+# The browser microphone. The admin panel sends it through the control API (POST /api/mic)
+# while a talk session is running; nothing is mixed in between sessions. enabled: true
+# (default) makes the input available; false removes it. trim_db is its gain in dB
+# (-40 to 12; default -6), summed with the VBAN input before the Spotify mix.
+mic:
+  enabled: true
+  trim_db: 4

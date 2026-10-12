@@ -91,6 +91,8 @@ song comes from go-librespot's `next_track` status field.
 | `GET /events` | SSE: `metadata`, `listeners`, `history`, `queue`, `skipvotes`, `stop`, `announce`, `preferences` (music metadata delayed to match the audio) |
 | `GET /events-realtime` | Same events, `metadata` and `queue` undelayed; filter with `?music=1` etc. |
 | `GET /metadata`, `GET /history`, `GET /queue` | Current song, play history, and the next song |
+| `GET /admin/requests`, `GET /admin/requests/deleted` | Pending/approved requests and the recent deleted archive (admin auth required) |
+| `POST /admin/requests/{id}/move`, `POST /admin/requests/{id}/approve`, `DELETE /admin/requests/{id}`, `POST /admin/requests/{id}/restore` | Reorder, approve, delete, or restore a request (admin auth required) |
 | `POST /listener` | Listener heartbeat, including `theme` (`light`/`dark`) and `effects` (boolean) |
 | `POST /admin/listener/preferences` | Authenticated per-listener theme/FX command delivered by the `preferences` SSE event |
 
@@ -106,6 +108,14 @@ service enables go-librespot metadata caching so `/status` can provide `next_tra
 whole-context metadata sweeping remains disabled. After changing
 `backend/audio/config/spotify.yml`, restart the audio service with
 `docker compose restart audio` from `backend/`.
+
+Deleted listener requests are stored in SQLite and remain restorable until 12 hours
+after the request was created.
+
+Pending requests have a persistent host-controlled order. New pending requests go to
+the end; moving them changes the order in which the host can approve them, and each
+approval sends that song to the player queue. Deleted requests can be restored to the
+end of the pending list. A song that is currently banned cannot be restored.
 
 #### API tests and benchmark
 
@@ -138,7 +148,7 @@ streams it out. No sound card, desktop or browser is involved.
 ```text
 Spotify Connect --> go-librespot --> supervisor --> Liquidsoap --> bridge --> processor --> bridge --> encoder --> RTMP server
                                                        ^         (FFmpeg,                    +--> AAC / ADTS --> Icecast server
-                              optional VBAN input -----+          replaceable)               +--> optional PCM / VBAN output
+                    optional VBAN input and mic -------+          replaceable)               +--> optional PCM / VBAN output
 ```
 
 **Requirements:** an x86-64 (amd64) Docker host, because the image uses prebuilt amd64
@@ -167,8 +177,8 @@ The login is saved in the `spotify-state` volume. `docker compose down -v` erase
 | `FFMPEG_LOGLEVEL` (default `warning`) | same |
 | `CONTROL_PORT` (default `8090`, `0` disables) | same |
 | Device name, crossfade (5 s), autoplay, login method, volume (off) | `backend/audio/config/spotify.yml` |
-| VBAN output and input, Spotify input trim | `backend/audio/config/audio.yml` |
-| Input AGC and VBAN trim | `backend/audio/config/processing.liq` |
+| VBAN output and input, microphone, live input ducking, Spotify input trim | `backend/audio/config/audio.yml` |
+| Input AGC | `backend/audio/config/processing.liq` |
 | Processing chain | `backend/audio/config/processing.ffmpeg` (applied live) |
 
 The `config/` directory is mounted read-only. Saving `processing.ffmpeg` applies it
@@ -179,9 +189,11 @@ live. After editing `processing.liq`, `audio.yml` or `spotify.yml`, run
 **Processing**
 
 - Liquidsoap is the input stage. It trims Spotify (`spotify.trim_db` in `audio.yml`,
-  default -12 dB), mixes in the optional VBAN input (`vban_receiver.trim_db`, default
-  -6 dB; Spotify is ducked by `vban_receiver.duck_db`, default -10 dB, while the input is
-  live), and applies the input AGC: a gated leveler that moves its gain at fixed
+  default -12 dB) and mixes in the live inputs: the optional VBAN receiver
+  (`vban_receiver.trim_db`, default -6 dB) and the optional microphone (`mic.trim_db`,
+  default -6 dB). The live inputs form one bus; while it is live, Spotify is ducked by
+  `live_input.duck_db` (default -10 dB; 0 turns ducking off). Then it applies the input AGC:
+  a gated leveler that moves its gain at fixed
   dB-per-second rates toward a target RMS level. It won't raise the gain for quiet
   material and holds it during silence, so quiet passages and pauses aren't pumped up.
   Its rates, range and thresholds are named settings at the top of the AGC section.
@@ -245,8 +257,17 @@ The control API (the admin proxy passes on only the state, bypass, meter and gra
 calls): `GET /api/state`, `POST /api/param`, `POST /api/bypass`, `POST /api/agc`,
 `POST /api/reset`, `GET /api/export`, `GET /api/meters` (server-sent events),
 `GET /api/graph`, `POST /api/graph` with `{"text": "..."}`, `POST /api/graph/reload`
-and `GET /api/source` (the VBAN input level, `{"vban_level_db": ...}`, `null` when the
-receiver is off; the API reads it directly).
+and `GET /api/source` (the live input level, `{"live_level_db": ...}`: the VBAN and
+mic bus before its trims, `null` when neither is on; the API reads it directly).
+`GET /api/listen` streams the Spotify input, as the pump sends it to Liquidsoap, as raw signed
+16-bit stereo PCM at 44.1 kHz, from the moment the request starts, until the client disconnects.
+It is real time and unprocessed, and carries no microphone or VBAN audio. Each listener has a
+1 s queue; a listener that falls behind loses its oldest audio and never slows the pump.
+`POST /api/mic` is the microphone input: the body is a chunked (`Transfer-Encoding:
+chunked`) stream of raw signed 16-bit mono PCM at 44.1 kHz for one talk session. It is
+mixed in with the live inputs while the session runs. A new session ends the previous one,
+and the response `{"ok": true}` comes when the body ends. Nothing is mixed in between
+sessions. It returns 404 when `mic.enabled` is false.
 A graph that FFmpeg rejects returns 400 with the message. A swap already in progress
 returns 409, and a replacement that does not take over returns 503.
 

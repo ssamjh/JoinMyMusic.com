@@ -84,7 +84,7 @@ def reset_state():
     sse.delayed_current_metadata.clear()
     sse.deck_state.update(songid="", side="left")
     sse.spotify_playing["value"] = None
-    sse.latest_snapshot.update(current=None, polled_at=None, monotonic=None)
+    sse.latest_snapshot.update(current=None, queue=[], polled_at=None, monotonic=None)
     sse.live_input_state.update(live=False, realtime=False)
 
 

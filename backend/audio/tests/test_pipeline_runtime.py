@@ -192,6 +192,38 @@ class PipelineRuntimeTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(SystemExit):
                 load("vban_receiver:\n  enabled: true\n" + bad)
 
+    def test_mic_and_live_input_config(self):
+        sys.path.insert(0, str(RUNNER.parent))
+        import run as runtime
+
+        def load(function, text: str):
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "audio.yml"
+                path.write_text(text, encoding="utf-8")
+                with patch.dict(os.environ, {"AUDIO_CONFIG_PATH": str(path)}):
+                    return function()
+
+        self.assertEqual(load(runtime.load_mic_config, ""), {"enabled": True, "trim_db": -6.0})
+        self.assertEqual(
+            load(runtime.load_mic_config, "mic:\n  enabled: false\n  trim_db: 3\n"),
+            {"enabled": False, "trim_db": 3.0},
+        )
+        self.assertEqual(load(runtime.load_live_input_config, ""), {"duck_db": -10.0})
+        self.assertEqual(load(runtime.load_live_input_config, "live_input:\n  duck_db: 0\n"), {"duck_db": 0.0})
+        for text in ("mic: nope\n", "mic:\n  enabled: 1\n", "mic:\n  trim_db: 13\n",
+                     "mic:\n  trim_db: -41\n", "mic:\n  trim_db: true\n"):
+            with self.subTest(text=text), self.assertRaises(SystemExit):
+                load(runtime.load_mic_config, text)
+        for text in ("live_input: [1]\n", "live_input:\n  duck_db: 1\n"):
+            with self.subTest(text=text), self.assertRaises(SystemExit):
+                load(runtime.load_live_input_config, text)
+        # ducking moved out of vban_receiver: an old key is refused rather than ignored
+        with self.assertRaises(SystemExit):
+            load(
+                runtime.load_vban_receiver_config,
+                "vban_receiver:\n  enabled: true\n  sender_ip: 10.0.0.5\n  duck_db: -10\n",
+            )
+
     def test_unpaced_writer_is_throttled_without_losing_audio(self):
         """go-librespot's pipe output writes as fast as it can; no audio may be dropped."""
         with tempfile.TemporaryDirectory(prefix="jmm-pipeline-") as temp:

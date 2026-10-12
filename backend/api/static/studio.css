@@ -1,0 +1,7 @@
+/* Studio styles. Scoped to .jmm-studio so they only touch the deck inside the admin panel. */
+.jmm-studio .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+.jmm-studio .meter { height: 14px; overflow: hidden; border-radius: 3px;
+                     border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg, #0a0c10); }
+.jmm-studio .meter > div { height: 100%; width: 0; background: #22c55e; }
+.jmm-studio .meter > div.hot { background: #f59e0b; }
+.jmm-studio .meter > div.clip { background: #ef4444; }

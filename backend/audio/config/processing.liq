@@ -1,8 +1,8 @@
 # Liquidsoap input stage. It reads the Spotify PCM from the FIFO, fills gaps with
-# silence (mksafe), applies a fixed Spotify input trim, mixes in the optional VBAN
-# receiver input (with its own trim), runs the slow gated input AGC, and writes 44.1 kHz
-# stereo s16le PCM to stdout. The rest of the radio processing is in
-# config/processing.ffmpeg, run by FFmpeg after this.
+# silence (mksafe), applies a fixed Spotify input trim, mixes in the optional live inputs
+# (the VBAN receiver and the microphone, each with its own trim), runs the slow gated input
+# AGC, and writes 44.1 kHz stereo s16le PCM to stdout. The rest of the radio processing is
+# in config/processing.ffmpeg, run by FFmpeg after this.
 
 settings.log.stdout.set(false)
 settings.log.file.set(false)
@@ -24,44 +24,77 @@ raw = mksafe(raw)
 spotify_trim_db = float_of_string(getenv(default="-12.0", "SPOTIFY_TRIM_DB"))
 raw = amplify(lin_of_dB(spotify_trim_db), raw)
 
-# Optional VBAN receiver input (vban_receiver in audio.yml). vban_receptor writes the
-# sender's 16-bit stereo PCM to this FIFO, at 44.1 kHz like the rest of the chain, so it
-# is not resampled. It is trimmed, summed with Spotify, and is silent while no sender is live.
+# Live input bus: the optional VBAN receiver and the optional microphone, each trimmed and
+# summed with Spotify. A source that is off is blank (silent), so the bus works with either
+# input alone or both. Each input is mksafe, so the mix never waits on a sender.
+#  - VBAN receiver: vban_receptor writes the sender's 16-bit stereo PCM to a FIFO at 44.1 kHz,
+#    so it is not resampled. Its jitter buffer is vban_receiver.quality (medium = 0.4 s).
+#  - Microphone: the control API (POST /api/mic) writes the browser microphone, duplicated to
+#    stereo, to a FIFO at 44.1 kHz. Nothing is written between sessions, so the input is silent
+#    then. Its buffer is 0.15 s.
+# The inputs are measured before the trims, for the level command and the ducking below.
 vban_fifo = getenv("VBAN_INPUT_FIFO")
-# Jitter buffer from vban_receiver.quality in audio.yml (medium = 0.4 s).
-vban_buffer = float_of_string(getenv(default="0.4", "VBAN_INPUT_BUFFER"))
-radio = if vban_fifo == "" then
+mic_fifo = getenv("MIC_INPUT_FIFO")
+radio = if vban_fifo == "" and mic_fifo == "" then
   raw
 else
-  vban_in = input.external.rawaudio(
-    id="jmm_vban_in",
-    buffer=vban_buffer,
-    max=2.0 * vban_buffer,
-    channels=2,
-    samplerate=44100,
-    restart=true,
-    "cat #{string.quote(vban_fifo)}"
-  )
-  # The input's level over 50 ms, for the ducking below.
-  vban_fast = rms(duration=0.05, mksafe(vban_in))
-  # The input's level (RMS dBFS, before its trim), read by the control API's /api/source.
-  # The API uses it to tell when the stream is the VBAN input alone.
+  # Jitter buffer from vban_receiver.quality in audio.yml (medium = 0.4 s).
+  vban_buffer = float_of_string(getenv(default="0.4", "VBAN_INPUT_BUFFER"))
+  vban_in = if vban_fifo == "" then
+    blank()
+  else
+    mksafe(input.external.rawaudio(
+      id="jmm_vban_in",
+      buffer=vban_buffer,
+      max=2.0 * vban_buffer,
+      channels=2,
+      samplerate=44100,
+      restart=true,
+      "cat #{string.quote(vban_fifo)}"
+    ))
+  end
+  mic_in = if mic_fifo == "" then
+    blank()
+  else
+    mksafe(input.external.rawaudio(
+      id="jmm_mic_in",
+      buffer=0.15,
+      max=0.30,
+      channels=2,
+      samplerate=44100,
+      restart=true,
+      "cat #{string.quote(mic_fifo)}"
+    ))
+  end
+  # Each input is measured in its own path to the mix, so the measurements run on every
+  # frame (a source that reaches no output is never computed). The bus level is the power
+  # sum of the two: each input's level over 50 ms for the ducking below, and over 1 s for
+  # the level command.
+  vban_fast = rms(duration=0.05, vban_in)
   vban_in = rms(duration=1.0, vban_fast)
+  mic_fast = rms(duration=0.05, mic_in)
+  mic_in = rms(duration=1.0, mic_fast)
+  def bus_level(a, b) =
+    sqrt(a * a + b * b)
+  end
+  # The bus's level (RMS dBFS, before the trims), read by the control API's /api/source.
+  # The API uses it to tell when the stream is live input alone.
   server.register(
-    description="VBAN input RMS level in dBFS.",
-    "vban_level",
+    description="Live input bus RMS level in dBFS, before the trims.",
+    "live_level",
     fun (_) -> begin
-      level = vban_in.rms()
+      level = bus_level(vban_in.rms(), mic_in.rms())
       if level > 0. then string_of(dB_of_lin(level)) else "-200." end
     end
   )
-  # VBAN input trim: vban_receiver.trim_db in audio.yml (default -6 dB).
+  # Input trims: vban_receiver.trim_db (default -6 dB) and mic.trim_db (default -6 dB) in audio.yml.
   vban_trim_db = float_of_string(getenv(default="-6.0", "VBAN_INPUT_TRIM_DB"))
-  # Ducking: while the VBAN input is above duck_threshold_db (RMS dBFS, before its trim),
-  # Spotify is turned down by duck_db (vban_receiver.duck_db in audio.yml; 0 is off) at
-  # duck_attack_db_s. duck_hold seconds after the input falls below the threshold, so
-  # Spotify does not come up between words, it returns at duck_release_db_s.
-  duck_db = float_of_string(getenv(default="0.0", "VBAN_DUCK_DB"))
+  mic_trim_db = float_of_string(getenv(default="-6.0", "MIC_INPUT_TRIM_DB"))
+  # Ducking: while the live bus is above duck_threshold_db (RMS dBFS, before the trims), Spotify
+  # is turned down by duck_db (live_input.duck_db in audio.yml; 0 is off) at duck_attack_db_s.
+  # duck_hold seconds after the bus falls below the threshold, so Spotify does not come up
+  # between words; it returns at duck_release_db_s.
+  duck_db = float_of_string(getenv(default="0.0", "LIVE_DUCK_DB"))
   duck_threshold_db = -40.0
   duck_hold = 0.6
   duck_attack_db_s = 30.0
@@ -72,7 +105,7 @@ else
   # in real time whatever the frame size.
   def duck_update() =
     duck_step = frame.duration()
-    level = vban_fast.rms()
+    level = bus_level(vban_fast.rms(), mic_fast.rms())
     if level > 0. and dB_of_lin(level) > duck_threshold_db then
       duck_held := duck_hold
     else
@@ -88,7 +121,8 @@ else
   end
   mixed = add(normalize=false, [
     amplify({lin_of_dB(!duck_gain_db)}, raw),
-    amplify(lin_of_dB(vban_trim_db), vban_in)
+    amplify(lin_of_dB(vban_trim_db), vban_in),
+    amplify(lin_of_dB(mic_trim_db), mic_in)
   ])
   if duck_db < 0. then source.on_frame(mixed, duck_update) else mixed end
 end

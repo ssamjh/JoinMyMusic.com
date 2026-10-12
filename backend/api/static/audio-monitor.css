@@ -107,3 +107,5 @@
 .jmm-monitor.embedded .seg button { border-radius: var(--bs-border-radius-sm); }
 .jmm-monitor.embedded #jm-graphText { background: var(--bs-tertiary-bg); font: 12px/1.4 var(--mono); }
 .jmm-monitor.embedded footer { max-width: none; padding: 4px 0 0; }
+/* The input-only view in the studio deck: a shorter waveform to save room under the progress bar. */
+.jmm-monitor.input-only .wave canvas { height: 120px; }
