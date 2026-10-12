@@ -1234,6 +1234,12 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.5);
     --plate-rule: color-mix(in srgb, var(--accent) 75%, #3a2614);
     --plate-ink: color-mix(in srgb, var(--accent) 65%, #1a120a);
+    transition: transform 0.65s ease-out;
+  }
+  /* With nothing playing the card stays down in the slot, out of view. */
+  body:not(.no-bg-animation) .title-plate:has(.div-playing-title:empty) {
+    transform: translateY(110%);
+    transition-timing-function: ease-in;
   }
   /* One line, like a strip: long titles end in an ellipsis instead of growing the card. */
   body:not(.no-bg-animation) .title-plate .div-playing-title {
