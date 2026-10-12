@@ -29,6 +29,7 @@ from sse import (
     broadcast_both,
     broadcaster,
     cleanup_listeners,
+    current_track_snapshot,
     cleanup_old_requests,
     live_input_state,
     live_metadata_for_clients,
@@ -36,23 +37,37 @@ from sse import (
     poll_live_input,
     poll_spotify,
     realtime_broadcaster,
+    SSE_CLOSED,
     refresh_queue_now,
     refresh_token_loop,
 )
 from storage import (
+    active_bans,
     active_listener_count,
+    add_ban,
+    add_song_ban,
+    ban_matches,
     check_rate_limit,
     check_submission_id,
-    get_db,
+    delete_ban,
+    delete_song_ban,
     get_history,
+    get_request,
     init_db,
+    insert_request,
     is_banned,
     is_song_banned,
+    list_admin_requests,
+    list_bans,
+    list_song_bans,
     normalize_ban_ip,
     normalize_songid,
     listeners,
+    read_auto_approve,
+    set_request_status,
     upcoming_queue,
     vote_skips,
+    write_auto_approve,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -63,10 +78,34 @@ logger = logging.getLogger(__name__)
 spotify_client = SpotifyClient()
 librespot = LibrespotClient(spotify_client)
 
+# Shared outbound HTTP clients, one per upstream. Created in the lifespan and closed on
+# shutdown; http_client() also creates one on first use so code paths that run without
+# the lifespan (tests, tools) still work. Timeouts are per client, and the meter stream
+# overrides its read timeout per request.
+HTTP_CLIENT_TIMEOUTS = {"turnstile": 10, "cover": 10, "audio": 30}
+_http_clients: dict[str, httpx.AsyncClient] = {}
+
+
+def http_client(name: str) -> httpx.AsyncClient:
+    client = _http_clients.get(name)
+    if client is None:
+        client = httpx.AsyncClient(timeout=HTTP_CLIENT_TIMEOUTS[name])
+        _http_clients[name] = client
+    return client
+
+
+async def close_http_clients() -> None:
+    clients = list(_http_clients.values())
+    _http_clients.clear()
+    for client in clients:
+        await client.aclose()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    for name in HTTP_CLIENT_TIMEOUTS:
+        http_client(name)
     tasks = [
         asyncio.create_task(poll_spotify(librespot, listeners, vote_skips)),
         asyncio.create_task(poll_live_input()),
@@ -81,6 +120,8 @@ async def lifespan(app: FastAPI):
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await close_http_clients()
+        await librespot.aclose()
 
 
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -156,12 +197,11 @@ def admin_page_response(request: Request, html: str) -> HTMLResponse:
 async def verify_turnstile(token: str, ip: str) -> bool:
     if not TURNSTILE_SECRET:
         return True  # Skip verification when no secret configured
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-            data={"secret": TURNSTILE_SECRET, "response": token, "remoteip": ip},
-        )
-        return resp.json().get("success", False)
+    resp = await http_client("turnstile").post(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        data={"secret": TURNSTILE_SECRET, "response": token, "remoteip": ip},
+    )
+    return resp.json().get("success", False)
 
 # ─── SSE ─────────────────────────────────────────────────────────────────────
 
@@ -180,11 +220,14 @@ async def sse_events(request: Request):
 
             while True:
                 try:
-                    event, data = await asyncio.wait_for(queue.get(), timeout=20)
-                    message = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+                    item = await asyncio.wait_for(queue.get(), timeout=20)
                 except asyncio.TimeoutError:
-                    message = ": keepalive\n\n"
-                yield message
+                    yield ": keepalive\n\n"
+                    continue
+                if item is SSE_CLOSED:
+                    return  # dropped for falling behind; the client reconnects
+                event, data = item
+                yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
         except asyncio.CancelledError:
             raise
         finally:
@@ -238,9 +281,9 @@ async def sse_events_realtime(request: Request):
     async def event_generator():
         queue = realtime_broadcaster.subscribe()
         try:
-            metadata = await librespot.get_current_playback()
             if "music" in allowed:
-                yield f"event: metadata\ndata: {json.dumps(live_metadata_for_clients(metadata.get('current', {})))}\n\n"
+                current, polled_at = await current_track_snapshot(librespot)
+                yield f"event: metadata\ndata: {json.dumps(live_metadata_for_clients(current, polled_at))}\n\n"
                 yield f"event: history\ndata: {json.dumps({'history': get_history()})}\n\n"
                 yield f"event: queue\ndata: {json.dumps({'queue': upcoming_queue})}\n\n"
                 yield f"event: source\ndata: {json.dumps({'live': live_input_state['realtime']})}\n\n"
@@ -249,13 +292,16 @@ async def sse_events_realtime(request: Request):
 
             while True:
                 try:
-                    event, data = await asyncio.wait_for(queue.get(), timeout=20)
-                    if _REALTIME_EVENT_CATEGORY.get(event) not in allowed:
-                        continue
-                    message = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+                    item = await asyncio.wait_for(queue.get(), timeout=20)
                 except asyncio.TimeoutError:
-                    message = ": keepalive\n\n"
-                yield message
+                    yield ": keepalive\n\n"
+                    continue
+                if item is SSE_CLOSED:
+                    return  # dropped for falling behind; the client reconnects
+                event, data = item
+                if _REALTIME_EVENT_CATEGORY.get(event) not in allowed:
+                    continue
+                yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
         except asyncio.CancelledError:
             raise
         finally:
@@ -351,7 +397,7 @@ BAN_MESSAGE = "You have been banned from requesting songs."
 
 @app.post("/search")
 async def search_songs(payload: SearchPayload, request: Request):
-    if is_banned(request.client.host, payload.uuid):
+    if await asyncio.to_thread(is_banned, request.client.host, payload.uuid):
         raise HTTPException(status_code=403, detail=BAN_MESSAGE)
     if not check_rate_limit("search", request.client.host, 500, 3600):
         raise HTTPException(status_code=429, detail="Too many searches. Wait a bit and try again.")
@@ -377,9 +423,9 @@ class RequestPayload(BaseModel):
 async def add_request(payload: RequestPayload, request: Request):
     ip = request.client.host
 
-    if is_banned(ip, payload.uuid):
+    if await asyncio.to_thread(is_banned, ip, payload.uuid):
         raise HTTPException(status_code=403, detail=BAN_MESSAGE)
-    if is_song_banned(payload.uri):
+    if await asyncio.to_thread(is_song_banned, payload.uri):
         raise HTTPException(status_code=403, detail="This song can't be requested.")
     if not check_rate_limit("add", ip, 10, 1800):
         raise HTTPException(status_code=429, detail="Slow down on the requests there bud. Try again soon.")
@@ -403,39 +449,30 @@ async def add_request(payload: RequestPayload, request: Request):
     except Exception:
         pass
 
-    db = get_db()
-    try:
-        row = db.execute("SELECT value FROM settings WHERE key='auto_approve'").fetchone()
-        auto_approve = row["value"] == "true" if row else False
+    auto_approve = (await asyncio.to_thread(read_auto_approve)) == "true"
 
-        if auto_approve:
-            await librespot.add_to_queue(payload.uri)
-            await refresh_queue_now(librespot)
-            status = "approved"
-            message = "Your request has been automatically approved and added to the queue!"
-        else:
-            status = "pending"
-            message = "Thanks, your request has been added to the queue for approval!"
+    if auto_approve:
+        await librespot.add_to_queue(payload.uri)
+        await refresh_queue_now(librespot)
+        status = "approved"
+        message = "Your request has been automatically approved and added to the queue!"
+    else:
+        status = "pending"
+        message = "Thanks, your request has been added to the queue for approval!"
 
-        db.execute(
-            """INSERT INTO requests
-               (spotify_uri, track_name, artist_name, album_name, cover_url,
-                requester_name, requester_ip, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                payload.uri,
-                track_info.get("song", ""),
-                ", ".join(a["name"] for a in track_info.get("artist", [])),
-                track_info.get("album", ""),
-                track_info.get("cover", ""),
-                name,
-                ip,
-                status,
-            ),
-        )
-        db.commit()
-    finally:
-        db.close()
+    await asyncio.to_thread(
+        insert_request,
+        (
+            payload.uri,
+            track_info.get("song", ""),
+            ", ".join(a["name"] for a in track_info.get("artist", [])),
+            track_info.get("album", ""),
+            track_info.get("cover", ""),
+            name,
+            ip,
+            status,
+        ),
+    )
 
     return {"success": True, "message": message}
 
@@ -451,7 +488,7 @@ class SkipPayload(BaseModel):
 async def vote_skip(payload: SkipPayload, request: Request):
     ip = request.client.host
 
-    if is_banned(ip, payload.uuid):
+    if await asyncio.to_thread(is_banned, ip, payload.uuid):
         raise HTTPException(status_code=403, detail="You have been banned from voting to skip.")
     if not await verify_turnstile(payload.turnstile, ip):
         raise HTTPException(status_code=400, detail="Turnstile verification failed")
@@ -462,8 +499,8 @@ async def vote_skip(payload: SkipPayload, request: Request):
     if not check_rate_limit("vote", ip, 5, 60):
         raise HTTPException(status_code=429, detail="Too many vote attempts. Please wait before trying again.")
 
-    metadata = await librespot.get_current_playback()
-    current_song_id =metadata.get("current", {}).get("songid", "")
+    current, _ = await current_track_snapshot(librespot)
+    current_song_id = current.get("songid", "")
     if payload.songid != current_song_id:
         raise HTTPException(status_code=400, detail="Voted song does not match currently playing song")
 
@@ -495,9 +532,9 @@ async def vote_skip(payload: SkipPayload, request: Request):
 
 @app.get("/skip/stats")
 async def skip_stats():
-    metadata = await librespot.get_current_playback()
-    song_id = metadata.get("current", {}).get("songid", "")
-    count =len(vote_skips.get(song_id, set()))
+    current, _ = await current_track_snapshot(librespot)
+    song_id = current.get("songid", "")
+    count = len(vote_skips.get(song_id, set()))
     total_listeners = active_listener_count()
     needed = max(2, -(-total_listeners // 2))
     return {"song": song_id, "count": count, "needed": needed}
@@ -514,8 +551,7 @@ async def cover(image_id: str):
     if not COVER_ID_RE.match(image_id):
         raise HTTPException(status_code=404, detail="Not found")
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"https://i.scdn.co/image/{image_id}")
+        resp = await http_client("cover").get(f"https://i.scdn.co/image/{image_id}")
     except httpx.HTTPError:
         raise HTTPException(status_code=502, detail="Upstream image fetch failed")
     if resp.status_code != 200:
@@ -1072,11 +1108,14 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
     url = f"{AUDIO_CONTROL_URL}/{path}"
     if path == "api/meters":
         # Server-sent events: relay the stream as it arrives.
-        client = httpx.AsyncClient(timeout=httpx.Timeout(10, read=None))
+        client = http_client("audio")
+        # No read timeout: the stream stays open for as long as the viewer watches.
+        meter_timeout = httpx.Timeout(10, read=None)
         try:
-            upstream = await client.send(client.build_request("GET", url), stream=True)
+            upstream = await client.send(
+                client.build_request("GET", url, timeout=meter_timeout), stream=True
+            )
         except httpx.HTTPError:
-            await client.aclose()
             return JSONResponse({"error": "audio control is unreachable"}, status_code=502)
 
         async def relay():
@@ -1084,8 +1123,8 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
                 async for chunk in upstream.aiter_raw():
                     yield chunk
             finally:
+                # Only the upstream response is closed; the shared client stays open.
                 await upstream.aclose()
-                await client.aclose()
 
         return StreamingResponse(
             relay(),
@@ -1099,9 +1138,10 @@ async def admin_audio_proxy(path: str, request: Request, _: None = Depends(requi
         body = await request.body()
         headers["Content-Type"] = request.headers.get("content-type", "application/json")
     try:
-        # Applying a graph waits for the new processor to warm up and take over.
-        async with httpx.AsyncClient(timeout=30) as client:
-            upstream = await client.request(request.method, url, content=body, headers=headers)
+        # Applying a graph waits for the new processor to warm up and take over (30 s client timeout).
+        upstream = await http_client("audio").request(
+            request.method, url, content=body, headers=headers
+        )
     except httpx.HTTPError:
         return JSONResponse({"error": "audio control is unreachable"}, status_code=502)
     return Response(
@@ -1119,51 +1159,29 @@ async def admin_panel(request: Request):
 
 @app.get("/admin/requests")
 async def admin_get_requests(_: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        rows = db.execute(
-            "SELECT * FROM requests WHERE status IN ('pending', 'approved') ORDER BY created_at DESC LIMIT 100"
-        ).fetchall()
-    finally:
-        db.close()
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["requester_banned"] = is_banned(d.get("requester_ip"))
-        d["song_banned"] = is_song_banned(d.get("spotify_uri"))
-        result.append(d)
-    return result
+    return await asyncio.to_thread(list_admin_requests)
 
 
 @app.post("/admin/requests/{request_id}/approve")
 async def admin_approve_request(request_id: int, _: None = Depends(require_admin)):
-    db = get_db()
     try:
-        row = db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
+        row = await asyncio.to_thread(get_request, request_id)
         if not row:
             raise HTTPException(status_code=404, detail="Request not found")
         await librespot.add_to_queue(row["spotify_uri"])
         await refresh_queue_now(librespot)
-        db.execute("UPDATE requests SET status='approved' WHERE id=?", (request_id,))
-        db.commit()
+        await asyncio.to_thread(set_request_status, request_id, "approved")
         return {"success": True}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @app.delete("/admin/requests/{request_id}")
 async def admin_delete_request(request_id: int, _: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        db.execute("UPDATE requests SET status='deleted' WHERE id=?", (request_id,))
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
+    await asyncio.to_thread(set_request_status, request_id, "deleted")
+    return {"success": True}
 
 
 @app.get("/admin/listeners")
@@ -1175,24 +1193,21 @@ async def admin_get_listeners(_: None = Depends(require_admin)):
             uuid = entry.split(":")[0]
             current_voters.add(uuid)
 
+    bans = await asyncio.to_thread(active_bans)
     result = []
     for uuid, data in listeners.items():
         result.append({
             **data,
             "voted_skip": uuid in current_voters,
-            "banned": is_banned(data.get("ip"), uuid),
+            "banned": ban_matches(bans, data.get("ip"), uuid),
         })
     return result
 
 
 @app.get("/admin/settings")
 async def admin_get_settings(_: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        row = db.execute("SELECT value FROM settings WHERE key='auto_approve'").fetchone()
-        return {"auto_approve": row["value"] if row else "false"}
-    finally:
-        db.close()
+    value = await asyncio.to_thread(read_auto_approve)
+    return {"auto_approve": value if value is not None else "false"}
 
 
 class AutoApprovePayload(BaseModel):
@@ -1201,14 +1216,9 @@ class AutoApprovePayload(BaseModel):
 
 @app.post("/admin/auto-approve")
 async def admin_set_auto_approve(payload: AutoApprovePayload, _: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        value = "true" if payload.enabled else "false"
-        db.execute("INSERT OR REPLACE INTO settings VALUES ('auto_approve', ?)", (value,))
-        db.commit()
-        return {"success": True, "auto_approve": value}
-    finally:
-        db.close()
+    value = "true" if payload.enabled else "false"
+    await asyncio.to_thread(write_auto_approve, value)
+    return {"success": True, "auto_approve": value}
 
 # ─── Remote control ──────────────────────────────────────────────────────────
 # Push commands to connected clients over SSE. Targeting is best-effort: SSE is
@@ -1276,15 +1286,7 @@ class BanPayload(BaseModel):
 
 @app.get("/admin/bans")
 async def admin_get_bans(_: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        # Expired temporary bans are dead weight — sweep them while we're here.
-        db.execute("DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')")
-        db.commit()
-        rows = db.execute("SELECT * FROM bans ORDER BY created_at DESC").fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        db.close()
+    return await asyncio.to_thread(list_bans)
 
 
 @app.post("/admin/bans")
@@ -1295,34 +1297,14 @@ async def admin_add_ban(payload: BanPayload, _: None = Depends(require_admin)):
     if not ip and not uuid:
         raise HTTPException(status_code=400, detail="Provide an IP and/or a listener ID to ban")
     minutes = payload.duration_minutes or 0
-    db = get_db()
-    try:
-        if minutes > 0:
-            db.execute(
-                """INSERT INTO bans (ip, uuid, reason, expires_at)
-                   VALUES (?, ?, ?, datetime('now', '+' || ? || ' minutes'))""",
-                (ip, uuid, (payload.reason or "").strip(), minutes),
-            )
-        else:
-            db.execute(
-                "INSERT INTO bans (ip, uuid, reason) VALUES (?, ?, ?)",
-                (ip, uuid, (payload.reason or "").strip()),
-            )
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
+    await asyncio.to_thread(add_ban, ip, uuid, (payload.reason or "").strip(), minutes)
+    return {"success": True}
 
 
 @app.delete("/admin/bans/{ban_id}")
 async def admin_delete_ban(ban_id: int, _: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        db.execute("DELETE FROM bans WHERE id=?", (ban_id,))
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
+    await asyncio.to_thread(delete_ban, ban_id)
+    return {"success": True}
 
 
 class SongBanPayload(BaseModel):
@@ -1333,12 +1315,7 @@ class SongBanPayload(BaseModel):
 
 @app.get("/admin/song-bans")
 async def admin_get_song_bans(_: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        rows = db.execute("SELECT * FROM song_bans ORDER BY created_at DESC").fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        db.close()
+    return await asyncio.to_thread(list_song_bans)
 
 
 @app.post("/admin/song-bans")
@@ -1346,32 +1323,16 @@ async def admin_add_song_ban(payload: SongBanPayload, _: None = Depends(require_
     sid = normalize_songid(payload.songid)
     if not sid:
         raise HTTPException(status_code=400, detail="No song id provided")
-    db = get_db()
-    try:
-        db.execute(
-            "INSERT OR IGNORE INTO song_bans (songid, track_name, artist_name) VALUES (?, ?, ?)",
-            (sid, (payload.track_name or "").strip(), (payload.artist_name or "").strip()),
-        )
-        # A banned song has no business sitting in the pending queue either
-        db.execute(
-            "UPDATE requests SET status='deleted' WHERE status='pending' AND spotify_uri IN (?, ?)",
-            (sid, f"spotify:track:{sid}"),
-        )
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
+    await asyncio.to_thread(
+        add_song_ban, sid, (payload.track_name or "").strip(), (payload.artist_name or "").strip()
+    )
+    return {"success": True}
 
 
 @app.delete("/admin/song-bans/{ban_id}")
 async def admin_delete_song_ban(ban_id: int, _: None = Depends(require_admin)):
-    db = get_db()
-    try:
-        db.execute("DELETE FROM song_bans WHERE id=?", (ban_id,))
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
+    await asyncio.to_thread(delete_song_ban, ban_id)
+    return {"success": True}
 
 
 @app.get("/admin/bans/view", response_class=HTMLResponse)

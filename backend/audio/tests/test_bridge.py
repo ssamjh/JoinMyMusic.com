@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -356,6 +357,31 @@ class SampleMathTest(unittest.TestCase):
         self.assertAlmostEqual(values[0], 0.5 * DRY, places=5)
         self.assertAlmostEqual(values[1], -0.5 * DRY, places=5)
         self.assertEqual(len(values), 2 * B.BLOCK_FRAMES)
+
+    def test_dry_block_is_bit_identical_to_the_generator_it_replaced(self):
+        def reference(block: bytes) -> bytes:
+            # The implementation before the list comprehension, kept as the reference.
+            samples = array.array("h")
+            samples.frombytes(block)
+            if not B._LITTLE_ENDIAN:
+                samples.byteswap()
+            return B._float_bytes(array.array("f", (value * B._DRY_SCALE for value in samples)))
+
+        every_value = array.array("h", range(-32768, 32768)).tobytes()
+        self.assertEqual(B.dry_block(every_value), reference(every_value))
+        blocks = [array.array("h", [-32768, 32767, 0, -1, 1, 12345] * 147).tobytes(), bytes(B.IN_BLOCK_BYTES)]
+        for seed in range(20):
+            state = seed * 7919 + 1
+            values = []
+            for _ in range(2 * B.BLOCK_FRAMES):
+                state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+                values.append((state >> 8) % 65536 - 32768)
+            blocks.append(array.array("h", values).tobytes())
+        for block in blocks:
+            self.assertEqual(B.dry_block(block), reference(block))
+        with unittest.mock.patch.object(B, "_LITTLE_ENDIAN", False):  # the big-endian branch
+            for block in blocks:
+                self.assertEqual(B.dry_block(block), reference(block))
 
     def test_crossfade_mix_is_linear_across_the_window(self):
         old = array.array("f", [1.0] * (2 * B.BLOCK_FRAMES)).tobytes()

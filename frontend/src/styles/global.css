@@ -1416,7 +1416,7 @@
     .history-panel .history-item:nth-child(4n + 2), .history-reserve-slot:nth-child(4n + 2) { --stack-pos: 1; }
     .history-panel .history-item:nth-child(4n + 3), .history-reserve-slot:nth-child(4n + 3) { --stack-pos: 2; }
     .history-panel .history-item:nth-child(4n + 4), .history-reserve-slot:nth-child(4n + 4) { --stack-pos: 3; }
-    .history-panel .history-item:nth-child(n + 5) { --stack-row: 1; }
+    .history-panel .history-item:nth-child(n + 5), .history-reserve-slot:nth-child(n + 5) { --stack-row: 1; }
     body:not(.no-bg-animation) .history-panel .history-item {
       z-index: calc(20 - var(--record-index, 0));
       /* Turned away, the row draws narrower than its boxes; re-centre it on the shelf. */

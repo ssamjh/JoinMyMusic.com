@@ -168,7 +168,8 @@ function updateTonearm({ entry = false } = {}) {
   const el = document.getElementById("tonearm");
   if (!el) return;
   if (songStartedAtPerf == null || !songDurationMs) {
-    el.classList.remove("ready");
+    // Nothing playing: the arm stays visible, parked beside the record.
+    el.classList.add("ready");
     if (el.style.transform !== `rotate(${TONEARM_PARK_DEG}deg)`) parkTonearm(el);
     return;
   }

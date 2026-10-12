@@ -134,9 +134,11 @@ python3 -m unittest discover -s tests -v
 ## Verification
 
 - For frontend changes, run `npm run check` and `npm run build` from `frontend/`.
-- There is currently no automated API test suite. For API changes, at minimum
-  verify imports/startup or run the service with suitable environment values,
-  then exercise the affected endpoint or SSE flow.
+- The API has a stdlib `unittest` suite in `backend/api/tests` (run
+  `python -m unittest discover -s tests -v` from `backend/api`); the benchmark is
+  `backend/api/tools/bench.py`. For API changes, also verify imports/startup or run
+  the service with suitable environment values, then exercise the affected
+  endpoint or SSE flow.
 - For audio changes, run the `backend/audio/tests` suite on Linux (or in the
   image) and keep the Audio section of `README.md` in sync with `scripts/run.py`
   and `config/`. Processing changes should be measured with `tools/processing_lab.py`.

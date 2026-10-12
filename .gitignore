@@ -4,6 +4,10 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
+
+# API benchmark output
+/backend/api/bench*.json
 
 # Frontend
 /frontend/node_modules/

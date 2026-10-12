@@ -33,7 +33,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
-from bridge import COMMITTED, CROSSFADE_FRAMES, WARMUP_FRAMES, BridgeBusy, Processor, SwapFailed
+from bridge import (
+    COMMITTED,
+    CROSSFADE_FRAMES,
+    WARMUP_FRAMES,
+    BridgeBusy,
+    Processor,
+    SwapFailed,
+    name_current_thread,
+)
 
 DEFAULT_CONTROL_PORT = 8090
 DEFAULT_ZMQ_PORT = 5555
@@ -48,7 +56,9 @@ RING_COLUMNS = 200  # 2 s of history per side
 EVENT_COLUMN_CAP = 50
 EVENT_INTERVAL = 0.1
 WATCH_SECONDS = 5.0  # analysis runs only while a meter client has asked this recently
-IDLE_CHUNKS = 8  # chunks kept per side while nobody watches
+FRAME_BYTES = 2 * 2  # one stereo s16le frame
+METER_BACKLOG_BYTES = SAMPLE_RATE * FRAME_BYTES * 3 // 2  # 1.5 s per side waiting for the analyser
+IDLE_BYTES = 8 * COLUMN_BYTES  # 80 ms per side kept while nobody watches
 GRAPH_INPUT = "[0:a:0]"
 GRAPH_OUTPUT = "[proc]"
 BYPASS_WET = "volume@jmm_wet"
@@ -597,18 +607,59 @@ def monitor_input_fifo_path() -> str:
     return os.environ.get("MONITOR_INPUT_FIFO", "/run/audio/monitor-input.pcm")
 
 
+class _AudioQueue:
+    """Audio waiting for the analyser: one byte stream per side, trimmed from the front.
+
+    The bound is in bytes, so it is a duration whatever the size of the reads. Only whole
+    frames are removed from the front, so the bytes that remain still start on a frame
+    boundary and the analyser's columns stay aligned. The lock guards one bytearray, so
+    size and contents change together. It is held only for a copy or a memmove of at most
+    METER_BACKLOG_BYTES, never while the analyser measures, so a writer waits only that long.
+    """
+
+    def __init__(self) -> None:
+        self._data = bytearray()
+        self._lock = threading.Lock()
+
+    def put(self, block: bytes | bytearray) -> None:
+        with self._lock:
+            self._data += block
+            self._keep_newest(METER_BACKLOG_BYTES)
+
+    def trim(self, keep: int) -> None:
+        with self._lock:
+            self._keep_newest(keep)
+
+    def take(self) -> bytes:
+        with self._lock:
+            data = bytes(self._data)
+            self._data.clear()
+        return data
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+    def _keep_newest(self, keep: int) -> None:
+        """Drop the oldest whole frames until at most keep bytes remain. Caller holds the lock."""
+        excess = len(self._data) - keep
+        if excess > 0:
+            whole_frames = -(-excess // FRAME_BYTES) * FRAME_BYTES  # round up, so the cut stays aligned
+            del self._data[:whole_frames]
+
+
 class Monitor:
     """Meters for the input (the mix before the AGC) and output (after the safety limiter).
 
-    feed_input() and the drain thread only append to bounded deques, so they never wait
-    on the analysis thread. When the analysis falls behind, the oldest data is dropped.
-    The analysis only runs while a meter client is connected; otherwise the audio is discarded.
+    feed_input() and the drain thread only append to their queue, which drops its oldest
+    audio beyond METER_BACKLOG_BYTES, so they never wait on the analysis thread. The
+    analysis only runs while a meter client is connected; otherwise the audio is trimmed.
     """
 
     def __init__(self, enabled: bool) -> None:
         self.enabled = enabled
-        self._input: deque[bytes] = deque(maxlen=256)
-        self._output: deque[bytes] = deque(maxlen=256)
+        self._input = _AudioQueue()
+        self._output = _AudioQueue()
         self._lock = threading.Lock()
         self._rings = {"in": deque(maxlen=RING_COLUMNS), "out": deque(maxlen=RING_COLUMNS)}
         self._seq = {"in": 0, "out": 0}
@@ -616,13 +667,14 @@ class Monitor:
 
     def feed_input(self, block: bytes | bytearray) -> None:
         if self.enabled:
-            self._input.append(bytes(block))
+            self._input.put(block)
 
     def start_input(self, fd: int) -> None:
         """Read Liquidsoap's input copy from fd. Never stops reading: Liquidsoap would block on it."""
         threading.Thread(target=self._drain_input, args=(fd,), name="monitor-input", daemon=True).start()
 
     def _drain_input(self, fd: int) -> None:
+        name_current_thread()
         while True:
             try:
                 chunk = os.read(fd, 65536)
@@ -640,6 +692,7 @@ class Monitor:
 
     def _drain(self, fd: int) -> None:
         """Read FFmpeg's monitor output until EOF. Never exits early: FFmpeg would block on a full pipe."""
+        name_current_thread()
         warned = False
         while True:
             try:
@@ -653,25 +706,23 @@ class Monitor:
             if not chunk:
                 return
             if self.enabled:
-                self._output.append(chunk)
+                self._output.put(chunk)
 
     def _analyze(self) -> None:
+        name_current_thread()
         queues = {"in": self._input, "out": self._output}
         pending = {"in": bytearray(), "out": bytearray()}
         while True:
             if time.monotonic() > self._watched_until:
                 for queue in queues.values():
-                    while len(queue) > IDLE_CHUNKS:
-                        queue.popleft()
+                    queue.trim(IDLE_BYTES)
                 time.sleep(0.1)
                 continue
             busy = False
             for side, queue in queues.items():
-                while True:
-                    try:
-                        pending[side] += queue.popleft()
-                    except IndexError:
-                        break
+                data = queue.take()
+                if data:
+                    pending[side] += data
                     busy = True
                 try:
                     self._measure_side(side, pending[side])
@@ -1183,6 +1234,7 @@ class GraphController:
 
     def _recover_loop(self) -> None:
         """Start a processor for the running graph until one takes over. Live values are kept."""
+        name_current_thread()
         try:
             while not self._stop.is_set():
                 with self._swap_lock:
@@ -1223,6 +1275,7 @@ class GraphController:
 
     def _watch(self) -> None:
         """Apply processing.ffmpeg when it changes. A change counts once its size and mtime hold for watch_settle seconds."""
+        name_current_thread()
         applied = _file_key(self._path)
         seen, seen_at = applied, time.monotonic()
         while not self._stop.wait(self._watch_interval):

@@ -81,9 +81,6 @@ docker compose logs -f audio          # first start prints a Spotify pairing URL
 Visit `/setup` once to authorise Spotify. The SQLite database and Spotify token
 cache are stored in `backend/data/` (mounted at `/data`).
 
-There is no automated API test suite. For API changes, verify imports and startup with
-suitable environment values, then exercise the affected endpoint or SSE flow.
-
 Now-playing, skip and add-to-queue go to the audio container's go-librespot API at
 `LIBRESPOT_API_URL` (`http://audio:3678` by default), so the `audio` service must be
 running. Search and track lookups use the Spotify Web API. The displayed upcoming
@@ -109,6 +106,29 @@ service enables go-librespot metadata caching so `/status` can provide `next_tra
 whole-context metadata sweeping remains disabled. After changing
 `backend/audio/config/spotify.yml`, restart the audio service with
 `docker compose restart audio` from `backend/`.
+
+#### API tests and benchmark
+
+The API has a standard-library `unittest` suite in `backend/api/tests`. It stubs
+Spotify, go-librespot and Turnstile and uses a temporary SQLite database, so it needs
+no network or other containers. `backend/api/tools/bench.py` reports endpoint latency
+percentiles, SQLite statements per request, event-loop lag, concurrent SSE streams
+and memory use. By default it runs the app in-process with seeded data; `--url` points
+it at a running server instead. From a virtual environment on the host (Windows
+shown; use `source .venv/bin/activate` elsewhere):
+
+```bash
+cd backend/api
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m unittest discover -s tests -v
+python tools/bench.py --help
+python tools/bench.py --rows 100 --bans 100 --sse 50 --json bench.json
+```
+
+For API changes, also exercise the affected endpoint or SSE flow against a running
+service with suitable environment values.
 
 ### Audio (`backend/audio/`)
 
@@ -215,6 +235,8 @@ and passes on admin requests at `/admin/audio/`.
   replaces the processor with the edited text. Revert to file runs `processing.ffmpeg`
   again. The monitor marks an edit that differs from the file.
 
+The meters are measured in their own thread. Each side queues at most 1.5 s of audio for it, and when it falls behind the oldest audio is dropped, so the meters never delay the stream.
+
 Bypassing the processing needs an FFmpeg build with the `azmq` filter and the `pyzmq`
 package, which the image provides. Without them the monitor still shows the meters and
 graph editing still works, but processing bypass is disabled.
@@ -292,3 +314,27 @@ They cover the supervisor (silence, pauses, shutdown, config validation), the
 processing chain (loudness, peak ceiling, latency), both AAC outputs, server outages
 and reconnects, the VBAN input mix, the processor swap (continuity, crossfade, failure
 handling, real FFmpeg), the graph endpoints and file watching.
+
+**Profiling**
+
+`backend/audio/tools/profile_cpu.py` reports % CPU (100 = one core) and RSS for each
+audio process and each of its threads, read from `/proc`. It uses only the standard
+library, and the image does not contain `tools/`, so pipe the script in:
+
+```bash
+cd backend
+docker compose exec -T audio python3 - --seconds 10 < audio/tools/profile_cpu.py
+docker compose exec -T audio python3 - --seconds 20 --meters --json < audio/tools/profile_cpu.py
+```
+
+`--meters` keeps the meter stream open for the first half of the sample and reports the
+two halves separately, which isolates the cost of the meter analysis. The thread names
+come from the Python thread names set in `bridge.py` and `control.py`.
+
+`backend/audio/tools/bench_hotpaths.py` times the sample conversions and the crossfade
+mix on any Python 3, with no audio tools needed. The `before` column is the previous
+implementation of the path that changed, kept in the script for comparison:
+
+```bash
+python3 backend/audio/tools/bench_hotpaths.py
+```

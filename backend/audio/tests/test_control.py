@@ -208,6 +208,189 @@ class MeterTest(unittest.TestCase):
         self.assertEqual(monitor.snapshot({"in": 0, "out": 0}), {"in": [], "out": []})
 
 
+class MonitorQueueTest(unittest.TestCase):
+    """Monitor queueing, draining, idle trimming and snapshot cursors, through the public calls only."""
+
+    def wait_for(self, condition, seconds: float = 5.0) -> bool:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if condition():
+                return True
+            time.sleep(0.01)
+        return False
+
+    def test_pipe_output_is_drained_and_measured_as_output(self):
+        read_fd, write_fd = os.pipe()
+        monitor = Monitor(enabled=True)
+        monitor.start(read_fd)
+        try:
+            samples = array.array("h", [16384, -32768] * 441 * 10)  # ten 10 ms stereo columns
+            data = samples.tobytes()
+            written = 0
+            while written < len(data):
+                written += os.write(write_fd, data[written:written + 4096])
+            cursor = {"in": 0, "out": 0}
+            seen: list = []
+            self.assertTrue(self.wait_for(lambda: (seen.extend(monitor.snapshot(cursor)["out"]), len(seen) >= 10)[1]))
+            self.assertEqual(seen[:10], [[0.5, 1.0, 0.5, 1.0]] * 10)
+            self.assertEqual(cursor["out"], 10)
+        finally:
+            os.close(write_fd)
+
+    def test_input_blocks_are_measured_in_the_order_they_arrive(self):
+        read_fd, write_fd = os.pipe()
+        monitor = Monitor(enabled=True)
+        monitor.start(read_fd)
+        try:
+            monitor.feed_input(bytes(control.COLUMN_BYTES))  # silence
+            monitor.feed_input(array.array("h", [16384] * (control.COLUMN_BYTES // 2)).tobytes())
+            cursor = {"in": 0, "out": 0}
+            seen: list = []
+            self.assertTrue(self.wait_for(lambda: (seen.extend(monitor.snapshot(cursor)["in"]), len(seen) >= 2)[1]))
+            self.assertEqual(seen[:2], [[0.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.5, 0.5]])
+        finally:
+            os.close(write_fd)
+
+    def test_a_snapshot_returns_at_most_the_newest_event_cap_and_then_nothing_new(self):
+        read_fd, write_fd = os.pipe()
+        monitor = Monitor(enabled=True)
+        monitor.start(read_fd)
+        try:
+            monitor.feed_input(bytes(60 * control.COLUMN_BYTES))
+            probe = {"in": 0, "out": 0}
+            self.assertTrue(self.wait_for(lambda: (monitor.snapshot(probe), probe["in"] >= 60)[1]))
+            cursor = {"in": 0, "out": 0}
+            first = monitor.snapshot(cursor)["in"]
+            self.assertEqual(len(first), control.EVENT_COLUMN_CAP)
+            self.assertEqual(cursor["in"], 60)
+            self.assertEqual(monitor.snapshot(cursor)["in"], [])
+        finally:
+            os.close(write_fd)
+
+    def test_idle_monitor_trims_its_backlog_to_a_few_chunks(self):
+        read_fd, write_fd = os.pipe()
+        monitor = Monitor(enabled=True)
+        monitor.start(read_fd)
+        try:
+            for _ in range(1000):  # nobody is watching, so the analyser only trims
+                monitor.feed_input(bytes(3528))  # two columns per chunk
+            time.sleep(0.3)
+            cursor = {"in": 0, "out": 0}
+            monitor.snapshot(cursor)  # starts watching; the kept backlog is analysed now
+            time.sleep(0.5)
+            monitor.snapshot(cursor)
+            self.assertLessEqual(cursor["in"], control.IDLE_BYTES // control.COLUMN_BYTES)  # columns analysed
+            self.assertGreater(cursor["in"], 0)
+        finally:
+            os.close(write_fd)
+
+    def test_feeding_never_waits_for_a_stuck_analyser(self):
+        read_fd, write_fd = os.pipe()
+        release = threading.Event()
+        monitor = Monitor(enabled=True)
+        monitor._measure_side = lambda side, buffer: release.wait(10)
+        monitor.start(read_fd)
+        try:
+            monitor.snapshot({"in": 0, "out": 0})  # watch, so the analyser reaches the stuck measurement
+            feeder = threading.Thread(target=lambda: [monitor.feed_input(bytes(3528)) for _ in range(2000)])
+            feeder.start()
+            feeder.join(5)
+            self.assertFalse(feeder.is_alive())
+        finally:
+            release.set()
+            os.close(write_fd)
+
+    def test_the_pipe_keeps_draining_while_the_analyser_is_stuck(self):
+        read_fd, write_fd = os.pipe()
+        release = threading.Event()
+        monitor = Monitor(enabled=True)
+        monitor._measure_side = lambda side, buffer: release.wait(10)
+        monitor.start(read_fd)
+        writer = threading.Thread(target=lambda: [os.write(write_fd, bytes(4096)) for _ in range(100)])
+        try:
+            monitor.snapshot({"in": 0, "out": 0})
+            writer.start()
+            writer.join(5)  # 400 KB through a 64 KB pipe: finishes only if the drain keeps reading
+            self.assertFalse(writer.is_alive())
+        finally:
+            release.set()
+            writer.join(5)
+            os.close(write_fd)
+
+
+class AudioQueueTest(unittest.TestCase):
+    """The byte-bounded meter queues: bound, frame alignment, draining and thread safety."""
+
+    def test_the_backlog_is_bounded_in_bytes_and_keeps_the_newest_frames(self):
+        self.assertEqual(control.METER_BACKLOG_BYTES, 264_600)  # 1.5 s of stereo s16le at 44.1 kHz
+        stream = bytes(i % 251 for i in range(3 * control.METER_BACKLOG_BYTES))
+        sizes = [1, 3, 5, 4096, 65536, 7, 12345]
+        queue = control._AudioQueue()
+        position, step = 0, 0
+        while position < len(stream):
+            size = sizes[step % len(sizes)]
+            queue.put(stream[position:position + size])
+            position += size
+            step += 1
+            self.assertLessEqual(len(queue), control.METER_BACKLOG_BYTES)
+        data = queue.take()
+        self.assertGreater(len(data), control.METER_BACKLOG_BYTES - control.FRAME_BYTES)
+        self.assertEqual(data, stream[len(stream) - len(data):])  # the newest audio survives
+        self.assertEqual((len(stream) - len(data)) % control.FRAME_BYTES, 0)  # whole frames were dropped
+
+    def test_take_returns_everything_once_and_in_order(self):
+        queue = control._AudioQueue()
+        queue.put(b"abc")
+        queue.put(bytearray(b"defg"))
+        self.assertEqual(len(queue), 7)
+        self.assertEqual(queue.take(), b"abcdefg")
+        self.assertEqual(queue.take(), b"")
+        self.assertEqual(len(queue), 0)
+
+    def test_trim_keeps_at_most_the_newest_bytes(self):
+        queue = control._AudioQueue()
+        queue.put(bytes(range(100)))
+        queue.trim(20)
+        self.assertEqual(queue.take(), bytes(range(80, 100)))
+        queue.put(bytes(range(20)))
+        queue.trim(10)
+        kept = queue.take()
+        self.assertLessEqual(len(kept), 10)
+        self.assertEqual(kept, bytes(range(20))[20 - len(kept):])
+
+    def test_concurrent_put_and_take_keep_the_newest_audio_intact(self):
+        stream = bytes(i % 251 for i in range(400_000))
+        queue = control._AudioQueue()
+        finished = threading.Event()
+
+        def produce() -> None:
+            for start in range(0, len(stream), 4000):
+                queue.put(stream[start:start + 4000])
+            finished.set()
+
+        producer = threading.Thread(target=produce)
+        producer.start()
+        taken = 0
+        while not (finished.is_set() and len(queue) == 0):
+            taken += len(queue.take())
+        producer.join(5)
+        self.assertFalse(producer.is_alive())
+        self.assertGreater(taken, 0)
+        self.assertEqual(queue.take(), b"")
+
+    def test_monitor_drops_the_oldest_input_beyond_the_backlog(self):
+        monitor = Monitor(enabled=True)  # no analyser: the backlog only grows until it is bounded
+        chunk = bytes(3528)
+        for _ in range(300):
+            monitor.feed_input(chunk)
+        self.assertEqual(len(monitor._input), control.METER_BACKLOG_BYTES)
+
+    def test_a_disabled_monitor_queues_nothing(self):
+        monitor = Monitor(enabled=False)
+        monitor.feed_input(bytes(3528))
+        self.assertEqual(len(monitor._input), 0)
+
+
 class FakeTransport:
     def __init__(self, reply: str = "0 Success", error: bool = False) -> None:
         self.commands: list[str] = []

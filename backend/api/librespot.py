@@ -58,6 +58,9 @@ class LibrespotClient:
         self._track_cache: OrderedDict[str, dict] = OrderedDict()
         self._inflight: dict[str, asyncio.Task] = {}
 
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
     def _note_reachable(self, reachable: bool, detail: str = "") -> None:
         if not reachable and not self._down:
             logger.error(f"go-librespot unreachable at {self._http.base_url}: {detail}")

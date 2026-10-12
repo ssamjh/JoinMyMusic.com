@@ -35,6 +35,12 @@ current_song_state: dict = {"songid": "", "started_at": None}
 delayed_current_metadata: dict = {}
 deck_state: dict = {"songid": "", "side": "left"}
 
+# The poller's latest successful read of go-librespot: the undelayed current track, the
+# wall-clock instant it was read, and the monotonic clock at that moment (for age checks).
+# New realtime connections and vote lookups reuse it instead of calling go-librespot again.
+REALTIME_SNAPSHOT_MAX_AGE = 3.0  # seconds
+latest_snapshot: dict = {"current": None, "polled_at": None, "monotonic": None}
+
 # Empty "now playing" payload clients already treat as no track (clear UI).
 _EMPTY_CURRENT = {
     "artist": [],
@@ -124,6 +130,11 @@ def live_metadata_for_clients(current: dict, polled_at: datetime | None = None) 
     return out
 
 
+# Put on a client's queue when the broadcaster drops it, so its SSE response ends and
+# the browser's EventSource reconnects instead of waiting forever on an orphaned queue.
+SSE_CLOSED = object()
+
+
 class SSEBroadcaster:
     def __init__(self):
         self.clients: list[asyncio.Queue] = []
@@ -146,6 +157,11 @@ class SSEBroadcaster:
                 dead.append(queue)
         for queue in dead:
             self.clients.remove(queue)
+            # The client is already far behind and is being disconnected, so its
+            # undelivered backlog is discarded in favour of the close marker.
+            while not queue.empty():
+                queue.get_nowait()
+            queue.put_nowait(SSE_CLOSED)
 
 
 broadcaster = SSEBroadcaster()
@@ -185,6 +201,25 @@ async def publish_queue_snapshot(queue, track_changed: bool = False) -> bool:
         else:
             await broadcast_both("queue", payload)
     return changed
+
+
+async def current_track_snapshot(librespot) -> tuple[dict, datetime]:
+    """The undelayed current track and the wall-clock instant its progress refers to.
+
+    Uses the poller's snapshot while it is fresh (at most REALTIME_SNAPSHOT_MAX_AGE old);
+    otherwise asks go-librespot. A fresh snapshot's progress is advanced by its age while
+    playing, so the returned pair describes the same position as a direct read would.
+    """
+    snapshot = latest_snapshot
+    if snapshot["current"] is not None:
+        age = time.monotonic() - snapshot["monotonic"]
+        if age <= REALTIME_SNAPSHOT_MAX_AGE:
+            current = dict(snapshot["current"])
+            if current.get("playing") and current.get("songid"):
+                current["progress_ms"] = current.get("progress_ms", 0) + age * 1000
+            return current, datetime.now(timezone.utc)
+    metadata = await librespot.get_current_playback()
+    return metadata.get("current", {}), datetime.now(timezone.utc)
 
 
 async def refresh_queue_now(librespot) -> None:
@@ -299,6 +334,9 @@ async def poll_spotify(librespot, listeners_state: dict, vote_skips_state: dict)
             spotify_playing["value"] = bool(playing and song_id)
             progress_ms = current.get("progress_ms", 0)
             polled_at = datetime.now(timezone.utc)
+            latest_snapshot.update(
+                current=dict(current), polled_at=polled_at, monotonic=time.monotonic()
+            )
 
             # Expire history entries older than the TTL, even if nothing else changed.
             history_changed = prune_history()
@@ -432,8 +470,8 @@ async def poll_live_input():
 
 
 async def cleanup_listeners(listeners_state: dict):
-    """Background task: expire stale listeners every 30s, broadcast listener count."""
-    from storage import active_listener_count
+    """Background task: every 30s expire stale listeners and request state, broadcast listener count."""
+    from storage import active_listener_count, prune_request_state
 
     while True:
         await asyncio.sleep(30)
@@ -442,6 +480,7 @@ async def cleanup_listeners(listeners_state: dict):
             expired = [u for u, d in list(listeners_state.items()) if now - d["last_seen"] > 60]
             for u in expired:
                 del listeners_state[u]
+            prune_request_state()
             await broadcast_both("listeners", {"count": active_listener_count(listeners_state)})
         except Exception as e:
             logger.error(f"Listener cleanup error: {e}")
@@ -453,7 +492,7 @@ async def cleanup_old_requests():
     while True:
         await asyncio.sleep(3600)
         try:
-            _cleanup()
+            await asyncio.to_thread(_cleanup)
         except Exception as e:
             logger.error(f"Request cleanup error: {e}")
 
